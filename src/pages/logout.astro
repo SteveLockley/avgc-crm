@@ -1,0 +1,13 @@
+---
+import { createLogoutCookieHeader } from '../lib/auth';
+
+const cookie = createLogoutCookieHeader();
+
+return new Response(null, {
+  status: 302,
+  headers: {
+    'Location': '/login',
+    'Set-Cookie': cookie
+  }
+});
+---

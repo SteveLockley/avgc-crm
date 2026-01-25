@@ -1,0 +1,213 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatDate, isExpired, expiresSoon, MEMBER_CATEGORIES } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get query parameters
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const category = url.searchParams.get('category') || '';
+const filter = url.searchParams.get('filter') || '';
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 25;
+const offset = (page - 1) * perPage;
+
+// Build query
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (
+    surname LIKE ? OR
+    first_name LIKE ? OR
+    email LIKE ?
+  )`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+
+if (category) {
+  whereClause += ' AND category = ?';
+  params.push(category);
+}
+
+if (filter === 'expiring') {
+  whereClause += ` AND date_expires BETWEEN date('now') AND date('now', '+30 days')`;
+} else if (filter === 'expired') {
+  whereClause += ` AND date_expires < date('now')`;
+} else if (filter === 'active') {
+  whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
+}
+
+// Get total count
+const countResult = await db.prepare(
+  `SELECT COUNT(*) as count FROM members WHERE ${whereClause}`
+).bind(...params).first<{ count: number }>();
+const totalCount = countResult?.count || 0;
+const totalPages = Math.ceil(totalCount / perPage);
+
+// Get members
+const members = await db.prepare(
+  `SELECT id, surname, first_name, email, category, home_away, handicap_index,
+          date_expires, date_joined, default_payment_method, account_balance
+   FROM members
+   WHERE ${whereClause}
+   ORDER BY surname, first_name
+   LIMIT ? OFFSET ?`
+).bind(...params, perPage, offset).all();
+
+// Calculate pagination pages
+const paginationPages: number[] = [];
+const maxPagesToShow = 7;
+if (totalPages <= maxPagesToShow) {
+  for (let i = 1; i <= totalPages; i++) paginationPages.push(i);
+} else if (page <= 4) {
+  for (let i = 1; i <= maxPagesToShow; i++) paginationPages.push(i);
+} else if (page >= totalPages - 3) {
+  for (let i = totalPages - 6; i <= totalPages; i++) paginationPages.push(i);
+} else {
+  for (let i = page - 3; i <= page + 3; i++) paginationPages.push(i);
+}
+---
+
+<AdminLayout title="Members">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Member List ({totalCount} members)</h3>
+      <a href="/members/new" class="btn btn-primary">Add Member</a>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" class="filters" style="margin-bottom: 1rem;">
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+          <label class="form-label">Search</label>
+          <input
+            type="text"
+            name="search"
+            class="form-input"
+            placeholder="Name or email..."
+            value={search}
+          />
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Category</label>
+          <select name="category" class="form-input">
+            <option value="">All Categories</option>
+            {MEMBER_CATEGORIES.map(cat => (
+              <option value={cat} selected={category === cat}>{cat}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Status</label>
+          <select name="filter" class="form-input">
+            <option value="">All Statuses</option>
+            <option value="active" selected={filter === 'active'}>Active</option>
+            <option value="expiring" selected={filter === 'expiring'}>Expiring Soon</option>
+            <option value="expired" selected={filter === 'expired'}>Expired</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Search</button>
+        <a href="/members" class="btn btn-secondary">Clear</a>
+      </div>
+    </form>
+
+    <!-- Members table -->
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Category</th>
+            <th>H/A</th>
+            <th>Handicap</th>
+            <th>Expires</th>
+            <th>Payment Method</th>
+            <th>Balance</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {members.results?.map((member) => (
+              <tr>
+                <td>
+                  <a href={`/members/${member.id}`} style="font-weight: 500;">
+                    {member.surname}, {member.first_name}
+                  </a>
+                  {member.email && (
+                    <div style="font-size: 0.75rem; color: #666;">{member.email}</div>
+                  )}
+                </td>
+                <td>{member.category || '-'}</td>
+                <td>
+                  <span class={`badge ${member.home_away === 'H' ? 'badge-success' : 'badge-info'}`}>
+                    {member.home_away || '-'}
+                  </span>
+                </td>
+                <td>{member.handicap_index ?? '-'}</td>
+                <td>
+                  {member.date_expires ? (
+                    <span class={`badge ${isExpired(member.date_expires as string) ? 'badge-danger' : expiresSoon(member.date_expires as string) ? 'badge-warning' : 'badge-success'}`}>
+                      {formatDate(member.date_expires as string)}
+                    </span>
+                  ) : '-'}
+                </td>
+                <td style="font-size: 0.875rem;">{member.default_payment_method || '-'}</td>
+                <td style={`font-weight: 500; ${(member.account_balance as number) < 0 ? 'color: #dc3545' : ''}`}>
+                  {member.account_balance !== 0 ? `£${member.account_balance}` : '-'}
+                </td>
+                <td>
+                  <a href={`/members/${member.id}`} class="btn btn-secondary btn-sm">View</a>
+                  <a href={`/members/${member.id}/edit`} class="btn btn-secondary btn-sm">Edit</a>
+                </td>
+              </tr>
+            ))}
+          {(!members.results || members.results.length === 0) && (
+            <tr>
+              <td colspan="8" style="text-align: center; color: #666; padding: 2rem;">
+                No members found
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={`?search=${search}&category=${category}&filter=${filter}&page=${page - 1}`}>
+            Previous
+          </a>
+        )}
+
+        {paginationPages.map((p) => (
+          <a
+            href={`?search=${search}&category=${category}&filter=${filter}&page=${p}`}
+            class={p === page ? 'active' : ''}
+          >
+            {p}
+          </a>
+        ))}
+
+        {page < totalPages && (
+          <a href={`?search=${search}&category=${category}&filter=${filter}&page=${page + 1}`}>
+            Next
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+
+  <!-- Quick stats -->
+  <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+    <a href="/members/export" class="btn btn-secondary">Export to CSV</a>
+    <a href="/members/import" class="btn btn-secondary">Import from CSV</a>
+  </div>
+</AdminLayout>

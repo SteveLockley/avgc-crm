@@ -1,0 +1,306 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { MEMBER_CATEGORIES, SUBSCRIPTION_TEMPLATES, PAYMENT_METHODS, AGE_GROUPS } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+
+  const member: Record<string, any> = {};
+  const fields = [
+    'surname', 'first_name', 'middle_initials', 'title', 'gender', 'date_of_birth',
+    'address_1', 'address_2', 'address_3', 'address_4', 'address_5',
+    'telephone_1', 'telephone_2', 'telephone_3', 'email',
+    'category', 'age_group', 'home_away', 'home_club', 'subscription_template',
+    'handicap_index', 'national_id', 'national_id_country',
+    'date_joined', 'date_renewed', 'date_expires', 'date_subscription_paid',
+    'default_payment_method', 'send_invoice_by',
+    'locker_number', 'pin', 'club_number',
+    'electronic_communication_consent'
+  ];
+
+  for (const field of fields) {
+    const value = formData.get(field);
+    if (value !== null && value !== '') {
+      member[field] = value;
+    }
+  }
+
+  // Convert numeric fields
+  if (member.handicap_index) {
+    member.handicap_index = parseFloat(member.handicap_index) || null;
+  }
+
+  // Set defaults
+  member.account_balance = 0;
+  member.competition_fee_purse = 0;
+  member.home_club = member.home_club || 'Alnmouth Village';
+
+  const columns = Object.keys(member);
+  const placeholders = columns.map(() => '?').join(', ');
+  const values = Object.values(member);
+
+  try {
+    const result = await db.prepare(
+      `INSERT INTO members (${columns.join(', ')}) VALUES (${placeholders})`
+    ).bind(...values).run();
+
+    const newId = result.meta.last_row_id;
+
+    // Log the creation
+    await db.prepare(
+      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
+       VALUES (?, 'create', 'member', ?, ?)`
+    ).bind(Astro.locals.user?.email || 'system', newId, JSON.stringify(member)).run();
+
+    return Astro.redirect(`/members/${newId}`);
+  } catch (e: any) {
+    error = `Failed to create member: ${e.message}`;
+  }
+}
+
+// Set default date joined to today
+const today = new Date().toISOString().split('T')[0];
+---
+
+<AdminLayout title="New Member">
+  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+    <a href="/members" class="btn btn-secondary">&larr; Back to Members</a>
+  </div>
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  <form method="POST">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Personal Information</h3>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="title">Title</label>
+          <select name="title" id="title" class="form-input">
+            <option value="">-</option>
+            <option value="Mr">Mr</option>
+            <option value="Mrs">Mrs</option>
+            <option value="Ms">Ms</option>
+            <option value="Miss">Miss</option>
+            <option value="Dr">Dr</option>
+            <option value="Prof">Prof</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="first_name">First Name *</label>
+          <input type="text" name="first_name" id="first_name" class="form-input" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="middle_initials">Middle Initials</label>
+          <input type="text" name="middle_initials" id="middle_initials" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="surname">Surname *</label>
+          <input type="text" name="surname" id="surname" class="form-input" required />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="gender">Gender</label>
+          <select name="gender" id="gender" class="form-input">
+            <option value="">-</option>
+            <option value="M">Male</option>
+            <option value="F">Female</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="date_of_birth">Date of Birth</label>
+          <input type="date" name="date_of_birth" id="date_of_birth" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="age_group">Age Group</label>
+          <select name="age_group" id="age_group" class="form-input">
+            <option value="">-</option>
+            {AGE_GROUPS.map(ag => (
+              <option value={ag}>{ag}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Contact Information</h3>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="email">Email</label>
+        <input type="email" name="email" id="email" class="form-input" />
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="telephone_1">Telephone 1</label>
+          <input type="tel" name="telephone_1" id="telephone_1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="telephone_2">Telephone 2</label>
+          <input type="tel" name="telephone_2" id="telephone_2" class="form-input" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="address_1">Address Line 1</label>
+          <input type="text" name="address_1" id="address_1" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="address_2">Address Line 2</label>
+          <input type="text" name="address_2" id="address_2" class="form-input" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="address_3">Town/City</label>
+          <input type="text" name="address_3" id="address_3" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="address_4">County</label>
+          <input type="text" name="address_4" id="address_4" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="address_5">Postcode</label>
+          <input type="text" name="address_5" id="address_5" class="form-input" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Membership</h3>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="category">Category *</label>
+          <select name="category" id="category" class="form-input" required>
+            <option value="">Select category...</option>
+            {MEMBER_CATEGORIES.map(cat => (
+              <option value={cat}>{cat}</option>
+            ))}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="subscription_template">Subscription Template</label>
+          <select name="subscription_template" id="subscription_template" class="form-input">
+            <option value="">-</option>
+            {SUBSCRIPTION_TEMPLATES.map(sub => (
+              <option value={sub}>{sub}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="home_away">Home/Away</label>
+          <select name="home_away" id="home_away" class="form-input">
+            <option value="">-</option>
+            <option value="H" selected>Home</option>
+            <option value="A">Away</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="home_club">Home Club</label>
+          <input type="text" name="home_club" id="home_club" class="form-input" value="Alnmouth Village" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="date_joined">Date Joined</label>
+          <input type="date" name="date_joined" id="date_joined" class="form-input" value={today} />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="date_expires">Date Expires</label>
+          <input type="date" name="date_expires" id="date_expires" class="form-input" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Golf/WHS</h3>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="handicap_index">Handicap Index</label>
+          <input type="number" step="0.1" name="handicap_index" id="handicap_index" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="national_id">WHS National ID</label>
+          <input type="text" name="national_id" id="national_id" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="national_id_country">Country</label>
+          <input type="text" name="national_id_country" id="national_id_country" class="form-input" value="England" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Payment & Admin</h3>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="default_payment_method">Payment Method</label>
+          <select name="default_payment_method" id="default_payment_method" class="form-input">
+            <option value="">-</option>
+            {PAYMENT_METHODS.map(pm => (
+              <option value={pm}>{pm}</option>
+            ))}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="send_invoice_by">Send Invoice By</label>
+          <select name="send_invoice_by" id="send_invoice_by" class="form-input">
+            <option value="Email" selected>Email</option>
+            <option value="Letter">Letter</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="pin">PIN</label>
+          <input type="text" name="pin" id="pin" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="locker_number">Locker Number</label>
+          <input type="text" name="locker_number" id="locker_number" class="form-input" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="electronic_communication_consent">Electronic Communication Consent</label>
+        <select name="electronic_communication_consent" id="electronic_communication_consent" class="form-input">
+          <option value="">-</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+      <a href="/members" class="btn btn-secondary">Cancel</a>
+      <button type="submit" class="btn btn-primary">Create Member</button>
+    </div>
+  </form>
+</AdminLayout>

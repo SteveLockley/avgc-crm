@@ -1,0 +1,210 @@
+---
+import { hashPassword, createSession, createSessionCookieHeader, getSessionCookie } from '../lib/auth';
+
+// Check if already logged in
+const existingSession = getSessionCookie(Astro.request);
+if (existingSession) {
+  return Astro.redirect('/');
+}
+
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const email = formData.get('email')?.toString() || '';
+  const password = formData.get('password')?.toString() || '';
+
+  const db = Astro.locals.runtime.env.DB;
+
+  // Look up admin user
+  const user = await db.prepare(
+    'SELECT * FROM admin_users WHERE email = ?'
+  ).bind(email).first();
+
+  if (user) {
+    // For demo: simple password check
+    // In production, use bcrypt.compare
+    const passwordHash = hashPassword(password);
+
+    // Demo: accept 'admin123' as password for any admin user
+    if (password === 'admin123' || user.password_hash === passwordHash) {
+      const session = createSession(user.email as string, user.name as string, user.role as string);
+      const cookie = createSessionCookieHeader(session);
+
+      // Update last login
+      await db.prepare(
+        'UPDATE admin_users SET last_login = datetime("now") WHERE id = ?'
+      ).bind(user.id).run();
+
+      return new Response(null, {
+        status: 302,
+        headers: {
+          'Location': '/',
+          'Set-Cookie': cookie
+        }
+      });
+    }
+  }
+
+  error = 'Invalid email or password';
+}
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login | AVGC CRM</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a47 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .login-header h1 {
+      color: #1e5631;
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .login-header p {
+      color: #666;
+      font-size: 0.875rem;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #1e5631;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 0.75rem;
+      background: #1e5631;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #143d22;
+    }
+
+    .error {
+      background: #f8d7da;
+      color: #721c24;
+      padding: 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+    }
+
+    .demo-notice {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #f4f4f4;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: #666;
+    }
+
+    .demo-notice code {
+      background: #e9e9e9;
+      padding: 0.125rem 0.25rem;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-header">
+      <h1>AVGC CRM</h1>
+      <p>Alnmouth Village Golf Club</p>
+    </div>
+
+    {error && <div class="error">{error}</div>}
+
+    <form method="POST">
+      <div class="form-group">
+        <label class="form-label" for="email">Email</label>
+        <input
+          type="email"
+          id="email"
+          name="email"
+          class="form-input"
+          required
+          autocomplete="email"
+        />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          class="form-input"
+          required
+          autocomplete="current-password"
+        />
+      </div>
+
+      <button type="submit" class="btn">Sign In</button>
+    </form>
+
+    <div class="demo-notice">
+      <strong>Demo credentials:</strong><br>
+      Email: <code>admin@alnmouthvillage.golf</code><br>
+      Password: <code>admin123</code>
+    </div>
+  </div>
+</body>
+</html>

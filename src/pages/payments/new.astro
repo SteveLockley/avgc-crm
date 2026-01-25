@@ -1,0 +1,189 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { PAYMENT_METHODS } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+const url = Astro.url;
+const preselectedMemberId = url.searchParams.get('member_id') || '';
+
+let error = '';
+let preselectedMember: any = null;
+
+// Get preselected member if provided
+if (preselectedMemberId) {
+  preselectedMember = await db.prepare(
+    'SELECT id, first_name, surname FROM members WHERE id = ?'
+  ).bind(preselectedMemberId).first();
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+
+  const memberId = formData.get('member_id');
+  const amount = parseFloat(formData.get('amount')?.toString() || '0');
+  const paymentDate = formData.get('payment_date');
+  const paymentMethod = formData.get('payment_method');
+  const paymentType = formData.get('payment_type');
+  const reference = formData.get('reference');
+  const notes = formData.get('notes');
+  const updateBalance = formData.get('update_balance') === 'yes';
+
+  if (!memberId || !amount || !paymentDate) {
+    error = 'Please fill in all required fields';
+  } else {
+    try {
+      // Insert payment
+      await db.prepare(
+        `INSERT INTO payments (member_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        memberId,
+        amount,
+        paymentDate,
+        paymentMethod || null,
+        paymentType || null,
+        reference || null,
+        notes || null,
+        Astro.locals.user?.email || 'system'
+      ).run();
+
+      // Optionally update member's account balance
+      if (updateBalance) {
+        await db.prepare(
+          `UPDATE members SET account_balance = account_balance + ?, updated_at = datetime('now') WHERE id = ?`
+        ).bind(amount, memberId).run();
+      }
+
+      // Log the action
+      await db.prepare(
+        `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
+         VALUES (?, 'create', 'payment', ?, ?)`
+      ).bind(
+        Astro.locals.user?.email || 'system',
+        memberId,
+        JSON.stringify({ amount, payment_method: paymentMethod, payment_type: paymentType })
+      ).run();
+
+      // Redirect back to member or payments list
+      if (preselectedMemberId) {
+        return Astro.redirect(`/members/${preselectedMemberId}`);
+      }
+      return Astro.redirect('/payments');
+    } catch (e: any) {
+      error = `Failed to record payment: ${e.message}`;
+    }
+  }
+}
+
+// Get members for dropdown
+const members = await db.prepare(
+  'SELECT id, first_name, surname FROM members ORDER BY surname, first_name'
+).all();
+
+const today = new Date().toISOString().split('T')[0];
+const paymentTypes = [
+  { value: 'subscription', label: 'Subscription' },
+  { value: 'competition_fee', label: 'Competition Fee' },
+  { value: 'bar', label: 'Bar' },
+  { value: 'shop', label: 'Shop' },
+  { value: 'other', label: 'Other' }
+];
+---
+
+<AdminLayout title="Record Payment">
+  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+    <a href={preselectedMemberId ? `/members/${preselectedMemberId}` : '/payments'} class="btn btn-secondary">
+      &larr; Back
+    </a>
+  </div>
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Record New Payment</h3>
+    </div>
+
+    <form method="POST">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="member_id">Member *</label>
+          {preselectedMember ? (
+            <>
+              <input type="hidden" name="member_id" value={preselectedMember.id} />
+              <input type="text" class="form-input" readonly
+                     value={`${preselectedMember.surname}, ${preselectedMember.first_name}`} />
+            </>
+          ) : (
+            <select name="member_id" id="member_id" class="form-input" required>
+              <option value="">Select member...</option>
+              {members.results?.map((m) => (
+                <option value={m.id}>{m.surname}, {m.first_name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="amount">Amount (£) *</label>
+          <input type="number" step="0.01" name="amount" id="amount" class="form-input" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="payment_date">Payment Date *</label>
+          <input type="date" name="payment_date" id="payment_date" class="form-input" required value={today} />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="payment_method">Payment Method</label>
+          <select name="payment_method" id="payment_method" class="form-input">
+            <option value="">-</option>
+            {PAYMENT_METHODS.map(pm => (
+              <option value={pm}>{pm}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="payment_type">Payment Type</label>
+          <select name="payment_type" id="payment_type" class="form-input">
+            <option value="">-</option>
+            {paymentTypes.map(pt => (
+              <option value={pt.value}>{pt.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="reference">Reference</label>
+          <input type="text" name="reference" id="reference" class="form-input" placeholder="e.g., invoice number" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="notes">Notes</label>
+        <textarea name="notes" id="notes" class="form-input" rows="2"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <input type="checkbox" name="update_balance" value="yes" />
+          <span>Add to member's account balance</span>
+        </label>
+        <p style="font-size: 0.75rem; color: #666; margin-top: 0.25rem;">
+          Check this to credit the payment amount to the member's account balance.
+        </p>
+      </div>
+
+      <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+        <a href={preselectedMemberId ? `/members/${preselectedMemberId}` : '/payments'} class="btn btn-secondary">
+          Cancel
+        </a>
+        <button type="submit" class="btn btn-primary">Record Payment</button>
+      </div>
+    </form>
+  </div>
+</AdminLayout>

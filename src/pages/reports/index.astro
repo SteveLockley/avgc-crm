@@ -1,0 +1,338 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatCurrency, formatDate } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Membership statistics
+const memberStats = await db.prepare(`
+  SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN date_expires >= date('now') OR date_expires IS NULL THEN 1 ELSE 0 END) as active,
+    SUM(CASE WHEN date_expires < date('now') THEN 1 ELSE 0 END) as expired,
+    SUM(CASE WHEN date_expires BETWEEN date('now') AND date('now', '+30 days') THEN 1 ELSE 0 END) as expiring_30,
+    SUM(CASE WHEN date_expires BETWEEN date('now') AND date('now', '+60 days') THEN 1 ELSE 0 END) as expiring_60
+  FROM members
+`).first();
+
+// Category breakdown
+const categoryStats = await db.prepare(`
+  SELECT
+    category,
+    COUNT(*) as count,
+    SUM(CASE WHEN home_away = 'H' THEN 1 ELSE 0 END) as home,
+    SUM(CASE WHEN home_away = 'A' THEN 1 ELSE 0 END) as away
+  FROM members
+  WHERE category IS NOT NULL
+  GROUP BY category
+  ORDER BY count DESC
+`).all();
+
+// Payment statistics - current year
+const currentYear = new Date().getFullYear();
+const paymentStats = await db.prepare(`
+  SELECT
+    payment_type,
+    COUNT(*) as count,
+    SUM(amount) as total
+  FROM payments
+  WHERE payment_date >= ?
+  GROUP BY payment_type
+  ORDER BY total DESC
+`).bind(`${currentYear}-01-01`).all();
+
+// Monthly payment totals - last 12 months
+const monthlyPayments = await db.prepare(`
+  SELECT
+    strftime('%Y-%m', payment_date) as month,
+    SUM(amount) as total,
+    COUNT(*) as count
+  FROM payments
+  WHERE payment_date >= date('now', '-12 months')
+  GROUP BY strftime('%Y-%m', payment_date)
+  ORDER BY month
+`).all();
+
+// Outstanding balances
+const outstandingBalances = await db.prepare(`
+  SELECT
+    SUM(CASE WHEN account_balance < 0 THEN account_balance ELSE 0 END) as credits,
+    SUM(CASE WHEN account_balance > 0 THEN account_balance ELSE 0 END) as debits,
+    COUNT(CASE WHEN account_balance != 0 THEN 1 END) as members_with_balance
+  FROM members
+`).first();
+
+// Age group breakdown
+const ageStats = await db.prepare(`
+  SELECT
+    age_group,
+    COUNT(*) as count,
+    AVG(handicap_index) as avg_handicap
+  FROM members
+  WHERE age_group IS NOT NULL
+  GROUP BY age_group
+  ORDER BY count DESC
+`).all();
+
+// Recent membership activity
+const recentJoins = await db.prepare(`
+  SELECT COUNT(*) as count
+  FROM members
+  WHERE date_joined >= date('now', '-30 days')
+`).first();
+
+// Payment method breakdown
+const paymentMethodStats = await db.prepare(`
+  SELECT
+    default_payment_method,
+    COUNT(*) as count
+  FROM members
+  WHERE default_payment_method IS NOT NULL
+  GROUP BY default_payment_method
+  ORDER BY count DESC
+`).all();
+
+// Handicap distribution
+const handicapStats = await db.prepare(`
+  SELECT
+    CASE
+      WHEN handicap_index IS NULL THEN 'No Handicap'
+      WHEN handicap_index <= 5 THEN '0-5'
+      WHEN handicap_index <= 10 THEN '6-10'
+      WHEN handicap_index <= 15 THEN '11-15'
+      WHEN handicap_index <= 20 THEN '16-20'
+      WHEN handicap_index <= 28 THEN '21-28'
+      ELSE '29+'
+    END as bracket,
+    COUNT(*) as count
+  FROM members
+  GROUP BY bracket
+  ORDER BY
+    CASE bracket
+      WHEN '0-5' THEN 1
+      WHEN '6-10' THEN 2
+      WHEN '11-15' THEN 3
+      WHEN '16-20' THEN 4
+      WHEN '21-28' THEN 5
+      WHEN '29+' THEN 6
+      ELSE 7
+    END
+`).all();
+---
+
+<AdminLayout title="Reports">
+  <!-- Overview Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{memberStats?.total || 0}</div>
+      <div class="stat-label">Total Members</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: #28a745">{memberStats?.active || 0}</div>
+      <div class="stat-label">Active Members</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: #ffc107">{memberStats?.expiring_30 || 0}</div>
+      <div class="stat-label">Expiring in 30 Days</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color: #dc3545">{memberStats?.expired || 0}</div>
+      <div class="stat-label">Expired</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    <!-- Category Breakdown -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Members by Category</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th style="text-align: right">Home</th>
+            <th style="text-align: right">Away</th>
+            <th style="text-align: right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {categoryStats.results?.map((cat) => (
+            <tr>
+              <td>{cat.category}</td>
+              <td style="text-align: right">{cat.home}</td>
+              <td style="text-align: right">{cat.away}</td>
+              <td style="text-align: right; font-weight: 600">{cat.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Age Group Breakdown -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Members by Age Group</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Age Group</th>
+            <th style="text-align: right">Count</th>
+            <th style="text-align: right">Avg Handicap</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ageStats.results?.map((age) => (
+            <tr>
+              <td>{age.age_group}</td>
+              <td style="text-align: right">{age.count}</td>
+              <td style="text-align: right">{age.avg_handicap ? (age.avg_handicap as number).toFixed(1) : '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+    <!-- Handicap Distribution -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Handicap Distribution</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Handicap Range</th>
+            <th style="text-align: right">Members</th>
+          </tr>
+        </thead>
+        <tbody>
+          {handicapStats.results?.map((h) => (
+            <tr>
+              <td>{h.bracket}</td>
+              <td style="text-align: right">{h.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Payment Method Preferences -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Payment Methods</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th style="text-align: right">Members</th>
+          </tr>
+        </thead>
+        <tbody>
+          {paymentMethodStats.results?.map((pm) => (
+            <tr>
+              <td>{pm.default_payment_method}</td>
+              <td style="text-align: right">{pm.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Financial Overview -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Financial Overview - {currentYear}</h3>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom: 1rem;">
+      <div class="stat-card">
+        <div class="stat-value" style="color: #dc3545">
+          {formatCurrency(Math.abs(outstandingBalances?.credits || 0))}
+        </div>
+        <div class="stat-label">Member Credits (Overpayments)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" style="color: #28a745">
+          {formatCurrency(outstandingBalances?.debits || 0)}
+        </div>
+        <div class="stat-label">Outstanding Debts</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{recentJoins?.count || 0}</div>
+        <div class="stat-label">New Members (30 days)</div>
+      </div>
+    </div>
+
+    <h4 style="margin: 1rem 0 0.5rem">Payments by Type ({currentYear})</h4>
+    <table>
+      <thead>
+        <tr>
+          <th>Payment Type</th>
+          <th style="text-align: right">Count</th>
+          <th style="text-align: right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {paymentStats.results?.map((pt) => (
+          <tr>
+            <td>{pt.payment_type || 'Unspecified'}</td>
+            <td style="text-align: right">{pt.count}</td>
+            <td style="text-align: right; font-weight: 600">{formatCurrency(pt.total as number)}</td>
+          </tr>
+        ))}
+        {(!paymentStats.results || paymentStats.results.length === 0) && (
+          <tr>
+            <td colspan="3" style="text-align: center; color: #666">No payments recorded this year</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Monthly Payments Chart (Simple table version) -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Monthly Payment Totals (Last 12 Months)</h3>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th style="text-align: right">Payments</th>
+          <th style="text-align: right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {monthlyPayments.results?.map((mp) => (
+          <tr>
+            <td>{mp.month}</td>
+            <td style="text-align: right">{mp.count}</td>
+            <td style="text-align: right; font-weight: 600">{formatCurrency(mp.total as number)}</td>
+          </tr>
+        ))}
+        {(!monthlyPayments.results || monthlyPayments.results.length === 0) && (
+          <tr>
+            <td colspan="3" style="text-align: center; color: #666">No payment data available</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Export Options -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Export Reports</h3>
+    </div>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+      <a href="/members/export" class="btn btn-secondary">Export All Members (CSV)</a>
+      <a href="/reports/expiring" class="btn btn-secondary">Expiring Members Report</a>
+      <a href="/reports/renewals" class="btn btn-secondary">Renewal Reminders List</a>
+    </div>
+  </div>
+</AdminLayout>

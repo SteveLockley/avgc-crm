@@ -1,0 +1,107 @@
+---
+// CSV Export endpoint
+const db = Astro.locals.runtime.env.DB;
+
+// Get all members
+const members = await db.prepare(
+  `SELECT * FROM members ORDER BY surname, first_name`
+).all();
+
+if (!members.results || members.results.length === 0) {
+  return new Response('No members to export', { status: 404 });
+}
+
+// Define CSV columns (matching original export format)
+const columns = [
+  'SURNAME', 'MIDDLE INITIALS', 'FIRST NAME', 'GENDER', 'AGE GROUP',
+  'HANDICAP INDEX', 'HOME/AWAY/VISITOR', 'HOME CLUB', 'PIN', 'TITLE',
+  'ADDRESS 1', 'ADDRESS 2', 'ADDRESS 3', 'ADDRESS 4', 'ADDRESS 5',
+  'TELEPHONE 1', 'TELEPHONE 2', 'TELEPHONE 3', 'E-MAIL ADDRESS',
+  'CLUB NUMBER', 'CATEGORY', 'OFFICER TITLE',
+  'DATE JOINED', 'DATE RENEWED', 'DATE EXPIRES', 'DATE SUBSCRIPTION PAID',
+  'NATIONAL ID COUNTRY', 'NATIONAL ID', 'CARD NUMBER', 'DATE OF BIRTH',
+  'LOCKER NUMBER', 'DEFAULT PAYMENT METHOD', 'SUBSCRIPTION TEMPLATE',
+  'ACCOUNT BALANCE', 'ACCOUNT NOTES', 'SEND INVOICE BY', 'COMPETITION FEE PURSE',
+  'NOTES', 'ELECTRONIC COMMUNICATION CONSENT', 'DATE COMMUNICATION CONSENT CHANGED',
+  'PARENTAL CONSENT', 'DATA PROTECTION NOTES', 'ADDITIONAL LOCKER',
+  'USER FIELD 2', 'USER FIELD 3', 'ACCOUNT ID'
+];
+
+// Map database fields to CSV columns
+function mapMemberToRow(m: any): string[] {
+  return [
+    m.surname || '',
+    m.middle_initials || '',
+    m.first_name || '',
+    m.gender || '',
+    m.age_group || '',
+    m.handicap_index?.toString() || '',
+    m.home_away || '',
+    m.home_club || '',
+    m.pin || '',
+    m.title || '',
+    m.address_1 || '',
+    m.address_2 || '',
+    m.address_3 || '',
+    m.address_4 || '',
+    m.address_5 || '',
+    m.telephone_1 || '',
+    m.telephone_2 || '',
+    m.telephone_3 || '',
+    m.email || '',
+    m.club_number || '',
+    m.category || '',
+    m.officer_title || '',
+    m.date_joined || '',
+    m.date_renewed || '',
+    m.date_expires || '',
+    m.date_subscription_paid || '',
+    m.national_id_country || '',
+    m.national_id || '',
+    m.card_number || '',
+    m.date_of_birth || '',
+    m.locker_number || '',
+    m.default_payment_method || '',
+    m.subscription_template || '',
+    m.account_balance?.toString() || '0',
+    m.account_notes || '',
+    m.send_invoice_by || '',
+    m.competition_fee_purse?.toString() || '0',
+    m.notes || '',
+    m.electronic_communication_consent || '',
+    m.date_communication_consent_changed || '',
+    m.parental_consent || '',
+    m.data_protection_notes || '',
+    m.additional_locker || '',
+    m.user_field_2 || '',
+    m.user_field_3 || '',
+    m.account_id || ''
+  ];
+}
+
+// Escape CSV values
+function escapeCSV(value: string): string {
+  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+// Build CSV content
+let csv = columns.join(',') + '\n';
+
+for (const member of members.results) {
+  const row = mapMemberToRow(member).map(escapeCSV);
+  csv += row.join(',') + '\n';
+}
+
+// Return as downloadable file
+const filename = `AVGC_Members_Export_${new Date().toISOString().split('T')[0]}.csv`;
+
+return new Response(csv, {
+  headers: {
+    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`
+  }
+});
+---

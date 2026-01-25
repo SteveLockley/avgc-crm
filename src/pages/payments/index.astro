@@ -1,0 +1,218 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatDate, formatCurrency, PAYMENT_METHODS } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get query parameters
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const method = url.searchParams.get('method') || '';
+const type = url.searchParams.get('type') || '';
+const dateFrom = url.searchParams.get('date_from') || '';
+const dateTo = url.searchParams.get('date_to') || '';
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 25;
+const offset = (page - 1) * perPage;
+
+// Build query
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (m.surname LIKE ? OR m.first_name LIKE ?)`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm);
+}
+
+if (method) {
+  whereClause += ' AND p.payment_method = ?';
+  params.push(method);
+}
+
+if (type) {
+  whereClause += ' AND p.payment_type = ?';
+  params.push(type);
+}
+
+if (dateFrom) {
+  whereClause += ' AND p.payment_date >= ?';
+  params.push(dateFrom);
+}
+
+if (dateTo) {
+  whereClause += ' AND p.payment_date <= ?';
+  params.push(dateTo);
+}
+
+// Get total count
+const countResult = await db.prepare(
+  `SELECT COUNT(*) as count FROM payments p
+   JOIN members m ON p.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ count: number }>();
+const totalCount = countResult?.count || 0;
+const totalPages = Math.ceil(totalCount / perPage);
+
+// Get payments
+const payments = await db.prepare(
+  `SELECT p.*, m.first_name, m.surname
+   FROM payments p
+   JOIN members m ON p.member_id = m.id
+   WHERE ${whereClause}
+   ORDER BY p.payment_date DESC, p.created_at DESC
+   LIMIT ? OFFSET ?`
+).bind(...params, perPage, offset).all();
+
+// Get totals for filtered results
+const totalsResult = await db.prepare(
+  `SELECT SUM(p.amount) as total FROM payments p
+   JOIN members m ON p.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ total: number }>();
+
+const paymentTypes = ['subscription', 'competition_fee', 'bar', 'shop', 'other'];
+
+// Calculate pagination pages
+const paginationPages: number[] = [];
+const maxPagesToShow = 10;
+if (totalPages <= maxPagesToShow) {
+  for (let i = 1; i <= totalPages; i++) paginationPages.push(i);
+} else if (page <= 5) {
+  for (let i = 1; i <= maxPagesToShow; i++) paginationPages.push(i);
+} else if (page >= totalPages - 4) {
+  for (let i = totalPages - 9; i <= totalPages; i++) paginationPages.push(i);
+} else {
+  for (let i = page - 5; i <= page + 4; i++) paginationPages.push(i);
+}
+---
+
+<AdminLayout title="Payments">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Payment Records ({totalCount} payments)</h3>
+      <a href="/payments/new" class="btn btn-primary">Record Payment</a>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" style="margin-bottom: 1rem;">
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 150px;">
+          <label class="form-label">Member Name</label>
+          <input type="text" name="search" class="form-input" placeholder="Search..." value={search} />
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Method</label>
+          <select name="method" class="form-input">
+            <option value="">All Methods</option>
+            {PAYMENT_METHODS.map(m => (
+              <option value={m} selected={method === m}>{m}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Type</label>
+          <select name="type" class="form-input">
+            <option value="">All Types</option>
+            {paymentTypes.map(t => (
+              <option value={t} selected={type === t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">From Date</label>
+          <input type="date" name="date_from" class="form-input" value={dateFrom} />
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">To Date</label>
+          <input type="date" name="date_to" class="form-input" value={dateTo} />
+        </div>
+
+        <button type="submit" class="btn btn-primary">Filter</button>
+        <a href="/payments" class="btn btn-secondary">Clear</a>
+      </div>
+    </form>
+
+    {totalsResult?.total !== null && (
+      <div style="background: #f4f4f4; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+        <strong>Total for selected filters:</strong> {formatCurrency(totalsResult?.total || 0)}
+      </div>
+    )}
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Member</th>
+            <th>Type</th>
+            <th>Method</th>
+            <th>Reference</th>
+            <th style="text-align: right;">Amount</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payments.results?.map((payment) => (
+            <tr>
+              <td>{formatDate(payment.payment_date as string)}</td>
+              <td>
+                <a href={`/members/${payment.member_id}`}>
+                  {payment.surname}, {payment.first_name}
+                </a>
+              </td>
+              <td>
+                <span class="badge badge-info">{payment.payment_type || '-'}</span>
+              </td>
+              <td>{payment.payment_method || '-'}</td>
+              <td style="font-size: 0.875rem;">{payment.reference || '-'}</td>
+              <td style="text-align: right; font-weight: 500;">
+                {formatCurrency(payment.amount as number)}
+              </td>
+              <td>
+                <a href={`/payments/${payment.id}/edit`} class="btn btn-secondary btn-sm">Edit</a>
+              </td>
+            </tr>
+          ))}
+          {(!payments.results || payments.results.length === 0) && (
+            <tr>
+              <td colspan="7" style="text-align: center; color: #666; padding: 2rem;">
+                No payments found
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={`?search=${search}&method=${method}&type=${type}&date_from=${dateFrom}&date_to=${dateTo}&page=${page - 1}`}>
+            Previous
+          </a>
+        )}
+
+        {paginationPages.map((p) => (
+          <a
+            href={`?search=${search}&method=${method}&type=${type}&date_from=${dateFrom}&date_to=${dateTo}&page=${p}`}
+            class={p === page ? 'active' : ''}
+          >
+            {p}
+          </a>
+        ))}
+
+        {page < totalPages && (
+          <a href={`?search=${search}&method=${method}&type=${type}&date_from=${dateFrom}&date_to=${dateTo}&page=${page + 1}`}>
+            Next
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+</AdminLayout>

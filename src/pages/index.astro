@@ -1,0 +1,185 @@
+---
+import AdminLayout from '../layouts/AdminLayout.astro';
+import { formatCurrency } from '../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get member statistics
+const totalMembers = await db.prepare(
+  'SELECT COUNT(*) as count FROM members'
+).first<{ count: number }>();
+
+const activeMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires >= date('now') OR date_expires IS NULL`
+).first<{ count: number }>();
+
+const expiringMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires BETWEEN date('now') AND date('now', '+30 days')`
+).first<{ count: number }>();
+
+const expiredMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires < date('now')`
+).first<{ count: number }>();
+
+// Get category breakdown
+const categoryBreakdown = await db.prepare(
+  `SELECT category, COUNT(*) as count
+   FROM members
+   WHERE category IS NOT NULL
+   GROUP BY category
+   ORDER BY count DESC`
+).all<{ category: string; count: number }>();
+
+// Get recent payments
+const recentPayments = await db.prepare(
+  `SELECT p.*, m.first_name, m.surname
+   FROM payments p
+   JOIN members m ON p.member_id = m.id
+   ORDER BY p.payment_date DESC
+   LIMIT 5`
+).all();
+
+// Get total outstanding balance
+const outstandingBalance = await db.prepare(
+  `SELECT SUM(account_balance) as total FROM members WHERE account_balance < 0`
+).first<{ total: number }>();
+
+// Get members expiring soon
+const expiringSoon = await db.prepare(
+  `SELECT id, first_name, surname, date_expires, category
+   FROM members
+   WHERE date_expires BETWEEN date('now') AND date('now', '+30 days')
+   ORDER BY date_expires
+   LIMIT 10`
+).all();
+---
+
+<AdminLayout title="Dashboard">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{totalMembers?.count || 0}</div>
+      <div class="stat-label">Total Members</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-value">{activeMembers?.count || 0}</div>
+      <div class="stat-label">Active Members</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-value" style="color: #ffc107">{expiringMembers?.count || 0}</div>
+      <div class="stat-label">Expiring in 30 Days</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-value" style="color: #dc3545">{expiredMembers?.count || 0}</div>
+      <div class="stat-label">Expired Members</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Membership by Category</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th style="text-align: right">Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {categoryBreakdown.results?.map((cat) => (
+            <tr>
+              <td>{cat.category}</td>
+              <td style="text-align: right">{cat.count}</td>
+            </tr>
+          ))}
+          {(!categoryBreakdown.results || categoryBreakdown.results.length === 0) && (
+            <tr>
+              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Expiring Soon</h3>
+        <a href="/members?filter=expiring" class="btn btn-secondary btn-sm">View All</a>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Expires</th>
+          </tr>
+        </thead>
+        <tbody>
+          {expiringSoon.results?.map((member) => (
+            <tr>
+              <td>
+                <a href={`/members/${member.id}`}>
+                  {member.first_name} {member.surname}
+                </a>
+              </td>
+              <td>{member.date_expires}</td>
+            </tr>
+          ))}
+          {(!expiringSoon.results || expiringSoon.results.length === 0) && (
+            <tr>
+              <td colspan="2" style="text-align: center; color: #666;">No members expiring soon</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Recent Payments</h3>
+      <a href="/payments" class="btn btn-secondary btn-sm">View All</a>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Member</th>
+            <th>Type</th>
+            <th>Method</th>
+            <th style="text-align: right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recentPayments.results?.map((payment) => (
+            <tr>
+              <td>{payment.payment_date}</td>
+              <td>{payment.first_name} {payment.surname}</td>
+              <td>{payment.payment_type}</td>
+              <td>{payment.payment_method}</td>
+              <td style="text-align: right">{formatCurrency(payment.amount as number)}</td>
+            </tr>
+          ))}
+          {(!recentPayments.results || recentPayments.results.length === 0) && (
+            <tr>
+              <td colspan="5" style="text-align: center; color: #666;">No recent payments</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {outstandingBalance?.total && outstandingBalance.total < 0 && (
+    <div class="alert alert-error" style="margin-top: 1.5rem;">
+      <strong>Outstanding Balance:</strong> {formatCurrency(Math.abs(outstandingBalance.total))} in member credits/overpayments
+    </div>
+  )}
+</AdminLayout>

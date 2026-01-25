@@ -1,0 +1,9 @@
+name = "alnmouth-golf-crm"
+compatibility_date = "2024-12-01"
+pages_build_output_dir = "./dist"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "alnmouth-golf-db"
+database_id = "2dabf34e-2dc8-49ec-abb6-a6b1dfc78ac0"
