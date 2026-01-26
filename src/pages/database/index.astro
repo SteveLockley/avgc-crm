@@ -1,0 +1,98 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get all tables
+const tablesResult = await db.prepare(
+  `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name`
+).all();
+
+const tables = tablesResult.results || [];
+
+// Get table info for each table
+const tableInfo: Record<string, any> = {};
+for (const table of tables) {
+  const countResult = await db.prepare(`SELECT COUNT(*) as count FROM "${table.name}"`).first<{ count: number }>();
+  const columnsResult = await db.prepare(`PRAGMA table_info("${table.name}")`).all();
+  const indexesResult = await db.prepare(`PRAGMA index_list("${table.name}")`).all();
+
+  tableInfo[table.name as string] = {
+    count: countResult?.count || 0,
+    columns: columnsResult.results || [],
+    indexes: indexesResult.results || []
+  };
+}
+---
+
+<AdminLayout title="Database Explorer">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Database Explorer</h3>
+      <a href="/database/query" class="btn btn-primary">SQL Query</a>
+    </div>
+
+    <p style="color: #666; margin-bottom: 1.5rem;">
+      Browse and manage your D1 SQLite database tables.
+    </p>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Table Name</th>
+            <th>Rows</th>
+            <th>Columns</th>
+            <th>Indexes</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tables.map((table) => (
+            <tr>
+              <td>
+                <a href={`/database/table/${table.name}`} style="font-weight: 500;">
+                  {table.name}
+                </a>
+              </td>
+              <td>{tableInfo[table.name as string].count.toLocaleString()}</td>
+              <td>{tableInfo[table.name as string].columns.length}</td>
+              <td>{tableInfo[table.name as string].indexes.length}</td>
+              <td>
+                <a href={`/database/table/${table.name}`} class="btn btn-secondary btn-sm">Browse</a>
+                <a href={`/database/table/${table.name}/structure`} class="btn btn-secondary btn-sm">Structure</a>
+              </td>
+            </tr>
+          ))}
+          {tables.length === 0 && (
+            <tr>
+              <td colspan="5" style="text-align: center; color: #666; padding: 2rem;">
+                No tables found
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Quick Stats -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem;">
+    <div class="card" style="padding: 1rem;">
+      <div style="font-size: 2rem; font-weight: bold; color: #2d5a27;">{tables.length}</div>
+      <div style="color: #666;">Tables</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+      <div style="font-size: 2rem; font-weight: bold; color: #2d5a27;">
+        {Object.values(tableInfo).reduce((sum: number, t: any) => sum + t.count, 0).toLocaleString()}
+      </div>
+      <div style="color: #666;">Total Rows</div>
+    </div>
+    <div class="card" style="padding: 1rem;">
+      <div style="font-size: 2rem; font-weight: bold; color: #2d5a27;">
+        {Object.values(tableInfo).reduce((sum: number, t: any) => sum + t.indexes.length, 0)}
+      </div>
+      <div style="color: #666;">Indexes</div>
+    </div>
+  </div>
+</AdminLayout>

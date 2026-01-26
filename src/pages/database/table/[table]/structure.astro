@@ -1,0 +1,191 @@
+---
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+
+const { table } = Astro.params;
+const db = Astro.locals.runtime.env.DB;
+
+// Validate table exists
+const tableCheck = await db.prepare(
+  `SELECT name, sql FROM sqlite_master WHERE type='table' AND name = ?`
+).bind(table).first<{ name: string; sql: string }>();
+
+if (!tableCheck) {
+  return Astro.redirect('/database');
+}
+
+// Get columns
+const columnsResult = await db.prepare(`PRAGMA table_info("${table}")`).all();
+const columns = columnsResult.results || [];
+
+// Get indexes
+const indexesResult = await db.prepare(`PRAGMA index_list("${table}")`).all();
+const indexes = indexesResult.results || [];
+
+// Get index details
+const indexDetails: Record<string, any[]> = {};
+for (const idx of indexes) {
+  const idxInfoResult = await db.prepare(`PRAGMA index_info("${(idx as any).name}")`).all();
+  indexDetails[(idx as any).name] = idxInfoResult.results || [];
+}
+
+// Get foreign keys
+const fkResult = await db.prepare(`PRAGMA foreign_key_list("${table}")`).all();
+const foreignKeys = fkResult.results || [];
+
+// Get row count
+const countResult = await db.prepare(`SELECT COUNT(*) as count FROM "${table}"`).first<{ count: number }>();
+const rowCount = countResult?.count || 0;
+---
+
+<AdminLayout title={`Structure: ${table}`}>
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">
+        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        &nbsp;/&nbsp;
+        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        &nbsp;/&nbsp; Structure
+      </h3>
+      <a href={`/database/table/${table}`} class="btn btn-primary">Browse Data</a>
+    </div>
+
+    <!-- Table Info -->
+    <div style="background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem;">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+        <div>
+          <div style="color: #666; font-size: 0.875rem;">Rows</div>
+          <div style="font-size: 1.25rem; font-weight: bold;">{rowCount.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style="color: #666; font-size: 0.875rem;">Columns</div>
+          <div style="font-size: 1.25rem; font-weight: bold;">{columns.length}</div>
+        </div>
+        <div>
+          <div style="color: #666; font-size: 0.875rem;">Indexes</div>
+          <div style="font-size: 1.25rem; font-weight: bold;">{indexes.length}</div>
+        </div>
+        <div>
+          <div style="color: #666; font-size: 0.875rem;">Foreign Keys</div>
+          <div style="font-size: 1.25rem; font-weight: bold;">{foreignKeys.length}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Columns -->
+    <h4 style="margin-bottom: 0.5rem;">Columns</h4>
+    <div class="table-container" style="margin-bottom: 1.5rem;">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Not Null</th>
+            <th>Default</th>
+            <th>Primary Key</th>
+          </tr>
+        </thead>
+        <tbody>
+          {columns.map((col: any) => (
+            <tr>
+              <td>{col.cid}</td>
+              <td style="font-weight: 500;">{col.name}</td>
+              <td><code style="background: #e9ecef; padding: 0.125rem 0.375rem; border-radius: 3px;">{col.type || 'TEXT'}</code></td>
+              <td>
+                {col.notnull ? (
+                  <span class="badge badge-warning">NOT NULL</span>
+                ) : (
+                  <span style="color: #999;">-</span>
+                )}
+              </td>
+              <td>
+                {col.dflt_value !== null ? (
+                  <code style="background: #e9ecef; padding: 0.125rem 0.375rem; border-radius: 3px;">{col.dflt_value}</code>
+                ) : (
+                  <span style="color: #999;">-</span>
+                )}
+              </td>
+              <td>
+                {col.pk === 1 ? (
+                  <span class="badge badge-success">PK</span>
+                ) : (
+                  <span style="color: #999;">-</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Indexes -->
+    {indexes.length > 0 && (
+      <>
+        <h4 style="margin-bottom: 0.5rem;">Indexes</h4>
+        <div class="table-container" style="margin-bottom: 1.5rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Unique</th>
+                <th>Columns</th>
+              </tr>
+            </thead>
+            <tbody>
+              {indexes.map((idx: any) => (
+                <tr>
+                  <td style="font-weight: 500;">{idx.name}</td>
+                  <td>
+                    {idx.unique ? (
+                      <span class="badge badge-info">UNIQUE</span>
+                    ) : (
+                      <span style="color: #999;">-</span>
+                    )}
+                  </td>
+                  <td>
+                    {indexDetails[idx.name]?.map((col: any) => col.name).join(', ') || '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+
+    <!-- Foreign Keys -->
+    {foreignKeys.length > 0 && (
+      <>
+        <h4 style="margin-bottom: 0.5rem;">Foreign Keys</h4>
+        <div class="table-container" style="margin-bottom: 1.5rem;">
+          <table>
+            <thead>
+              <tr>
+                <th>Column</th>
+                <th>References</th>
+                <th>On Update</th>
+                <th>On Delete</th>
+              </tr>
+            </thead>
+            <tbody>
+              {foreignKeys.map((fk: any) => (
+                <tr>
+                  <td style="font-weight: 500;">{fk.from}</td>
+                  <td>
+                    <a href={`/database/table/${fk.table}`}>{fk.table}</a>.{fk.to}
+                  </td>
+                  <td>{fk.on_update || 'NO ACTION'}</td>
+                  <td>{fk.on_delete || 'NO ACTION'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+
+    <!-- CREATE statement -->
+    <h4 style="margin-bottom: 0.5rem;">CREATE Statement</h4>
+    <pre style="background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem;">{tableCheck.sql}</pre>
+  </div>
+</AdminLayout>

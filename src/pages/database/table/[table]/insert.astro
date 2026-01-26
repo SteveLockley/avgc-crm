@@ -1,0 +1,165 @@
+---
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+
+const { table } = Astro.params;
+const db = Astro.locals.runtime.env.DB;
+
+// Validate table exists
+const tableCheck = await db.prepare(
+  `SELECT name FROM sqlite_master WHERE type='table' AND name = ?`
+).bind(table).first();
+
+if (!tableCheck) {
+  return Astro.redirect('/database');
+}
+
+// Get columns
+const columnsResult = await db.prepare(`PRAGMA table_info("${table}")`).all();
+const columns = columnsResult.results || [];
+const primaryKey = columns.find((c: any) => c.pk === 1)?.name || 'rowid';
+
+let error = '';
+
+// Handle form submission
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+
+  try {
+    const colNames: string[] = [];
+    const placeholders: string[] = [];
+    const values: any[] = [];
+
+    for (const col of columns) {
+      const colName = (col as any).name;
+
+      // Skip auto-increment primary key
+      if ((col as any).pk === 1 && (col as any).type?.toUpperCase() === 'INTEGER') {
+        const rawValue = formData.get(colName);
+        if (!rawValue || rawValue === '') continue; // Let SQLite auto-generate
+      }
+
+      const rawValue = formData.get(colName);
+      const isNull = formData.get(`${colName}_null`) === 'on';
+
+      if (isNull) {
+        colNames.push(`"${colName}"`);
+        placeholders.push('NULL');
+      } else if (rawValue !== null && rawValue !== '') {
+        colNames.push(`"${colName}"`);
+        placeholders.push('?');
+        values.push(rawValue);
+      } else if ((col as any).notnull && !(col as any).dflt_value) {
+        throw new Error(`Column "${colName}" cannot be empty (NOT NULL constraint)`);
+      }
+    }
+
+    if (colNames.length > 0) {
+      const result = await db.prepare(
+        `INSERT INTO "${table}" (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`
+      ).bind(...values).run();
+
+      // Redirect to the new row
+      const lastId = result.meta?.last_row_id;
+      if (lastId) {
+        return Astro.redirect(`/database/table/${table}/edit/${lastId}?inserted=1`);
+      }
+      return Astro.redirect(`/database/table/${table}?inserted=1`);
+    }
+  } catch (e: any) {
+    error = e.message || 'Failed to insert row';
+  }
+}
+---
+
+<AdminLayout title={`Insert Row - ${table}`}>
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">
+        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        &nbsp;/&nbsp;
+        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        &nbsp;/&nbsp; Insert Row
+      </h3>
+    </div>
+
+    {error && (
+      <div style="background: #f8d7da; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
+        {error}
+      </div>
+    )}
+
+    <form method="POST">
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        {columns.map((col: any) => {
+          const isPK = col.pk === 1;
+          const isAutoIncrement = isPK && col.type?.toUpperCase() === 'INTEGER';
+          const isLargeText = col.type?.toUpperCase().includes('TEXT');
+
+          return (
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                {col.name}
+                {isPK && <span class="badge badge-success">PK</span>}
+                {isAutoIncrement && <span class="badge badge-info">AUTO</span>}
+                {col.notnull && !isAutoIncrement && <span class="badge badge-warning">NOT NULL</span>}
+                <span style="color: #999; font-weight: normal;">({col.type || 'TEXT'})</span>
+              </label>
+
+              <div style="display: flex; gap: 0.5rem; align-items: start;">
+                {isLargeText ? (
+                  <textarea
+                    name={col.name}
+                    class="form-input"
+                    rows="3"
+                    style="flex: 1;"
+                    placeholder={isAutoIncrement ? '(auto-generated)' : col.dflt_value ? `Default: ${col.dflt_value}` : ''}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    name={col.name}
+                    class="form-input"
+                    style="flex: 1;"
+                    placeholder={isAutoIncrement ? '(auto-generated)' : col.dflt_value ? `Default: ${col.dflt_value}` : ''}
+                  />
+                )}
+
+                {!col.notnull && (
+                  <label style="display: flex; align-items: center; gap: 0.25rem; white-space: nowrap; padding: 0.5rem;">
+                    <input type="checkbox" name={`${col.name}_null`} />
+                    NULL
+                  </label>
+                )}
+              </div>
+
+              {col.dflt_value && (
+                <div style="font-size: 0.75rem; color: #666; margin-top: 0.25rem;">
+                  Default: <code>{col.dflt_value}</code>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem;">
+        <button type="submit" class="btn btn-primary">Insert Row</button>
+        <a href={`/database/table/${table}`} class="btn btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</AdminLayout>
+
+<script>
+  // When NULL checkbox is checked, disable the input
+  document.querySelectorAll('input[type="checkbox"][name$="_null"]').forEach(checkbox => {
+    const input = checkbox.closest('.form-group')?.querySelector('input[type="text"], textarea') as HTMLInputElement;
+    if (input) {
+      checkbox.addEventListener('change', (e) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        input.disabled = checked;
+        if (checked) input.value = '';
+      });
+    }
+  });
+</script>
