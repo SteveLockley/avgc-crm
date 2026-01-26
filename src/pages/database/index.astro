@@ -3,12 +3,25 @@ import AdminLayout from '../../layouts/AdminLayout.astro';
 
 const db = Astro.locals.runtime.env.DB;
 
-// Get all tables
+// Get all tables (excluding internal SQLite tables and FTS shadow tables)
 const tablesResult = await db.prepare(
-  `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name`
+  `SELECT name FROM sqlite_master
+   WHERE type='table'
+   AND name NOT LIKE 'sqlite_%'
+   AND name NOT LIKE '_cf_%'
+   AND name NOT LIKE '%_fts_%'
+   AND name NOT LIKE '%_content'
+   AND name NOT LIKE '%_docsize'
+   AND name NOT LIKE '%_data'
+   AND name NOT LIKE '%_idx'
+   AND name NOT LIKE '%_config'
+   ORDER BY name`
 ).all();
 
 const tables = tablesResult.results || [];
+
+// Check for error message
+const errorParam = Astro.url.searchParams.get('error');
 
 // Get table info for each table
 const tableInfo: Record<string, any> = {};
@@ -31,6 +44,12 @@ for (const table of tables) {
       <h3 class="card-title">Database Explorer</h3>
       <a href="/database/query" class="btn btn-primary">SQL Query</a>
     </div>
+
+    {errorParam === 'fts' && (
+      <div style="background: #fff3cd; color: #856404; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
+        FTS (Full-Text Search) shadow tables cannot be browsed directly. They are internal SQLite structures.
+      </div>
+    )}
 
     <p style="color: #666; margin-bottom: 1.5rem;">
       Browse and manage your D1 SQLite database tables.

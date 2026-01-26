@@ -13,6 +13,18 @@ if (!tableCheck) {
   return Astro.redirect('/database');
 }
 
+// Block access to FTS shadow tables (they have special structures that break normal queries)
+const isFtsShadowTable = table?.includes('_fts_') ||
+  table?.endsWith('_content') ||
+  table?.endsWith('_docsize') ||
+  table?.endsWith('_data') ||
+  table?.endsWith('_idx') ||
+  table?.endsWith('_config');
+
+if (isFtsShadowTable) {
+  return Astro.redirect('/database?error=fts');
+}
+
 // Get query parameters
 const url = Astro.url;
 const page = parseInt(url.searchParams.get('page') || '1');
