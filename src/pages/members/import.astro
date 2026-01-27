@@ -6,12 +6,63 @@ const db = Astro.locals.runtime.env.DB;
 let error = '';
 let success = '';
 let importedCount = 0;
+let updatedCount = 0;
 let skippedCount = 0;
+
+// Subscription template mapping from old ClubV1 format to new Payment Items format
+const subscriptionTemplateMap: Record<string, string> = {
+  'A) Full Home': 'Full',
+  'B) Full Away': 'Full',
+  '3) 18 Month Full Membership': 'Full',
+  'C) Under 30 Home': 'Under 30',
+  'D) Under 30 Away': 'Under 30',
+  'E) Senior Home': 'Senior Loyalty',
+  'F) Senior Away': 'Senior Loyalty',
+  'G) Over 80 Home': 'Over 80',
+  'H) Over 80 Away': 'Over 80',
+  'I) Intermediate Home': 'Intermediate',
+  'K) Winter Membership': 'Winter',
+  'M) Junior Home': 'Junior',
+  'N) Junior Away': 'Junior',
+  'O) Junior Academy': 'Junior Academy',
+  'Q) International Membership': 'International',
+  'R) Gratis Membership': 'Gratis',
+  'S) Social Membership': 'Social',
+  'T) Twilight Member': 'Twilight',
+  'U) Out Of County (Less than 100 miles) Home Member': 'Out of County - Near',
+  'V) Out Of County (Less than 100 miles) Away Member': 'Out of County - Near',
+  'W) Out Of County (100 miles or more) Away Member': 'Out of County - Far',
+  'X) Out of County (100 miles or more) Home Member': 'Out of County - Far',
+  'Y) England Golf and Union Fees': 'Gratis',
+  'None': '',
+};
+
+// Map subscription template to new format
+function mapSubscriptionTemplate(oldValue: string | null | undefined): string | null {
+  if (!oldValue) return null;
+  const trimmed = oldValue.trim();
+  if (trimmed === '' || trimmed === 'None') return null;
+
+  // Check if already in new format (no letter prefix)
+  if (!trimmed.match(/^[A-Z0-9]\)/)) {
+    return trimmed; // Already new format
+  }
+
+  // Map from old to new format
+  const mapped = subscriptionTemplateMap[trimmed];
+  if (mapped !== undefined) {
+    return mapped || null;
+  }
+
+  // Unknown format - return as-is but log warning
+  console.warn(`Unknown subscription template: ${trimmed}`);
+  return trimmed;
+}
 
 if (Astro.request.method === 'POST') {
   const formData = await Astro.request.formData();
   const file = formData.get('csvfile') as File;
-  const mode = formData.get('mode') || 'skip'; // skip, update, replace
+  const mode = formData.get('mode') || 'update'; // skip, update, replace
 
   if (!file || file.size === 0) {
     error = 'Please select a CSV file to import';
@@ -76,100 +127,111 @@ if (Astro.request.method === 'POST') {
           'ACCOUNT ID': 'account_id'
         };
 
-        // If replace mode, clear existing members
-        if (mode === 'replace') {
-          await db.prepare('DELETE FROM members').run();
-        }
+        // Check if PIN column exists
+        const pinColIndex = header.findIndex(h => h.trim() === 'PIN');
+        if (pinColIndex === -1) {
+          error = 'CSV file must contain a PIN column for member matching';
+        } else {
+          // If replace mode, clear existing members
+          if (mode === 'replace') {
+            await db.prepare('DELETE FROM members').run();
+          }
 
-        // Process each row
-        for (let i = 1; i < lines.length; i++) {
-          const values = parseCSVLine(lines[i]);
-          if (values.length < 3) continue; // Skip empty rows
+          // Process each row
+          for (let i = 1; i < lines.length; i++) {
+            const values = parseCSVLine(lines[i]);
+            if (values.length < 3) continue; // Skip empty rows
 
-          const member: Record<string, any> = {};
+            const member: Record<string, any> = {};
 
-          for (let j = 0; j < header.length; j++) {
-            const csvCol = header[j].trim();
-            const dbCol = columnMap[csvCol];
-            if (dbCol && values[j] !== undefined) {
-              let value = values[j].trim();
+            for (let j = 0; j < header.length; j++) {
+              const csvCol = header[j].trim();
+              const dbCol = columnMap[csvCol];
+              if (dbCol && values[j] !== undefined) {
+                let value = values[j].trim();
 
-              // Clean up currency values
-              if (dbCol === 'account_balance' || dbCol === 'competition_fee_purse') {
-                value = value.replace(/[£\-,]/g, '').trim();
-                member[dbCol] = parseFloat(value) || 0;
-              } else if (dbCol === 'handicap_index') {
-                member[dbCol] = value ? parseFloat(value) : null;
-              } else if (value) {
-                // Convert date formats from DD/MM/YYYY to YYYY-MM-DD
-                if (dbCol.startsWith('date_') && value.includes('/')) {
-                  const parts = value.split('/');
-                  if (parts.length === 3) {
-                    value = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                // Clean up currency values
+                if (dbCol === 'account_balance' || dbCol === 'competition_fee_purse') {
+                  value = value.replace(/[£\-,]/g, '').trim();
+                  member[dbCol] = parseFloat(value) || 0;
+                } else if (dbCol === 'handicap_index') {
+                  member[dbCol] = value ? parseFloat(value) : null;
+                } else if (dbCol === 'subscription_template') {
+                  // Map subscription template to new format
+                  member[dbCol] = mapSubscriptionTemplate(value);
+                } else if (value) {
+                  // Convert date formats from DD/MM/YYYY to YYYY-MM-DD
+                  if (dbCol.startsWith('date_') && value.includes('/')) {
+                    const parts = value.split('/');
+                    if (parts.length === 3) {
+                      value = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                    }
                   }
+                  member[dbCol] = value;
                 }
-                member[dbCol] = value;
               }
+            }
+
+            // Skip if no surname or first_name
+            if (!member.surname || !member.first_name) {
+              skippedCount++;
+              continue;
+            }
+
+            // Skip if no PIN (required for matching)
+            if (!member.pin) {
+              skippedCount++;
+              continue;
+            }
+
+            // Check for existing member by PIN (primary matching key)
+            const existing = await db.prepare(
+              'SELECT id FROM members WHERE pin = ?'
+            ).bind(member.pin).first<{ id: number }>();
+
+            if (existing && mode === 'skip') {
+              skippedCount++;
+              continue;
+            }
+
+            if (existing) {
+              // Update existing member
+              const setClauses = Object.keys(member)
+                .filter(k => k !== 'pin') // Don't update PIN
+                .map(k => `${k} = ?`).join(', ');
+              const updateValues = Object.keys(member)
+                .filter(k => k !== 'pin')
+                .map(k => member[k]);
+
+              if (setClauses) {
+                await db.prepare(
+                  `UPDATE members SET ${setClauses}, updated_at = datetime('now') WHERE id = ?`
+                ).bind(...updateValues, existing.id).run();
+                updatedCount++;
+              }
+            } else {
+              // Insert new member
+              const columns = Object.keys(member);
+              const placeholders = columns.map(() => '?').join(', ');
+              const insertValues = Object.values(member);
+              await db.prepare(
+                `INSERT INTO members (${columns.join(', ')}) VALUES (${placeholders})`
+              ).bind(...insertValues).run();
+              importedCount++;
             }
           }
 
-          // Skip if no surname or first_name
-          if (!member.surname || !member.first_name) {
-            skippedCount++;
-            continue;
-          }
+          success = `Import complete: ${importedCount} new members added, ${updatedCount} members updated, ${skippedCount} skipped`;
 
-          // Check for existing member (by email or name+dob)
-          let existingId = null;
-          if (member.email) {
-            const existing = await db.prepare(
-              'SELECT id FROM members WHERE email = ?'
-            ).bind(member.email).first();
-            existingId = existing?.id;
-          }
-
-          if (!existingId && member.surname && member.first_name) {
-            const existing = await db.prepare(
-              'SELECT id FROM members WHERE surname = ? AND first_name = ? AND (date_of_birth = ? OR date_of_birth IS NULL)'
-            ).bind(member.surname, member.first_name, member.date_of_birth || null).first();
-            existingId = existing?.id;
-          }
-
-          if (existingId && mode === 'skip') {
-            skippedCount++;
-            continue;
-          }
-
-          if (existingId && mode === 'update') {
-            // Update existing member
-            const setClauses = Object.keys(member).map(k => `${k} = ?`).join(', ');
-            const updateValues = Object.values(member);
-            await db.prepare(
-              `UPDATE members SET ${setClauses}, updated_at = datetime('now') WHERE id = ?`
-            ).bind(...updateValues, existingId).run();
-            importedCount++;
-          } else {
-            // Insert new member
-            const columns = Object.keys(member);
-            const placeholders = columns.map(() => '?').join(', ');
-            const insertValues = Object.values(member);
-            await db.prepare(
-              `INSERT INTO members (${columns.join(', ')}) VALUES (${placeholders})`
-            ).bind(...insertValues).run();
-            importedCount++;
-          }
+          // Log the import
+          await db.prepare(
+            `INSERT INTO audit_log (user_email, action, entity_type, details)
+             VALUES (?, 'import', 'member', ?)`
+          ).bind(
+            Astro.locals.user?.email || 'system',
+            JSON.stringify({ imported: importedCount, updated: updatedCount, skipped: skippedCount, mode })
+          ).run();
         }
-
-        success = `Import complete: ${importedCount} members imported, ${skippedCount} skipped`;
-
-        // Log the import
-        await db.prepare(
-          `INSERT INTO audit_log (user_email, action, entity_type, details)
-           VALUES (?, 'import', 'member', ?)`
-        ).bind(
-          Astro.locals.user?.email || 'system',
-          JSON.stringify({ imported: importedCount, skipped: skippedCount, mode })
-        ).run();
       }
     } catch (e: any) {
       error = `Import failed: ${e.message}`;
@@ -220,8 +282,8 @@ function parseCSVLine(line: string): string[] {
     </div>
 
     <p style="margin-bottom: 1rem; color: #666;">
-      Upload a CSV file in the same format as your member export.
-      The file should have a header row with column names.
+      Upload a CSV file in the same format as your ClubV1 member export.
+      Members are matched by <strong>PIN number</strong> for updates.
     </p>
 
     <form method="POST" enctype="multipart/form-data">
@@ -233,17 +295,54 @@ function parseCSVLine(line: string): string[] {
       <div class="form-group">
         <label class="form-label" for="mode">Import Mode</label>
         <select name="mode" id="mode" class="form-input">
-          <option value="skip">Skip existing members (match by email or name+DOB)</option>
-          <option value="update">Update existing members with new data</option>
+          <option value="update" selected>Update existing members, add new (recommended)</option>
+          <option value="skip">Skip existing members (add new only)</option>
           <option value="replace">Replace all members (delete existing first)</option>
         </select>
         <p style="font-size: 0.75rem; color: #666; margin-top: 0.25rem;">
-          Warning: "Replace all" will permanently delete all existing member records!
+          Members are matched by PIN number. "Update" mode will merge changes into existing records.
         </p>
       </div>
 
       <button type="submit" class="btn btn-primary">Import Members</button>
     </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Subscription Template Mapping</h3>
+    </div>
+    <p style="font-size: 0.875rem; color: #666; margin-bottom: 1rem;">
+      Old ClubV1 subscription templates are automatically mapped to the new format during import:
+    </p>
+    <div class="table-container" style="max-height: 300px; overflow-y: auto;">
+      <table style="font-size: 0.875rem;">
+        <thead>
+          <tr>
+            <th>ClubV1 Format</th>
+            <th>New Format</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>A) Full Home / B) Full Away</td><td>Full</td></tr>
+          <tr><td>C) Under 30 Home / D) Under 30 Away</td><td>Under 30</td></tr>
+          <tr><td>E) Senior Home / F) Senior Away</td><td>Senior Loyalty</td></tr>
+          <tr><td>G) Over 80 Home / H) Over 80 Away</td><td>Over 80</td></tr>
+          <tr><td>I) Intermediate Home</td><td>Intermediate</td></tr>
+          <tr><td>K) Winter Membership</td><td>Winter</td></tr>
+          <tr><td>M) Junior Home / N) Junior Away</td><td>Junior</td></tr>
+          <tr><td>O) Junior Academy</td><td>Junior Academy</td></tr>
+          <tr><td>Q) International Membership</td><td>International</td></tr>
+          <tr><td>R) Gratis Membership</td><td>Gratis</td></tr>
+          <tr><td>S) Social Membership</td><td>Social</td></tr>
+          <tr><td>T) Twilight Member</td><td>Twilight</td></tr>
+          <tr><td>U/V) Out Of County (&lt;100 miles)</td><td>Out of County - Near</td></tr>
+          <tr><td>W/X) Out Of County (&gt;=100 miles)</td><td>Out of County - Far</td></tr>
+          <tr><td>Y) England Golf and Union Fees</td><td>Gratis</td></tr>
+          <tr><td>None</td><td><em>(cleared)</em></td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
@@ -262,7 +361,7 @@ function parseCSVLine(line: string): string[] {
     </div>
 
     <p style="font-size: 0.875rem; color: #666; margin-top: 1rem;">
-      <strong>Required columns:</strong> SURNAME, FIRST NAME
+      <strong>Required columns:</strong> SURNAME, FIRST NAME, PIN
     </p>
   </div>
 </AdminLayout>

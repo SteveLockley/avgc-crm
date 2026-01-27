@@ -68,14 +68,6 @@ const outstandingBalance = await db.prepare(
   `SELECT SUM(account_balance) as total FROM members WHERE account_balance < 0`
 ).first<{ total: number }>();
 
-// Get members expiring soon
-const expiringSoon = await db.prepare(
-  `SELECT id, first_name, surname, date_expires, subscription_template
-   FROM members
-   WHERE date_expires BETWEEN date('now') AND date('now', '+30 days')
-   ORDER BY date_expires
-   LIMIT 10`
-).all();
 ---
 
 <AdminLayout title="Dashboard">
@@ -129,15 +121,15 @@ const expiringSoon = await db.prepare(
       </table>
     </div>
 
-    <!-- Members by Subscription Type -->
+    <!-- Members by Subscription -->
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Members by Subscription Type</h3>
+        <h3 class="card-title">Members by Subscription</h3>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Subscription Type</th>
+            <th>Subscription</th>
             <th style="text-align: right">Count</th>
           </tr>
         </thead>
@@ -162,71 +154,36 @@ const expiringSoon = await db.prepare(
     </div>
   </div>
 
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
-    <!-- Members by EGU Category -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Members by EGU Category</h3>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>EGU Category</th>
-            <th style="text-align: right">Count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {eguCategoryBreakdown.map((cat) => (
-            <tr>
-              <td style="font-size: 0.875rem;">{cat.category}</td>
-              <td style="text-align: right">
-                <a href={`/members?egu_category=${encodeURIComponent(cat.category)}`} style="font-weight: 500;">
-                  {cat.count}
-                </a>
-              </td>
-            </tr>
-          ))}
-          {eguCategoryBreakdown.length === 0 && (
-            <tr>
-              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+  <!-- Members by EGU Category -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Members by EGU Category</h3>
     </div>
-
-    <!-- Expiring Soon -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Expiring Soon</h3>
-        <a href="/members?filter=expiring" class="btn btn-secondary btn-sm">View All</a>
-      </div>
-      <table>
-        <thead>
+    <table>
+      <thead>
+        <tr>
+          <th>EGU Category</th>
+          <th style="text-align: right">Count</th>
+        </tr>
+      </thead>
+      <tbody>
+        {eguCategoryBreakdown.map((cat) => (
           <tr>
-            <th>Name</th>
-            <th>Expires</th>
+            <td>{cat.category}</td>
+            <td style="text-align: right">
+              <a href={`/members?egu_category=${encodeURIComponent(cat.category)}`} style="font-weight: 500;">
+                {cat.count}
+              </a>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          {expiringSoon.results?.map((member) => (
-            <tr>
-              <td>
-                <a href={`/members/${member.id}`}>
-                  {member.first_name} {member.surname}
-                </a>
-              </td>
-              <td>{formatDate(member.date_expires as string)}</td>
-            </tr>
-          ))}
-          {(!expiringSoon.results || expiringSoon.results.length === 0) && (
-            <tr>
-              <td colspan="2" style="text-align: center; color: #666;">No members expiring soon</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+        ))}
+        {eguCategoryBreakdown.length === 0 && (
+          <tr>
+            <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   </div>
 
   <div class="card" style="margin-top: 1.5rem;">
