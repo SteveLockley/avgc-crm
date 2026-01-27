@@ -24,20 +24,37 @@ const expiredMembers = await db.prepare(
    WHERE date_expires < date('now')`
 ).first<{ count: number }>();
 
-// Get subscription type breakdown
+// Get subscription type breakdown with fees from payment_items
 const subscriptionBreakdown = await db.prepare(
-  `SELECT subscription_template, COUNT(*) as count
-   FROM members
-   WHERE subscription_template IS NOT NULL AND subscription_template != ''
-   GROUP BY subscription_template
+  `SELECT m.subscription_template, COUNT(*) as count, pi.fee
+   FROM members m
+   LEFT JOIN payment_items pi ON pi.name = m.subscription_template AND pi.category = 'Subscription' AND pi.active = 1
+   WHERE m.subscription_template IS NOT NULL AND m.subscription_template != ''
+   GROUP BY m.subscription_template
    ORDER BY count DESC`
-).all<{ subscription_template: string; count: number }>();
+).all<{ subscription_template: string; count: number; fee: number | null }>();
+
+// Calculate subscription values
+const subscriptionWithValues = (subscriptionBreakdown.results || []).map(sub => ({
+  ...sub,
+  value: sub.fee ? sub.fee * sub.count : 0
+}));
+const totalSubscriptionValue = subscriptionWithValues.reduce((sum, sub) => sum + sub.value, 0);
+const totalSubscriptionCount = subscriptionWithValues.reduce((sum, sub) => sum + sub.count, 0);
+
+// Excluded categories for EGU calculation
+const excludedCategories = ['Social', 'Gratis', 'Retention', 'Resigned'];
 
 // Get all members for EGU category calculation
+// Only include members with CDH number (national_id) and exclude certain categories
 const allMembersForEgu = await db.prepare(
   `SELECT gender, date_of_birth, home_away, home_club
    FROM members
-   WHERE subscription_template IS NOT NULL AND subscription_template != ''`
+   WHERE subscription_template IS NOT NULL
+   AND subscription_template != ''
+   AND national_id IS NOT NULL
+   AND national_id != ''
+   AND subscription_template NOT IN ('Social', 'Gratis', 'Retention', 'Resigned')`
 ).all();
 const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
 
@@ -68,53 +85,184 @@ const outstandingBalance = await db.prepare(
   `SELECT SUM(account_balance) as total FROM members WHERE account_balance < 0`
 ).first<{ total: number }>();
 
+// Get EGU and County fee values from payment items
+const englandGolfFee = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'England Golf' AND active = 1`
+).first<{ fee: number }>();
+
+const northumberlandFee = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'Northumberland County' AND active = 1`
+).first<{ fee: number }>();
+
+const eguFee = englandGolfFee?.fee || 12;
+const countyFee = northumberlandFee?.fee || 6.5;
+
+// Calculate EGU fees for each category
+function calculateEguFees(category: string, count: number): number {
+  if (category.includes('home club')) {
+    // Home club: EGU Fee + Northumberland County
+    return (eguFee + countyFee) * count;
+  } else if (category.includes('away club within Northumberland')) {
+    // Away within Northumberland: just County fee
+    return countyFee * count;
+  }
+  // Away outside Northumberland: no fees
+  return 0;
+}
+
+// Add fees to EGU breakdown
+const eguCategoryWithFees = eguCategoryBreakdown.map(cat => ({
+  ...cat,
+  fees: calculateEguFees(cat.category, cat.count)
+}));
+
+// Calculate total EGU fees
+const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0);
+
 ---
 
 <AdminLayout title="Dashboard">
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+  <style>
+    .dashboard-row {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .dashboard-card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 1.5rem;
+      flex: 1;
+    }
+    .dashboard-card h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #333;
+      margin: 0 0 1rem 0;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #ddd;
+    }
+    .dashboard-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .dashboard-table th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: #333;
+      background: #f4f4f4;
+      border-bottom: 1px solid #ddd;
+    }
+    .dashboard-table th.count-col {
+      text-align: right;
+    }
+    .dashboard-table td {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.875rem;
+      color: #333;
+      border-bottom: 1px solid #eee;
+    }
+    .dashboard-table td.label-cell {
+      color: #333;
+    }
+    .dashboard-table td.count-cell {
+      text-align: right;
+    }
+    .dashboard-table .count-link {
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .dashboard-table .count-link:hover {
+      text-decoration: underline;
+    }
+    .dashboard-table .count-link.default {
+      color: #1e5631;
+    }
+    .dashboard-table .count-link.success {
+      color: #28a745;
+    }
+    .dashboard-table .count-link.warning {
+      color: #ffc107;
+    }
+    .dashboard-table .count-link.danger {
+      color: #dc3545;
+    }
+    .full-width-card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .full-width-card h3 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      color: #333;
+      margin: 0 0 1rem 0;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #ddd;
+    }
+    .card-header-with-btn {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #ddd;
+    }
+    .card-header-with-btn h3 {
+      margin: 0;
+      padding: 0;
+      border: none;
+    }
+    .dashboard-table tfoot td {
+      background: #f4f4f4;
+      border-top: 2px solid #ddd;
+    }
+    .table-note {
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 0.5rem;
+    }
+  </style>
+
+  <div class="dashboard-row">
     <!-- Member Stats Table -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Member Statistics</h3>
-      </div>
-      <table>
+    <div class="dashboard-card">
+      <h3>Member Statistics</h3>
+      <table class="dashboard-table">
         <thead>
           <tr>
             <th>Status</th>
-            <th style="text-align: right">Count</th>
+            <th class="count-col">Count</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td>Total Members</td>
-            <td style="text-align: right">
-              <a href="/members" style="font-weight: 600; font-size: 1.125rem;">
-                {totalMembers?.count || 0}
-              </a>
+            <td class="label-cell">Total Members</td>
+            <td class="count-cell">
+              <a href="/members" class="count-link default">{totalMembers?.count || 0}</a>
             </td>
           </tr>
           <tr>
-            <td>Active Members</td>
-            <td style="text-align: right">
-              <a href="/members?filter=active" style="font-weight: 600; font-size: 1.125rem; color: #28a745;">
-                {activeMembers?.count || 0}
-              </a>
+            <td class="label-cell">Active Members</td>
+            <td class="count-cell">
+              <a href="/members?filter=active" class="count-link success">{activeMembers?.count || 0}</a>
             </td>
           </tr>
           <tr>
-            <td>Expiring in 30 Days</td>
-            <td style="text-align: right">
-              <a href="/members?filter=expiring" style="font-weight: 600; font-size: 1.125rem; color: #ffc107;">
-                {expiringMembers?.count || 0}
-              </a>
+            <td class="label-cell">Expiring in 30 Days</td>
+            <td class="count-cell">
+              <a href="/members?filter=expiring" class="count-link warning">{expiringMembers?.count || 0}</a>
             </td>
           </tr>
           <tr>
-            <td>Expired Members</td>
-            <td style="text-align: right">
-              <a href="/members?filter=expired" style="font-weight: 600; font-size: 1.125rem; color: #dc3545;">
-                {expiredMembers?.count || 0}
-              </a>
+            <td class="label-cell">Expired Members</td>
+            <td class="count-cell">
+              <a href="/members?filter=expired" class="count-link danger">{expiredMembers?.count || 0}</a>
             </td>
           </tr>
         </tbody>
@@ -122,120 +270,134 @@ const outstandingBalance = await db.prepare(
     </div>
 
     <!-- Members by Subscription -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Members by Subscription</h3>
-      </div>
-      <table>
+    <div class="dashboard-card">
+      <h3>Members by Subscription</h3>
+      <table class="dashboard-table">
         <thead>
           <tr>
             <th>Subscription</th>
-            <th style="text-align: right">Count</th>
+            <th class="count-col">Count</th>
+            <th class="count-col">Value</th>
           </tr>
         </thead>
         <tbody>
-          {subscriptionBreakdown.results?.map((sub) => (
+          {subscriptionWithValues.map((sub) => (
             <tr>
-              <td>{sub.subscription_template}</td>
-              <td style="text-align: right">
-                <a href={`/members?subscription_template=${encodeURIComponent(sub.subscription_template)}`} style="font-weight: 500;">
+              <td class="label-cell">{sub.subscription_template}</td>
+              <td class="count-cell">
+                <a href={`/members?subscription_template=${encodeURIComponent(sub.subscription_template)}`} class="count-link default">
                   {sub.count}
                 </a>
               </td>
+              <td class="count-cell">{sub.value > 0 ? formatCurrency(sub.value) : '-'}</td>
             </tr>
           ))}
-          {(!subscriptionBreakdown.results || subscriptionBreakdown.results.length === 0) && (
+          {subscriptionWithValues.length === 0 && (
             <tr>
-              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+              <td colspan="3" style="text-align: center; color: #666;">No data available</td>
             </tr>
           )}
         </tbody>
+        <tfoot>
+          <tr class="total-row">
+            <td class="label-cell"><strong>Total</strong></td>
+            <td class="count-cell"><strong>{totalSubscriptionCount}</strong></td>
+            <td class="count-cell"><strong>{formatCurrency(totalSubscriptionValue)}</strong></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>
 
   <!-- Members by EGU Category -->
-  <div class="card" style="margin-top: 1.5rem;">
-    <div class="card-header">
-      <h3 class="card-title">Members by EGU Category</h3>
-    </div>
-    <table>
+  <div class="full-width-card">
+    <h3>Members by EGU Category</h3>
+    <p class="table-note">Members with CDH number only. Excludes Social, Gratis, Retention, and Resigned.</p>
+    <table class="dashboard-table">
       <thead>
         <tr>
           <th>EGU Category</th>
-          <th style="text-align: right">Count</th>
+          <th class="count-col">Count</th>
+          <th class="count-col">EGU Fees</th>
         </tr>
       </thead>
       <tbody>
-        {eguCategoryBreakdown.map((cat) => (
+        {eguCategoryWithFees.map((cat) => (
           <tr>
-            <td>{cat.category}</td>
-            <td style="text-align: right">
-              <a href={`/members?egu_category=${encodeURIComponent(cat.category)}`} style="font-weight: 500;">
+            <td class="label-cell">{cat.category}</td>
+            <td class="count-cell">
+              <a href={`/members?egu_category=${encodeURIComponent(cat.category)}`} class="count-link default">
                 {cat.count}
               </a>
             </td>
+            <td class="count-cell">{cat.fees > 0 ? formatCurrency(cat.fees) : '-'}</td>
           </tr>
         ))}
-        {eguCategoryBreakdown.length === 0 && (
+        {eguCategoryWithFees.length === 0 && (
           <tr>
-            <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+            <td colspan="3" style="text-align: center; color: #666;">No data available</td>
+          </tr>
+        )}
+      </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td class="label-cell"><strong>Total</strong></td>
+          <td class="count-cell"><strong>{eguCategoryWithFees.reduce((sum, cat) => sum + cat.count, 0)}</strong></td>
+          <td class="count-cell"><strong>{formatCurrency(totalEguFees)}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- Recent Payments -->
+  <div class="full-width-card">
+    <div class="card-header-with-btn">
+      <h3>Recent Payments</h3>
+      <a href="/payments" class="btn btn-secondary btn-sm">View All</a>
+    </div>
+    <table class="dashboard-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Member</th>
+          <th>Invoice</th>
+          <th>Method</th>
+          <th class="count-col">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {recentPayments.results?.map((payment) => (
+          <tr>
+            <td class="label-cell">{formatDate(payment.payment_date as string)}</td>
+            <td>
+              <a href={`/members/${payment.member_id}`} class="count-link default">
+                {payment.first_name} {payment.surname}
+              </a>
+            </td>
+            <td>
+              {payment.invoice_id ? (
+                <a href={`/invoices/${payment.invoice_id}`} class="count-link default">
+                  {payment.invoice_number}
+                </a>
+              ) : (
+                <span style="color: #666;">-</span>
+              )}
+            </td>
+            <td class="label-cell">{payment.payment_method || '-'}</td>
+            <td class="count-cell" style="font-weight: 500;">{formatCurrency(payment.amount as number)}</td>
+          </tr>
+        ))}
+        {(!recentPayments.results || recentPayments.results.length === 0) && (
+          <tr>
+            <td colspan="5" style="text-align: center; color: #666;">No recent payments</td>
           </tr>
         )}
       </tbody>
     </table>
   </div>
 
-  <div class="card" style="margin-top: 1.5rem;">
-    <div class="card-header">
-      <h3 class="card-title">Recent Payments</h3>
-      <a href="/payments" class="btn btn-secondary btn-sm">View All</a>
-    </div>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Member</th>
-            <th>Invoice</th>
-            <th>Method</th>
-            <th style="text-align: right">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recentPayments.results?.map((payment) => (
-            <tr>
-              <td>{formatDate(payment.payment_date as string)}</td>
-              <td>
-                <a href={`/members/${payment.member_id}`}>
-                  {payment.first_name} {payment.surname}
-                </a>
-              </td>
-              <td>
-                {payment.invoice_id ? (
-                  <a href={`/invoices/${payment.invoice_id}`} style="font-weight: 500;">
-                    {payment.invoice_number}
-                  </a>
-                ) : (
-                  <span style="color: #666;">-</span>
-                )}
-              </td>
-              <td>{payment.payment_method || '-'}</td>
-              <td style="text-align: right; font-weight: 500;">{formatCurrency(payment.amount as number)}</td>
-            </tr>
-          ))}
-          {(!recentPayments.results || recentPayments.results.length === 0) && (
-            <tr>
-              <td colspan="5" style="text-align: center; color: #666;">No recent payments</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
   {outstandingBalance?.total && outstandingBalance.total < 0 && (
-    <div class="alert alert-error" style="margin-top: 1.5rem;">
+    <div class="alert alert-error">
       <strong>Outstanding Balance:</strong> {formatCurrency(Math.abs(outstandingBalance.total))} in member credits/overpayments
     </div>
   )}

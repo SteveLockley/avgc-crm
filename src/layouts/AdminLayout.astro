@@ -387,6 +387,53 @@ const navItems = [
       border: 1px solid #f5c6cb;
     }
 
+    /* Dashboard tables */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .dashboard-table {
+      width: 100%;
+    }
+
+    .dashboard-table td {
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+
+    .dashboard-table .label-cell {
+      color: var(--text);
+    }
+
+    .dashboard-table .count-cell {
+      text-align: right;
+    }
+
+    .dashboard-table .count-link {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .dashboard-table .count-link:hover {
+      text-decoration: underline;
+    }
+
+    .dashboard-table .count-link.success {
+      color: var(--success);
+    }
+
+    .dashboard-table .count-link.warning {
+      color: var(--warning);
+    }
+
+    .dashboard-table .count-link.danger {
+      color: var(--danger);
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
       .sidebar {
