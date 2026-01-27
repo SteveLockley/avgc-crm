@@ -131,7 +131,12 @@ function buildQueryString(pageNum: number): string {
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">Member List ({totalCount} members)</h3>
-      <a href="/members/new" class="btn btn-primary">Add Member</a>
+      <div style="display: flex; gap: 0.5rem;">
+        <a href="/members/direct-debit" class="btn btn-secondary">DD Consolidation</a>
+        <a href="/members/import" class="btn btn-secondary">Import</a>
+        <a href="/members/export" class="btn btn-secondary">Export</a>
+        <a href="/members/new" class="btn btn-primary">Add Member</a>
+      </div>
     </div>
 
     <!-- Filters -->
