@@ -1,0 +1,366 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatDate, formatCurrency, INVOICE_STATUSES, getInvoiceStatusBadge, formatInvoicePeriod } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+const user = Astro.locals.user;
+
+// Handle bulk delete
+let deleteSuccess = '';
+let deleteError = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  if (action === 'bulk_delete') {
+    const invoiceIds = formData.get('invoice_ids')?.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+    if (invoiceIds && invoiceIds.length > 0) {
+      // Only delete draft and cancelled invoices
+      const placeholders = invoiceIds.map(() => '?').join(',');
+
+      // Delete invoice items first
+      await db.prepare(
+        `DELETE FROM invoice_items WHERE invoice_id IN (
+          SELECT id FROM invoices WHERE id IN (${placeholders}) AND status IN ('draft', 'cancelled')
+        )`
+      ).bind(...invoiceIds).run();
+
+      // Delete invoices
+      const result = await db.prepare(
+        `DELETE FROM invoices WHERE id IN (${placeholders}) AND status IN ('draft', 'cancelled')`
+      ).bind(...invoiceIds).run();
+
+      const deletedCount = result.meta.changes || 0;
+
+      if (deletedCount > 0) {
+        deleteSuccess = `Deleted ${deletedCount} invoice(s)`;
+
+        // Log action
+        await db.prepare(
+          `INSERT INTO audit_log (user_email, action, entity_type, details)
+           VALUES (?, 'bulk_delete_invoices', 'invoices', ?)`
+        ).bind(user?.email || 'system', JSON.stringify({ count: deletedCount, ids: invoiceIds })).run();
+      } else {
+        deleteError = 'No invoices were deleted. Only draft and cancelled invoices can be deleted.';
+      }
+    }
+  }
+}
+
+// Get query parameters
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const status = url.searchParams.get('status') || '';
+const periodYear = url.searchParams.get('year') || '';
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 25;
+const offset = (page - 1) * perPage;
+
+// Build query
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (m.surname LIKE ? OR m.first_name LIKE ? OR i.invoice_number LIKE ?)`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+
+if (status) {
+  whereClause += ' AND i.status = ?';
+  params.push(status);
+}
+
+if (periodYear) {
+  whereClause += ' AND i.period_start LIKE ?';
+  params.push(`${periodYear}-%`);
+}
+
+// Get total count
+const countResult = await db.prepare(
+  `SELECT COUNT(*) as count FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ count: number }>();
+const totalCount = countResult?.count || 0;
+const totalPages = Math.ceil(totalCount / perPage);
+
+// Get invoices
+const invoices = await db.prepare(
+  `SELECT i.*, m.first_name, m.surname, m.email, m.pin
+   FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}
+   ORDER BY i.created_at DESC
+   LIMIT ? OFFSET ?`
+).bind(...params, perPage, offset).all();
+
+// Get totals for filtered results
+const totalsResult = await db.prepare(
+  `SELECT SUM(i.total) as total FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ total: number }>();
+
+// Get status counts
+const statusCounts = await db.prepare(
+  `SELECT status, COUNT(*) as count FROM invoices GROUP BY status`
+).all();
+
+const statusCountMap: Record<string, number> = {};
+statusCounts.results?.forEach((row: any) => {
+  statusCountMap[row.status] = row.count;
+});
+
+// Get available years from invoices
+const years = await db.prepare(
+  `SELECT DISTINCT substr(period_start, 1, 4) as year FROM invoices ORDER BY year DESC`
+).all();
+
+// Calculate pagination pages
+const paginationPages: number[] = [];
+const maxPagesToShow = 10;
+if (totalPages <= maxPagesToShow) {
+  for (let i = 1; i <= totalPages; i++) paginationPages.push(i);
+} else if (page <= 5) {
+  for (let i = 1; i <= maxPagesToShow; i++) paginationPages.push(i);
+} else if (page >= totalPages - 4) {
+  for (let i = totalPages - 9; i <= totalPages; i++) paginationPages.push(i);
+} else {
+  for (let i = page - 5; i <= page + 4; i++) paginationPages.push(i);
+}
+---
+
+<AdminLayout title="Invoices">
+  {deleteSuccess && (
+    <div class="alert alert-success">{deleteSuccess}</div>
+  )}
+  {deleteError && (
+    <div class="alert alert-error">{deleteError}</div>
+  )}
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{totalCount}</div>
+      <div class="stat-label">Total Invoices</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{statusCountMap['draft'] || 0}</div>
+      <div class="stat-label">Draft</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{statusCountMap['sent'] || 0}</div>
+      <div class="stat-label">Sent</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{statusCountMap['paid'] || 0}</div>
+      <div class="stat-label">Paid</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Invoice Records ({totalCount} invoices)</h3>
+      <a href="/invoices/generate" class="btn btn-primary">Generate Invoices</a>
+    </div>
+
+    <!-- Filters -->
+    <form method="GET" style="margin-bottom: 1rem;">
+      <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 150px;">
+          <label class="form-label">Member/Invoice</label>
+          <input type="text" name="search" class="form-input" placeholder="Search..." value={search} />
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Status</label>
+          <select name="status" class="form-input">
+            <option value="">All Statuses</option>
+            {INVOICE_STATUSES.map(s => (
+              <option value={s} selected={status === s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 0;">
+          <label class="form-label">Period Year</label>
+          <select name="year" class="form-input">
+            <option value="">All Years</option>
+            {years.results?.map((y: any) => (
+              <option value={y.year} selected={periodYear === y.year}>{y.year}/{parseInt(y.year) + 1}</option>
+            ))}
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Filter</button>
+        <a href="/invoices" class="btn btn-secondary">Clear</a>
+      </div>
+    </form>
+
+    {totalsResult?.total !== null && (
+      <div style="background: #f4f4f4; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+        <strong>Total for selected filters:</strong> {formatCurrency(totalsResult?.total || 0)}
+      </div>
+    )}
+
+    <form method="POST" id="bulk-form">
+      <input type="hidden" name="action" value="bulk_delete" />
+      <input type="hidden" name="invoice_ids" id="selected-invoice-ids" value="" />
+
+      <div style="margin-bottom: 0.5rem; display: flex; gap: 0.5rem; align-items: center;">
+        <button type="submit" class="btn btn-danger btn-sm" id="bulk-delete-btn" disabled onclick="return confirm('Delete selected invoices? Only draft and cancelled invoices will be deleted.')">
+          Delete Selected
+        </button>
+        <span id="selected-count" style="font-size: 0.875rem; color: #666;">0 selected</span>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 40px;">
+                <input type="checkbox" id="select-all" />
+              </th>
+              <th>Invoice No</th>
+              <th>Member</th>
+              <th>Period</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th style="text-align: right;">Total</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.results?.map((invoice: any) => (
+              <tr>
+                <td>
+                  <input
+                    type="checkbox"
+                    class="invoice-checkbox"
+                    value={invoice.id}
+                    data-status={invoice.status}
+                  />
+                </td>
+                <td>
+                  <a href={`/invoices/${invoice.id}`} style="font-weight: 500;">
+                    {invoice.invoice_number}
+                  </a>
+                </td>
+                <td>
+                  <a href={`/members/${invoice.member_id}`}>
+                    {invoice.surname}, {invoice.first_name}
+                  </a>
+                  <br>
+                  <small style="color: #666;">M{invoice.pin?.padStart(4, '0')}</small>
+                </td>
+                <td style="font-size: 0.875rem;">
+                  {formatInvoicePeriod(invoice.period_start, invoice.period_end)}
+                </td>
+                <td>{formatDate(invoice.invoice_date)}</td>
+                <td>
+                  <span class={`badge ${getInvoiceStatusBadge(invoice.status)}`}>
+                    {invoice.status}
+                  </span>
+                </td>
+                <td style="text-align: right; font-weight: 500;">
+                  {formatCurrency(invoice.total)}
+                </td>
+                <td>
+                  <a href={`/invoices/${invoice.id}`} class="btn btn-secondary btn-sm">View</a>
+                  {invoice.status === 'draft' && (
+                    <a href={`/invoices/preview?ids=${invoice.id}`} class="btn btn-primary btn-sm" style="margin-left: 0.25rem;">Send</a>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {(!invoices.results || invoices.results.length === 0) && (
+              <tr>
+                <td colspan="8" style="text-align: center; color: #666; padding: 2rem;">
+                  No invoices found. <a href="/invoices/generate">Generate new invoices</a>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </form>
+
+    <!-- Pagination -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={`?search=${search}&status=${status}&year=${periodYear}&page=${page - 1}`}>
+            Previous
+          </a>
+        )}
+
+        {paginationPages.map((p) => (
+          <a
+            href={`?search=${search}&status=${status}&year=${periodYear}&page=${p}`}
+            class={p === page ? 'active' : ''}
+          >
+            {p}
+          </a>
+        ))}
+
+        {page < totalPages && (
+          <a href={`?search=${search}&status=${status}&year=${periodYear}&page=${page + 1}`}>
+            Next
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Quick Actions</h3>
+    </div>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+      <a href="/invoices/generate" class="btn btn-primary">Generate New Invoices</a>
+      <a href="/invoices/settings" class="btn btn-secondary">Invoice Settings</a>
+      <a href="/invoices?status=draft" class="btn btn-secondary">View Draft Invoices</a>
+      <a href="/invoices?status=sent" class="btn btn-secondary">View Sent Invoices</a>
+    </div>
+  </div>
+</AdminLayout>
+
+<script>
+  const selectAll = document.getElementById('select-all') as HTMLInputElement;
+  const checkboxes = document.querySelectorAll('.invoice-checkbox') as NodeListOf<HTMLInputElement>;
+  const selectedCount = document.getElementById('selected-count');
+  const selectedIdsInput = document.getElementById('selected-invoice-ids') as HTMLInputElement;
+  const deleteBtn = document.getElementById('bulk-delete-btn') as HTMLButtonElement;
+
+  function updateSelection() {
+    const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
+    const deletableSelected = Array.from(selected).filter(cb =>
+      cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
+    );
+
+    if (selectedCount) {
+      selectedCount.textContent = `${selected.length} selected (${deletableSelected.length} deletable)`;
+    }
+    if (selectedIdsInput) {
+      selectedIdsInput.value = Array.from(selected).map(cb => cb.value).join(',');
+    }
+    if (deleteBtn) {
+      deleteBtn.disabled = deletableSelected.length === 0;
+    }
+  }
+
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      checkboxes.forEach(cb => cb.checked = selectAll.checked);
+      updateSelection();
+    });
+  }
+
+  checkboxes.forEach(cb => {
+    cb.addEventListener('change', updateSelection);
+  });
+</script>

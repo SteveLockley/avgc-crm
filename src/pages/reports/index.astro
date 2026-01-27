@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { formatCurrency, formatDate } from '../../lib/db';
+import { formatCurrency, formatDate, calculateEguCategory, type Member, type PaymentItem } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
@@ -15,21 +15,92 @@ const memberStats = await db.prepare(`
   FROM members
 `).first();
 
-// Category breakdown
-const categoryStats = await db.prepare(`
+// Subscription type breakdown
+const subscriptionStats = await db.prepare(`
   SELECT
-    category,
+    subscription_template,
     COUNT(*) as count,
     SUM(CASE WHEN home_away = 'H' THEN 1 ELSE 0 END) as home,
     SUM(CASE WHEN home_away = 'A' THEN 1 ELSE 0 END) as away
   FROM members
-  WHERE category IS NOT NULL
-  GROUP BY category
+  WHERE subscription_template IS NOT NULL AND subscription_template != ''
+  GROUP BY subscription_template
   ORDER BY count DESC
 `).all();
 
-// Payment statistics - current year
+// Get all members for EGU category calculation
+const allMembersForEgu = await db.prepare(
+  `SELECT gender, date_of_birth, home_away, home_club
+   FROM members
+   WHERE subscription_template IS NOT NULL AND subscription_template != ''`
+).all();
+const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
+
+// Calculate EGU category counts
+const eguCategoryCounts: Record<string, number> = {};
+membersData.forEach(member => {
+  const eguCat = calculateEguCategory(member);
+  if (eguCat) {
+    eguCategoryCounts[eguCat] = (eguCategoryCounts[eguCat] || 0) + 1;
+  }
+});
+const eguCategoryBreakdown = Object.entries(eguCategoryCounts)
+  .map(([category, count]) => ({ category, count }))
+  .sort((a, b) => b.count - a.count);
+
+// Get payment items with revenue from invoices
+const paymentItemsResult = await db.prepare(
+  `SELECT * FROM payment_items WHERE active = 1 ORDER BY category, name`
+).all();
+const paymentItems = (paymentItemsResult.results || []) as PaymentItem[];
+
+// Get current year for revenue reporting
 const currentYear = new Date().getFullYear();
+const currentYearStart = `${currentYear}-01-01`;
+
+// Potential revenue by payment item (all non-cancelled invoices in current year)
+const potentialRevenueByItem = await db.prepare(`
+  SELECT
+    ii.description,
+    COUNT(*) as count,
+    SUM(ii.line_total) as total_revenue
+  FROM invoice_items ii
+  JOIN invoices i ON ii.invoice_id = i.id
+  WHERE i.status != 'cancelled'
+    AND i.period_start >= ?
+  GROUP BY ii.description
+  ORDER BY total_revenue DESC
+`).bind(currentYearStart).all();
+
+// Actual revenue paid by payment item (from payment_line_items table)
+const actualRevenueByItem = await db.prepare(`
+  SELECT
+    pli.description,
+    COUNT(*) as count,
+    SUM(pli.amount) as total_revenue
+  FROM payment_line_items pli
+  JOIN payments p ON pli.payment_id = p.id
+  JOIN invoices i ON p.invoice_id = i.id
+  WHERE i.period_start >= ?
+  GROUP BY pli.description
+  ORDER BY total_revenue DESC
+`).bind(currentYearStart).all();
+
+// Also get total actual payments received for invoices this period
+const totalActualPayments = await db.prepare(`
+  SELECT SUM(p.amount) as total
+  FROM payments p
+  JOIN invoices i ON p.invoice_id = i.id
+  WHERE i.period_start >= ?
+`).bind(currentYearStart).first<{ total: number }>();
+
+// Create a map of actual revenue for easy lookup
+const actualRevenueMap: Record<string, { count: number; revenue: number }> = {};
+actualRevenueByItem.results?.forEach((item: any) => {
+  actualRevenueMap[item.description] = { count: item.count, revenue: item.total_revenue };
+});
+
+// Payment statistics - current year (uses currentYear defined above)
 const paymentStats = await db.prepare(`
   SELECT
     payment_type,
@@ -142,57 +213,125 @@ const handicapStats = await db.prepare(`
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-    <!-- Category Breakdown -->
+    <!-- Subscription Type Breakdown -->
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Members by Category</h3>
+        <h3 class="card-title">Members by Subscription Type</h3>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Category</th>
+            <th>Subscription Type</th>
             <th style="text-align: right">Home</th>
             <th style="text-align: right">Away</th>
             <th style="text-align: right">Total</th>
           </tr>
         </thead>
         <tbody>
-          {categoryStats.results?.map((cat) => (
+          {subscriptionStats.results?.map((sub) => (
             <tr>
-              <td>{cat.category}</td>
-              <td style="text-align: right">{cat.home}</td>
-              <td style="text-align: right">{cat.away}</td>
-              <td style="text-align: right; font-weight: 600">{cat.count}</td>
+              <td>{sub.subscription_template}</td>
+              <td style="text-align: right">{sub.home}</td>
+              <td style="text-align: right">{sub.away}</td>
+              <td style="text-align: right; font-weight: 600">{sub.count}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
 
-    <!-- Age Group Breakdown -->
+    <!-- EGU Category Breakdown -->
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Members by Age Group</h3>
+        <h3 class="card-title">Members by EGU Category</h3>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Age Group</th>
+            <th>EGU Category</th>
             <th style="text-align: right">Count</th>
-            <th style="text-align: right">Avg Handicap</th>
           </tr>
         </thead>
         <tbody>
-          {ageStats.results?.map((age) => (
+          {eguCategoryBreakdown.map((cat) => (
             <tr>
-              <td>{age.age_group}</td>
-              <td style="text-align: right">{age.count}</td>
-              <td style="text-align: right">{age.avg_handicap ? (age.avg_handicap as number).toFixed(1) : '-'}</td>
+              <td style="font-size: 0.875rem;">{cat.category}</td>
+              <td style="text-align: right">{cat.count}</td>
             </tr>
           ))}
+          {eguCategoryBreakdown.length === 0 && (
+            <tr>
+              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Revenue by Payment Item -->
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Revenue by Payment Item ({currentYear}/{currentYear + 1})</h3>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Payment Item</th>
+          <th style="text-align: right">Invoiced</th>
+          <th style="text-align: right">Potential Revenue</th>
+          <th style="text-align: right">Paid</th>
+          <th style="text-align: right">Actual Revenue</th>
+          <th style="text-align: right">Collection %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {potentialRevenueByItem.results?.map((item) => {
+          const actual = actualRevenueMap[item.description as string] || { count: 0, revenue: 0 };
+          const potentialRev = item.total_revenue as number;
+          const actualRev = actual.revenue;
+          const collectionPct = potentialRev > 0 ? ((actualRev / potentialRev) * 100).toFixed(1) : '0.0';
+          return (
+            <tr>
+              <td>{item.description}</td>
+              <td style="text-align: right">{item.count}</td>
+              <td style="text-align: right">{formatCurrency(potentialRev)}</td>
+              <td style="text-align: right">{actual.count}</td>
+              <td style="text-align: right; font-weight: 600; color: #28a745;">{formatCurrency(actualRev)}</td>
+              <td style="text-align: right">
+                <span class={`badge ${parseFloat(collectionPct) >= 80 ? 'badge-success' : parseFloat(collectionPct) >= 50 ? 'badge-warning' : 'badge-danger'}`}>
+                  {collectionPct}%
+                </span>
+              </td>
+            </tr>
+          );
+        })}
+        {(!potentialRevenueByItem.results || potentialRevenueByItem.results.length === 0) && (
+          <tr>
+            <td colspan="6" style="text-align: center; color: #666;">No invoice data available for current year</td>
+          </tr>
+        )}
+      </tbody>
+      {potentialRevenueByItem.results && potentialRevenueByItem.results.length > 0 && (
+        <tfoot>
+          <tr style="background: #f8f9fa; font-weight: 600;">
+            <td>Total</td>
+            <td style="text-align: right">{potentialRevenueByItem.results.reduce((sum, item) => sum + (item.count as number), 0)}</td>
+            <td style="text-align: right">{formatCurrency(potentialRevenueByItem.results.reduce((sum, item) => sum + (item.total_revenue as number), 0))}</td>
+            <td style="text-align: right">{actualRevenueByItem.results?.reduce((sum, item) => sum + (item.count as number), 0) || 0}</td>
+            <td style="text-align: right; color: #28a745;">{formatCurrency(actualRevenueByItem.results?.reduce((sum, item) => sum + (item.total_revenue as number), 0) || 0)}</td>
+            <td style="text-align: right">
+              {(() => {
+                const totalPotential = potentialRevenueByItem.results.reduce((sum, item) => sum + (item.total_revenue as number), 0);
+                const totalActual = actualRevenueByItem.results?.reduce((sum, item) => sum + (item.total_revenue as number), 0) || 0;
+                const pct = totalPotential > 0 ? ((totalActual / totalPotential) * 100).toFixed(1) : '0.0';
+                return <span class="badge badge-info">{pct}%</span>;
+              })()}
+            </td>
+          </tr>
+        </tfoot>
+      )}
+    </table>
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">

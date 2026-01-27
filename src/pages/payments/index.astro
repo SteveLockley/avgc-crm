@@ -4,8 +4,9 @@ import { formatDate, formatCurrency, PAYMENT_METHODS } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
-// Get query parameters
+// Check for success message
 const url = Astro.url;
+const paymentRecorded = url.searchParams.get('payment_recorded') === '1';
 const search = url.searchParams.get('search') || '';
 const method = url.searchParams.get('method') || '';
 const type = url.searchParams.get('type') || '';
@@ -20,9 +21,9 @@ let whereClause = '1=1';
 const params: any[] = [];
 
 if (search) {
-  whereClause += ` AND (m.surname LIKE ? OR m.first_name LIKE ?)`;
+  whereClause += ` AND (m.surname LIKE ? OR m.first_name LIKE ? OR i.invoice_number LIKE ?)`;
   const searchTerm = `%${search}%`;
-  params.push(searchTerm, searchTerm);
+  params.push(searchTerm, searchTerm, searchTerm);
 }
 
 if (method) {
@@ -49,16 +50,18 @@ if (dateTo) {
 const countResult = await db.prepare(
   `SELECT COUNT(*) as count FROM payments p
    JOIN members m ON p.member_id = m.id
+   LEFT JOIN invoices i ON p.invoice_id = i.id
    WHERE ${whereClause}`
 ).bind(...params).first<{ count: number }>();
 const totalCount = countResult?.count || 0;
 const totalPages = Math.ceil(totalCount / perPage);
 
-// Get payments
+// Get payments with invoice info
 const payments = await db.prepare(
-  `SELECT p.*, m.first_name, m.surname
+  `SELECT p.*, m.first_name, m.surname, i.invoice_number
    FROM payments p
    JOIN members m ON p.member_id = m.id
+   LEFT JOIN invoices i ON p.invoice_id = i.id
    WHERE ${whereClause}
    ORDER BY p.payment_date DESC, p.created_at DESC
    LIMIT ? OFFSET ?`
@@ -68,6 +71,7 @@ const payments = await db.prepare(
 const totalsResult = await db.prepare(
   `SELECT SUM(p.amount) as total FROM payments p
    JOIN members m ON p.member_id = m.id
+   LEFT JOIN invoices i ON p.invoice_id = i.id
    WHERE ${whereClause}`
 ).bind(...params).first<{ total: number }>();
 
@@ -88,6 +92,10 @@ if (totalPages <= maxPagesToShow) {
 ---
 
 <AdminLayout title="Payments">
+  {paymentRecorded && (
+    <div class="alert alert-success">Payment recorded successfully</div>
+  )}
+
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">Payment Records ({totalCount} payments)</h3>
@@ -98,7 +106,7 @@ if (totalPages <= maxPagesToShow) {
     <form method="GET" style="margin-bottom: 1rem;">
       <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
         <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 150px;">
-          <label class="form-label">Member Name</label>
+          <label class="form-label">Member/Invoice</label>
           <input type="text" name="search" class="form-input" placeholder="Search..." value={search} />
         </div>
 
@@ -149,9 +157,8 @@ if (totalPages <= maxPagesToShow) {
           <tr>
             <th>Date</th>
             <th>Member</th>
-            <th>Type</th>
+            <th>Invoice</th>
             <th>Method</th>
-            <th>Reference</th>
             <th style="text-align: right;">Amount</th>
             <th>Actions</th>
           </tr>
@@ -166,10 +173,15 @@ if (totalPages <= maxPagesToShow) {
                 </a>
               </td>
               <td>
-                <span class="badge badge-info">{payment.payment_type || '-'}</span>
+                {payment.invoice_id ? (
+                  <a href={`/invoices/${payment.invoice_id}`} style="font-weight: 500;">
+                    {payment.invoice_number}
+                  </a>
+                ) : (
+                  <span style="color: #666;">{payment.reference || '-'}</span>
+                )}
               </td>
               <td>{payment.payment_method || '-'}</td>
-              <td style="font-size: 0.875rem;">{payment.reference || '-'}</td>
               <td style="text-align: right; font-weight: 500;">
                 {formatCurrency(payment.amount as number)}
               </td>
@@ -180,7 +192,7 @@ if (totalPages <= maxPagesToShow) {
           ))}
           {(!payments.results || payments.results.length === 0) && (
             <tr>
-              <td colspan="7" style="text-align: center; color: #666; padding: 2rem;">
+              <td colspan="6" style="text-align: center; color: #666; padding: 2rem;">
                 No payments found
               </td>
             </tr>

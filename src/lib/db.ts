@@ -55,6 +55,7 @@ export interface Member {
 export interface Payment {
   id: number;
   member_id: number;
+  invoice_id: number | null;
   amount: number;
   payment_date: string;
   payment_method: string | null;
@@ -62,6 +63,16 @@ export interface Payment {
   reference: string | null;
   notes: string | null;
   recorded_by: string | null;
+  created_at: string;
+}
+
+export interface PaymentLineItem {
+  id: number;
+  payment_id: number;
+  invoice_item_id: number | null;
+  payment_item_id: number | null;
+  description: string;
+  amount: number;
   created_at: string;
 }
 
@@ -74,6 +85,55 @@ export interface AdminUser {
   last_login: string | null;
   created_at: string;
 }
+
+export interface PaymentItem {
+  id: number;
+  category: 'Subscription' | 'Fee';
+  name: string;
+  fee: number;
+  description: string | null;
+  subscription_template: string | null;
+  active: number;
+  created_at: string;
+}
+
+export interface Invoice {
+  id: number;
+  invoice_number: string;
+  member_id: number;
+  invoice_date: string;
+  period_start: string;
+  period_end: string;
+  subtotal: number;
+  total: number;
+  status: 'draft' | 'sent' | 'paid' | 'cancelled';
+  sent_at: string | null;
+  sent_to_email: string | null;
+  custom_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvoiceItem {
+  id: number;
+  invoice_id: number;
+  payment_item_id: number | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface InvoiceSetting {
+  id: number;
+  setting_key: string;
+  setting_value: string;
+  updated_at: string;
+}
+
+// Invoice statuses
+export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'cancelled'] as const;
 
 // Member categories
 export const MEMBER_CATEGORIES = [
@@ -184,4 +244,170 @@ export function expiresSoon(dateExpires: string | null): boolean {
   } catch {
     return false;
   }
+}
+
+// Get renewal period based on current date
+// Period runs from 1st April to 31st March
+export function getRenewalPeriod(referenceDate?: Date): { start: string; end: string; year: number } {
+  const date = referenceDate || new Date();
+  const month = date.getMonth(); // 0-indexed (0=Jan, 3=April)
+  const year = date.getFullYear();
+
+  // If we're before April, the renewal period is current year Apr to next year Mar
+  // If we're April or after, renewal period is next year Apr to year after Mar
+  const startYear = month < 3 ? year : year + 1;
+  const endYear = startYear + 1;
+
+  return {
+    start: `${startYear}-04-01`,
+    end: `${endYear}-03-31`,
+    year: startYear
+  };
+}
+
+// Generate invoice number: YEAR/M{PIN}/SEQUENCE
+export function generateInvoiceNumber(year: number, memberPin: string, sequence: number): string {
+  const paddedPin = (memberPin || '0000').padStart(4, '0');
+  const paddedSeq = String(sequence).padStart(3, '0');
+  return `${year}/M${paddedPin}/${paddedSeq}`;
+}
+
+// Format invoice period for display
+export function formatInvoicePeriod(start: string, end: string): string {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  return `${startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} - ${endDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+}
+
+// Get invoice status badge class
+export function getInvoiceStatusBadge(status: string): string {
+  switch (status) {
+    case 'draft': return 'badge-warning';
+    case 'sent': return 'badge-info';
+    case 'paid': return 'badge-success';
+    case 'cancelled': return 'badge-danger';
+    default: return 'badge-info';
+  }
+}
+
+// Northumberland golf clubs (for EGU category calculation)
+export const NORTHUMBERLAND_CLUBS = [
+  'alnmouth',
+  'alnmouth village',
+  'alnwick castle',
+  'arcot hall',
+  'bamburgh',
+  'bedlingtonshire',
+  'bellingham',
+  'berwick',
+  'blyth',
+  'burgham park',
+  'burgham',
+  'close house',
+  'dunstanburgh castle',
+  'dunstanburgh',
+  'goswick',
+  'hexham',
+  'linden hall',
+  'longhirst',
+  'magdalene fields',
+  'matfen hall',
+  'matfen',
+  'morpeth',
+  'newbiggin',
+  'newcastle united',
+  'northumberland',
+  'parklands',
+  'percy wood',
+  'ponteland',
+  'prudhoe',
+  'rothbury',
+  'seahouses',
+  'slaley hall',
+  'stocksfield',
+  'tynedale',
+  'warkworth',
+  'westerhope',
+  'wooler'
+] as const;
+
+// EGU Categories
+export const EGU_CATEGORIES = [
+  'Male members over 18, home club',
+  'Male members over 18, away club outside Northumberland',
+  'Male members over 18, away club within Northumberland',
+  'Male members under 18, home club',
+  'Male members under 18, away club outside Northumberland',
+  'Male members under 18, away club within Northumberland',
+  'Female members over 18, home club',
+  'Female members over 18, away club outside Northumberland',
+  'Female members over 18, away club within Northumberland',
+  'Female members under 18, home club',
+  'Female members under 18, away club outside Northumberland',
+  'Female members under 18, away club within Northumberland'
+] as const;
+
+/**
+ * Calculate age from date of birth
+ */
+export function calculateAge(dateOfBirth: string | null, referenceDate?: Date): number | null {
+  if (!dateOfBirth) return null;
+
+  try {
+    const dob = new Date(dateOfBirth);
+    const ref = referenceDate || new Date();
+
+    let age = ref.getFullYear() - dob.getFullYear();
+    const monthDiff = ref.getMonth() - dob.getMonth();
+
+    if (monthDiff < 0 || (monthDiff === 0 && ref.getDate() < dob.getDate())) {
+      age--;
+    }
+
+    return age;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a club name is a Northumberland club
+ */
+export function isNorthumberlandClub(clubName: string | null): boolean {
+  if (!clubName) return false;
+
+  const normalizedClub = clubName.toLowerCase().trim();
+
+  return NORTHUMBERLAND_CLUBS.some(nc =>
+    normalizedClub.includes(nc) || nc.includes(normalizedClub)
+  );
+}
+
+/**
+ * Calculate EGU category for a member based on sex, age, and home/away status
+ */
+export function calculateEguCategory(member: Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>): string | null {
+  const age = calculateAge(member.date_of_birth);
+
+  if (age === null || !member.gender) {
+    return null;
+  }
+
+  const isMale = member.gender === 'M';
+  const isOver18 = age >= 18;
+  const isHome = member.home_away === 'H';
+  const isAway = member.home_away === 'A';
+
+  const genderStr = isMale ? 'Male' : 'Female';
+  const ageStr = isOver18 ? 'over 18' : 'under 18';
+
+  if (isHome) {
+    return `${genderStr} members ${ageStr}, home club`;
+  } else if (isAway) {
+    const inNorthumberland = isNorthumberlandClub(member.home_club);
+    const locationStr = inNorthumberland ? 'within Northumberland' : 'outside Northumberland';
+    return `${genderStr} members ${ageStr}, away club ${locationStr}`;
+  }
+
+  return null;
 }

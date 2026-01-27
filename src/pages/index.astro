@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../layouts/AdminLayout.astro';
-import { formatCurrency } from '../lib/db';
+import { formatCurrency, formatDate, calculateEguCategory, type Member } from '../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
@@ -24,20 +24,41 @@ const expiredMembers = await db.prepare(
    WHERE date_expires < date('now')`
 ).first<{ count: number }>();
 
-// Get category breakdown
-const categoryBreakdown = await db.prepare(
-  `SELECT category, COUNT(*) as count
+// Get subscription type breakdown
+const subscriptionBreakdown = await db.prepare(
+  `SELECT subscription_template, COUNT(*) as count
    FROM members
-   WHERE category IS NOT NULL
-   GROUP BY category
+   WHERE subscription_template IS NOT NULL AND subscription_template != ''
+   GROUP BY subscription_template
    ORDER BY count DESC`
-).all<{ category: string; count: number }>();
+).all<{ subscription_template: string; count: number }>();
 
-// Get recent payments
+// Get all members for EGU category calculation
+const allMembersForEgu = await db.prepare(
+  `SELECT gender, date_of_birth, home_away, home_club
+   FROM members
+   WHERE subscription_template IS NOT NULL AND subscription_template != ''`
+).all();
+const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
+
+// Calculate EGU category counts
+const eguCategoryCounts: Record<string, number> = {};
+membersData.forEach(member => {
+  const eguCat = calculateEguCategory(member);
+  if (eguCat) {
+    eguCategoryCounts[eguCat] = (eguCategoryCounts[eguCat] || 0) + 1;
+  }
+});
+const eguCategoryBreakdown = Object.entries(eguCategoryCounts)
+  .map(([category, count]) => ({ category, count }))
+  .sort((a, b) => b.count - a.count);
+
+// Get recent payments with invoice info
 const recentPayments = await db.prepare(
-  `SELECT p.*, m.first_name, m.surname
+  `SELECT p.*, m.first_name, m.surname, i.invoice_number
    FROM payments p
    JOIN members m ON p.member_id = m.id
+   LEFT JOIN invoices i ON p.invoice_id = i.id
    ORDER BY p.payment_date DESC
    LIMIT 5`
 ).all();
@@ -49,7 +70,7 @@ const outstandingBalance = await db.prepare(
 
 // Get members expiring soon
 const expiringSoon = await db.prepare(
-  `SELECT id, first_name, surname, date_expires, category
+  `SELECT id, first_name, surname, date_expires, subscription_template
    FROM members
    WHERE date_expires BETWEEN date('now') AND date('now', '+30 days')
    ORDER BY date_expires
@@ -58,48 +79,114 @@ const expiringSoon = await db.prepare(
 ---
 
 <AdminLayout title="Dashboard">
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-value">{totalMembers?.count || 0}</div>
-      <div class="stat-label">Total Members</div>
-    </div>
-
-    <div class="stat-card">
-      <div class="stat-value">{activeMembers?.count || 0}</div>
-      <div class="stat-label">Active Members</div>
-    </div>
-
-    <div class="stat-card">
-      <div class="stat-value" style="color: #ffc107">{expiringMembers?.count || 0}</div>
-      <div class="stat-label">Expiring in 30 Days</div>
-    </div>
-
-    <div class="stat-card">
-      <div class="stat-value" style="color: #dc3545">{expiredMembers?.count || 0}</div>
-      <div class="stat-label">Expired Members</div>
-    </div>
-  </div>
-
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+    <!-- Member Stats Table -->
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Membership by Category</h3>
+        <h3 class="card-title">Member Statistics</h3>
       </div>
       <table>
         <thead>
           <tr>
-            <th>Category</th>
+            <th>Status</th>
             <th style="text-align: right">Count</th>
           </tr>
         </thead>
         <tbody>
-          {categoryBreakdown.results?.map((cat) => (
+          <tr>
+            <td>Total Members</td>
+            <td style="text-align: right">
+              <a href="/members" style="font-weight: 600; font-size: 1.125rem;">
+                {totalMembers?.count || 0}
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td>Active Members</td>
+            <td style="text-align: right">
+              <a href="/members?filter=active" style="font-weight: 600; font-size: 1.125rem; color: #28a745;">
+                {activeMembers?.count || 0}
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td>Expiring in 30 Days</td>
+            <td style="text-align: right">
+              <a href="/members?filter=expiring" style="font-weight: 600; font-size: 1.125rem; color: #ffc107;">
+                {expiringMembers?.count || 0}
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td>Expired Members</td>
+            <td style="text-align: right">
+              <a href="/members?filter=expired" style="font-weight: 600; font-size: 1.125rem; color: #dc3545;">
+                {expiredMembers?.count || 0}
+              </a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Members by Subscription Type -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Members by Subscription Type</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Subscription Type</th>
+            <th style="text-align: right">Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {subscriptionBreakdown.results?.map((sub) => (
             <tr>
-              <td>{cat.category}</td>
-              <td style="text-align: right">{cat.count}</td>
+              <td>{sub.subscription_template}</td>
+              <td style="text-align: right">
+                <a href={`/members?subscription_template=${encodeURIComponent(sub.subscription_template)}`} style="font-weight: 500;">
+                  {sub.count}
+                </a>
+              </td>
             </tr>
           ))}
-          {(!categoryBreakdown.results || categoryBreakdown.results.length === 0) && (
+          {(!subscriptionBreakdown.results || subscriptionBreakdown.results.length === 0) && (
+            <tr>
+              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+    <!-- Members by EGU Category -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Members by EGU Category</h3>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>EGU Category</th>
+            <th style="text-align: right">Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {eguCategoryBreakdown.map((cat) => (
+            <tr>
+              <td style="font-size: 0.875rem;">{cat.category}</td>
+              <td style="text-align: right">
+                <a href={`/members?egu_category=${encodeURIComponent(cat.category)}`} style="font-weight: 500;">
+                  {cat.count}
+                </a>
+              </td>
+            </tr>
+          ))}
+          {eguCategoryBreakdown.length === 0 && (
             <tr>
               <td colspan="2" style="text-align: center; color: #666;">No data available</td>
             </tr>
@@ -108,6 +195,7 @@ const expiringSoon = await db.prepare(
       </table>
     </div>
 
+    <!-- Expiring Soon -->
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Expiring Soon</h3>
@@ -128,7 +216,7 @@ const expiringSoon = await db.prepare(
                   {member.first_name} {member.surname}
                 </a>
               </td>
-              <td>{member.date_expires}</td>
+              <td>{formatDate(member.date_expires as string)}</td>
             </tr>
           ))}
           {(!expiringSoon.results || expiringSoon.results.length === 0) && (
@@ -152,7 +240,7 @@ const expiringSoon = await db.prepare(
           <tr>
             <th>Date</th>
             <th>Member</th>
-            <th>Type</th>
+            <th>Invoice</th>
             <th>Method</th>
             <th style="text-align: right">Amount</th>
           </tr>
@@ -160,11 +248,23 @@ const expiringSoon = await db.prepare(
         <tbody>
           {recentPayments.results?.map((payment) => (
             <tr>
-              <td>{payment.payment_date}</td>
-              <td>{payment.first_name} {payment.surname}</td>
-              <td>{payment.payment_type}</td>
-              <td>{payment.payment_method}</td>
-              <td style="text-align: right">{formatCurrency(payment.amount as number)}</td>
+              <td>{formatDate(payment.payment_date as string)}</td>
+              <td>
+                <a href={`/members/${payment.member_id}`}>
+                  {payment.first_name} {payment.surname}
+                </a>
+              </td>
+              <td>
+                {payment.invoice_id ? (
+                  <a href={`/invoices/${payment.invoice_id}`} style="font-weight: 500;">
+                    {payment.invoice_number}
+                  </a>
+                ) : (
+                  <span style="color: #666;">-</span>
+                )}
+              </td>
+              <td>{payment.payment_method || '-'}</td>
+              <td style="text-align: right; font-weight: 500;">{formatCurrency(payment.amount as number)}</td>
             </tr>
           ))}
           {(!recentPayments.results || recentPayments.results.length === 0) && (
