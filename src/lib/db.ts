@@ -136,9 +136,9 @@ export interface InvoiceSetting {
 // Invoice statuses
 export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'cancelled'] as const;
 
-// Zero-cost subscription types (Life, Honorary, Gratis)
+// Zero-cost subscription types (Life, Honorary, Gratis, Retention)
 // These may still have fees (EGU, County, Locker) depending on member circumstances
-export const ZERO_COST_SUBSCRIPTIONS = ['Life', 'Honorary', 'Gratis'] as const;
+export const ZERO_COST_SUBSCRIPTIONS = ['Life', 'Honorary', 'Gratis', 'Retention'] as const;
 
 // Fee templates for zero-cost subscriptions
 // Used when a Life/Honorary/Gratis member still owes fees

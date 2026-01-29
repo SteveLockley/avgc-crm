@@ -1,0 +1,249 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { calculateEguCategory, type Member } from '../../lib/db';
+import { sendEmail, isEmailConfigured, isValidEmail } from '../../lib/email';
+
+const db = Astro.locals.runtime.env.DB;
+const env = Astro.locals.runtime.env;
+
+// Check if email is configured
+const emailConfigured = isEmailConfigured(env);
+
+// Get filter parameters (same as index page)
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const subscriptionType = url.searchParams.get('subscription_type') || '';
+const eguCategory = url.searchParams.get('egu_category') || '';
+const filter = url.searchParams.get('filter') || '';
+
+// For EGU category filtering
+let filteredByEgu = false;
+let eguFilteredIds: number[] = [];
+
+if (eguCategory) {
+  filteredByEgu = true;
+  const allMembers = await db.prepare(
+    `SELECT id, gender, date_of_birth, home_away, home_club
+     FROM members
+     WHERE category IS NOT NULL AND category != ''`
+  ).all();
+
+  eguFilteredIds = (allMembers.results || [])
+    .filter((m: any) => calculateEguCategory(m as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>) === eguCategory)
+    .map((m: any) => m.id);
+}
+
+// Build query with filters
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (surname LIKE ? OR first_name LIKE ? OR email LIKE ?)`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+
+if (subscriptionType) {
+  whereClause += ' AND category = ?';
+  params.push(subscriptionType);
+}
+
+if (filter === 'expiring') {
+  whereClause += ` AND date_expires BETWEEN date('now') AND date('now', '+30 days')`;
+} else if (filter === 'expired') {
+  whereClause += ` AND date_expires < date('now')`;
+} else if (filter === 'active') {
+  whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
+}
+
+if (filteredByEgu && eguFilteredIds.length > 0) {
+  const placeholders = eguFilteredIds.map(() => '?').join(',');
+  whereClause += ` AND id IN (${placeholders})`;
+  params.push(...eguFilteredIds);
+} else if (filteredByEgu && eguFilteredIds.length === 0) {
+  whereClause += ' AND 1=0';
+}
+
+// Get filtered members with email addresses
+const members = await db.prepare(
+  `SELECT id, first_name, surname, email FROM members
+   WHERE ${whereClause} AND email IS NOT NULL AND email != ''
+   ORDER BY surname, first_name`
+).bind(...params).all();
+
+const membersWithEmail = (members.results || []) as { id: number; first_name: string; surname: string; email: string }[];
+const validMembers = membersWithEmail.filter(m => isValidEmail(m.email));
+
+// Handle form submission
+let sendResult: { sent: number; failed: number; errors: string[] } | null = null;
+let sendError: string | null = null;
+
+if (Astro.request.method === 'POST' && emailConfigured) {
+  try {
+    const formData = await Astro.request.formData();
+    const subject = formData.get('subject') as string;
+    const body = formData.get('body') as string;
+    const selectedIds = formData.getAll('member_ids') as string[];
+
+    if (!subject || !body) {
+      sendError = 'Subject and body are required';
+    } else if (selectedIds.length === 0) {
+      sendError = 'No members selected';
+    } else {
+      const selectedMembers = validMembers.filter(m => selectedIds.includes(String(m.id)));
+
+      sendResult = { sent: 0, failed: 0, errors: [] };
+
+      for (const member of selectedMembers) {
+        // Personalize the email
+        const personalizedBody = body
+          .replace(/\{first_name\}/g, member.first_name)
+          .replace(/\{surname\}/g, member.surname)
+          .replace(/\{name\}/g, `${member.first_name} ${member.surname}`);
+
+        const result = await sendEmail(
+          {
+            to: member.email,
+            subject: subject,
+            html: personalizedBody.replace(/\n/g, '<br>'),
+          },
+          env
+        );
+
+        if (result.success) {
+          sendResult.sent++;
+        } else {
+          sendResult.failed++;
+          sendResult.errors.push(`${member.email}: ${result.error}`);
+        }
+
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+  } catch (e) {
+    sendError = e instanceof Error ? e.message : 'Unknown error';
+  }
+}
+
+// Build filter description
+const filterParts: string[] = [];
+if (search) filterParts.push(`Search: "${search}"`);
+if (subscriptionType) filterParts.push(`Type: ${subscriptionType}`);
+if (eguCategory) filterParts.push(`EGU: ${eguCategory}`);
+if (filter) filterParts.push(`Status: ${filter}`);
+const filterDescription = filterParts.length > 0 ? filterParts.join(', ') : 'All members';
+
+// Build back link with filters
+function buildBackLink(): string {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (subscriptionType) params.set('subscription_type', subscriptionType);
+  if (eguCategory) params.set('egu_category', eguCategory);
+  if (filter) params.set('filter', filter);
+  return `/members${params.toString() ? '?' + params.toString() : ''}`;
+}
+---
+
+<AdminLayout title="Email Members">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Email Members</h3>
+      <a href={buildBackLink()} class="btn btn-secondary">Back to Members</a>
+    </div>
+
+    {!emailConfigured && (
+      <div class="alert alert-error">
+        Email is not configured. Please set up Azure/Microsoft 365 credentials in the environment variables.
+      </div>
+    )}
+
+    {sendResult && (
+      <div class={`alert ${sendResult.failed === 0 ? 'alert-success' : 'alert-warning'}`}>
+        <strong>Emails sent:</strong> {sendResult.sent} successful, {sendResult.failed} failed
+        {sendResult.errors.length > 0 && (
+          <details style="margin-top: 0.5rem;">
+            <summary>View errors</summary>
+            <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
+              {sendResult.errors.map(err => <li style="font-size: 0.875rem;">{err}</li>)}
+            </ul>
+          </details>
+        )}
+      </div>
+    )}
+
+    {sendError && (
+      <div class="alert alert-error">{sendError}</div>
+    )}
+
+    <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: #e8f4e8; border-radius: 4px;">
+      <strong>Filter:</strong> {filterDescription}<br>
+      <strong>Recipients:</strong> {validMembers.length} members with valid email addresses
+      {membersWithEmail.length !== validMembers.length && (
+        <span style="color: #666;"> ({membersWithEmail.length - validMembers.length} with invalid emails excluded)</span>
+      )}
+    </div>
+
+    {emailConfigured && validMembers.length > 0 && !sendResult && (
+      <form method="POST">
+        <div class="form-group">
+          <label class="form-label">Subject</label>
+          <input type="text" name="subject" class="form-input" required placeholder="Email subject..." />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">
+            Message Body
+            <span style="font-weight: normal; color: #666; margin-left: 0.5rem;">
+              (Use {'{first_name}'}, {'{surname}'}, or {'{name}'} for personalization)
+            </span>
+          </label>
+          <textarea
+            name="body"
+            class="form-input"
+            rows="10"
+            required
+            placeholder="Enter your message here..."
+          ></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Select Recipients ({validMembers.length} available)</label>
+          <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <button type="button" id="selectAll" class="btn btn-secondary btn-sm">Select All</button>
+            <button type="button" id="selectNone" class="btn btn-secondary btn-sm">Select None</button>
+          </div>
+          <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;">
+            {validMembers.map(member => (
+              <label style="display: flex; align-items: center; padding: 0.25rem 0.5rem; cursor: pointer;">
+                <input type="checkbox" name="member_ids" value={member.id} checked style="margin-right: 0.5rem;" />
+                <span>{member.surname}, {member.first_name}</span>
+                <span style="color: #666; margin-left: 0.5rem; font-size: 0.875rem;">({member.email})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+          <button type="submit" class="btn btn-primary">Send Emails</button>
+          <a href={buildBackLink()} class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    )}
+
+    {validMembers.length === 0 && (
+      <div style="text-align: center; padding: 2rem; color: #666;">
+        No members with valid email addresses match the current filter.
+      </div>
+    )}
+  </div>
+
+  <script>
+    document.getElementById('selectAll')?.addEventListener('click', () => {
+      document.querySelectorAll<HTMLInputElement>('input[name="member_ids"]').forEach(cb => cb.checked = true);
+    });
+    document.getElementById('selectNone')?.addEventListener('click', () => {
+      document.querySelectorAll<HTMLInputElement>('input[name="member_ids"]').forEach(cb => cb.checked = false);
+    });
+  </script>
+</AdminLayout>

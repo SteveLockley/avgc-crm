@@ -30,7 +30,7 @@ const expiring = expiresSoon(member.date_expires as string);
 
 <AdminLayout title={`${member.first_name} ${member.surname}`}>
   <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <a href="/members" class="btn btn-secondary">&larr; Back to Members</a>
+    <button type="button" onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
     <a href={`/members/${id}/edit`} class="btn btn-primary">Edit Member</a>
     <a href={`/payments/new?member_id=${id}`} class="btn btn-secondary">Record Payment</a>
   </div>

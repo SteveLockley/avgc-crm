@@ -115,6 +115,16 @@ function buildQueryString(pageNum: number): string {
   params.set('page', String(pageNum));
   return `?${params.toString()}`;
 }
+
+// Build query string for export/email links (without page)
+function buildFilterQueryString(): string {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (subscriptionType) params.set('subscription_type', subscriptionType);
+  if (eguCategory) params.set('egu_category', eguCategory);
+  if (filter) params.set('filter', filter);
+  return params.toString() ? `?${params.toString()}` : '';
+}
 ---
 
 <AdminLayout title="Members">
@@ -127,7 +137,8 @@ function buildQueryString(pageNum: number): string {
         <a href="/members/brs" class="btn btn-secondary">BRS Consolidation</a>
         <a href="/members/egu" class="btn btn-secondary">EGU Consolidation</a>
         <a href="/members/import" class="btn btn-secondary">Import</a>
-        <a href="/members/export" class="btn btn-secondary">Export</a>
+        <a href={`/members/export${buildFilterQueryString()}`} class="btn btn-secondary">Export</a>
+        <a href={`/members/email${buildFilterQueryString()}`} class="btn btn-secondary">Email All</a>
         <a href="/members/new" class="btn btn-primary">Add Member</a>
       </div>
     </div>
@@ -285,9 +296,4 @@ function buildQueryString(pageNum: number): string {
     )}
   </div>
 
-  <!-- Quick stats -->
-  <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-    <a href="/members/export" class="btn btn-secondary">Export to CSV</a>
-    <a href="/members/import" class="btn btn-secondary">Import from CSV</a>
-  </div>
 </AdminLayout>

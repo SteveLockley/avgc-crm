@@ -113,7 +113,7 @@ function formatDateForInput(dateStr: string | null): string {
 
 <AdminLayout title={`Edit ${member.first_name} ${member.surname}`}>
   <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <a href={`/members/${id}`} class="btn btn-secondary">&larr; Back to Member</a>
+    <button type="button" onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
   </div>
 
   {error && <div class="alert alert-error">{error}</div>}
@@ -432,6 +432,105 @@ function formatDateForInput(dateStr: string | null): string {
     </div>
   </form>
 
+  <!-- M3 Unsaved Changes Dialog -->
+  <div id="unsaved-dialog" class="m3-dialog-overlay" style="display: none;">
+    <div class="m3-dialog">
+      <div class="m3-dialog-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/>
+        </svg>
+      </div>
+      <h2 class="m3-dialog-title">Unsaved changes</h2>
+      <p class="m3-dialog-content">You have unsaved changes. Are you sure you want to leave this page?</p>
+      <div class="m3-dialog-actions">
+        <button type="button" id="dialog-cancel" class="m3-btn m3-btn-text">Stay</button>
+        <button type="button" id="dialog-confirm" class="m3-btn m3-btn-filled">Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .m3-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.32);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: m3-fade-in 0.15s ease-out;
+    }
+    @keyframes m3-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .m3-dialog {
+      background: #fff;
+      border-radius: 28px;
+      padding: 24px;
+      min-width: 280px;
+      max-width: 560px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+      animation: m3-scale-in 0.2s ease-out;
+    }
+    @keyframes m3-scale-in {
+      from { transform: scale(0.9); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .m3-dialog-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #fef3e0;
+      color: #e65100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .m3-dialog-title {
+      font-size: 1.5rem;
+      font-weight: 500;
+      margin: 0 0 16px 0;
+      color: #1c1b1f;
+    }
+    .m3-dialog-content {
+      font-size: 0.875rem;
+      color: #49454f;
+      margin: 0 0 24px 0;
+      line-height: 1.5;
+    }
+    .m3-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .m3-btn {
+      padding: 10px 24px;
+      border-radius: 20px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+    .m3-btn-text {
+      background: transparent;
+      color: #1e5631;
+    }
+    .m3-btn-text:hover {
+      background: rgba(30, 86, 49, 0.08);
+    }
+    .m3-btn-filled {
+      background: #1e5631;
+      color: #fff;
+    }
+    .m3-btn-filled:hover {
+      background: #2d7a47;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+  </style>
+
   <script is:inline define:vars={{ zeroCostSubscriptions: ZERO_COST_SUBSCRIPTIONS }}>
     // Show/hide fee template based on subscription type
     const categorySelect = document.getElementById('category');
@@ -451,5 +550,101 @@ function formatDateForInput(dateStr: string | null): string {
     }
 
     categorySelect.addEventListener('change', updateFeeTemplateVisibility);
+
+    // Unsaved changes detection
+    const form = document.querySelector('form');
+    const dialog = document.getElementById('unsaved-dialog');
+    const dialogCancel = document.getElementById('dialog-cancel');
+    const dialogConfirm = document.getElementById('dialog-confirm');
+    let initialFormData = new FormData(form);
+    let pendingNavigation = null;
+    let formSubmitting = false;
+
+    function getFormDataString(formData) {
+      return Array.from(formData.entries())
+        .map(([k, v]) => `${k}=${v}`)
+        .sort()
+        .join('&');
+    }
+
+    function hasUnsavedChanges() {
+      const currentFormData = new FormData(form);
+      return getFormDataString(initialFormData) !== getFormDataString(currentFormData);
+    }
+
+    function showDialog(callback) {
+      pendingNavigation = callback;
+      dialog.style.display = 'flex';
+    }
+
+    function hideDialog() {
+      dialog.style.display = 'none';
+      pendingNavigation = null;
+    }
+
+    dialogCancel.addEventListener('click', hideDialog);
+
+    dialogConfirm.addEventListener('click', () => {
+      hideDialog();
+      if (pendingNavigation) {
+        pendingNavigation();
+      }
+    });
+
+    // Close dialog on overlay click
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) {
+        hideDialog();
+      }
+    });
+
+    // Close dialog on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && dialog.style.display === 'flex') {
+        hideDialog();
+      }
+    });
+
+    // Mark form as submitting to allow navigation
+    form.addEventListener('submit', () => {
+      formSubmitting = true;
+    });
+
+    // Intercept link clicks
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href]');
+      if (link && !formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        showDialog(() => {
+          window.location.href = link.href;
+        });
+      }
+    });
+
+    // Intercept back button clicks
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[onclick*="history.back"]');
+      if (btn && !formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        e.stopPropagation();
+        showDialog(() => {
+          history.back();
+        });
+      }
+    }, true);
+
+    // Intercept browser back/forward and refresh
+    window.addEventListener('beforeunload', (e) => {
+      if (!formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = '';
+        return '';
+      }
+    });
+
+    // Reset initial form data after successful save (page reload with success message)
+    if (document.querySelector('.alert-success')) {
+      initialFormData = new FormData(form);
+    }
   </script>
 </AdminLayout>

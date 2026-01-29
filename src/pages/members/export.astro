@@ -1,11 +1,72 @@
 ---
-// CSV Export endpoint
+// CSV Export endpoint - respects active filters
+import { calculateEguCategory, type Member } from '../../lib/db';
+
 const db = Astro.locals.runtime.env.DB;
 
-// Get all members
+// Get filter parameters (same as index page)
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const subscriptionType = url.searchParams.get('subscription_type') || '';
+const eguCategory = url.searchParams.get('egu_category') || '';
+const filter = url.searchParams.get('filter') || '';
+
+// For EGU category filtering, we need to get all members and filter in code
+let filteredByEgu = false;
+let eguFilteredIds: number[] = [];
+
+if (eguCategory) {
+  filteredByEgu = true;
+  const allMembers = await db.prepare(
+    `SELECT id, gender, date_of_birth, home_away, home_club
+     FROM members
+     WHERE category IS NOT NULL AND category != ''`
+  ).all();
+
+  eguFilteredIds = (allMembers.results || [])
+    .filter((m: any) => calculateEguCategory(m as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>) === eguCategory)
+    .map((m: any) => m.id);
+}
+
+// Build query with filters
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (
+    surname LIKE ? OR
+    first_name LIKE ? OR
+    email LIKE ?
+  )`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+
+if (subscriptionType) {
+  whereClause += ' AND category = ?';
+  params.push(subscriptionType);
+}
+
+if (filter === 'expiring') {
+  whereClause += ` AND date_expires BETWEEN date('now') AND date('now', '+30 days')`;
+} else if (filter === 'expired') {
+  whereClause += ` AND date_expires < date('now')`;
+} else if (filter === 'active') {
+  whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
+}
+
+if (filteredByEgu && eguFilteredIds.length > 0) {
+  const placeholders = eguFilteredIds.map(() => '?').join(',');
+  whereClause += ` AND id IN (${placeholders})`;
+  params.push(...eguFilteredIds);
+} else if (filteredByEgu && eguFilteredIds.length === 0) {
+  whereClause += ' AND 1=0';
+}
+
+// Get filtered members
 const members = await db.prepare(
-  `SELECT * FROM members ORDER BY surname, first_name`
-).all();
+  `SELECT * FROM members WHERE ${whereClause} ORDER BY surname, first_name`
+).bind(...params).all();
 
 if (!members.results || members.results.length === 0) {
   return new Response('No members to export', { status: 404 });
@@ -95,8 +156,13 @@ for (const member of members.results) {
   csv += row.join(',') + '\n';
 }
 
-// Return as downloadable file
-const filename = `AVGC_Members_Export_${new Date().toISOString().split('T')[0]}.csv`;
+// Build filename with filter info
+let filenameParts = ['AVGC_Members'];
+if (subscriptionType) filenameParts.push(subscriptionType.replace(/\s+/g, '_'));
+if (filter) filenameParts.push(filter);
+if (eguCategory) filenameParts.push('EGU');
+filenameParts.push(new Date().toISOString().split('T')[0]);
+const filename = filenameParts.join('_') + '.csv';
 
 return new Response(csv, {
   headers: {
