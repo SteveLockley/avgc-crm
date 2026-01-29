@@ -13,7 +13,9 @@ database_name = "alnmouth-golf-db"
 database_id = "2dabf34e-2dc8-49ec-abb6-a6b1dfc78ac0"
 
 # Secrets (add via: npx wrangler secret put <NAME> --config wrangler.backup.toml)
-# Required secrets:
-# - BACKUP_TENANT_ID
-# - BACKUP_CLIENT_ID
-# - BACKUP_CLIENT_SECRET
+# Uses the same Azure credentials as the main app:
+# - AZURE_TENANT_ID
+# - AZURE_CLIENT_ID
+# - AZURE_CLIENT_SECRET
+#
+# Note: Your Azure App needs Sites.ReadWrite.All permission for SharePoint access

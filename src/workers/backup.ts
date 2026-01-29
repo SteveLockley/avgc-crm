@@ -5,9 +5,9 @@
 
 interface Env {
   DB: D1Database;
-  BACKUP_TENANT_ID: string;
-  BACKUP_CLIENT_ID: string;
-  BACKUP_CLIENT_SECRET: string;
+  AZURE_TENANT_ID: string;
+  AZURE_CLIENT_ID: string;
+  AZURE_CLIENT_SECRET: string;
 }
 
 const SHAREPOINT_SITE = 'alnmouthvillagegolf.sharepoint.com';
@@ -118,7 +118,7 @@ async function exportDatabase(db: D1Database): Promise<string> {
 }
 
 async function getMicrosoftAccessToken(env: Env): Promise<string> {
-  const tokenUrl = `https://login.microsoftonline.com/${env.BACKUP_TENANT_ID}/oauth2/v2.0/token`;
+  const tokenUrl = `https://login.microsoftonline.com/${env.AZURE_TENANT_ID}/oauth2/v2.0/token`;
 
   const response = await fetch(tokenUrl, {
     method: 'POST',
@@ -126,8 +126,8 @@ async function getMicrosoftAccessToken(env: Env): Promise<string> {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({
-      client_id: env.BACKUP_CLIENT_ID,
-      client_secret: env.BACKUP_CLIENT_SECRET,
+      client_id: env.AZURE_CLIENT_ID,
+      client_secret: env.AZURE_CLIENT_SECRET,
       scope: 'https://graph.microsoft.com/.default',
       grant_type: 'client_credentials',
     }),
