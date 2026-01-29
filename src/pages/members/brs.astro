@@ -1,0 +1,688 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatDate, type Member } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+interface ConsolidationResult {
+  matched: Array<{
+    brsUsername: string;
+    brsName: string;
+    brsMembership: string;
+    crmId: number;
+    crmName: string;
+    crmPin: string;
+    nameMatch: boolean;
+  }>;
+  brsNotInCrm: Array<{
+    brsUsername: string;
+    brsName: string;
+    brsMembership: string;
+  }>;
+  crmNotInBrs: Array<{
+    crmId: number;
+    crmName: string;
+    crmPin: string;
+    crmSubscription: string | null;
+  }>;
+  nameMismatches: Array<{
+    brsUsername: string;
+    brsName: string;
+    crmId: number;
+    crmName: string;
+  }>;
+  errors: string[];
+}
+
+let result: ConsolidationResult | null = null;
+let error = '';
+let lastImport: { imported_at: string; imported_by: string | null } | null = null;
+
+// Load previously saved consolidation data
+const savedData = await db.prepare(
+  `SELECT * FROM brs_consolidation ORDER BY imported_at DESC LIMIT 1`
+).first<{
+  id: number;
+  imported_at: string;
+  imported_by: string | null;
+  matched_count: number;
+  brs_not_in_crm_count: number;
+  crm_not_in_brs_count: number;
+  name_mismatch_count: number;
+  matched_json: string | null;
+  brs_not_in_crm_json: string | null;
+  crm_not_in_brs_json: string | null;
+  name_mismatches_json: string | null;
+  errors_json: string | null;
+}>().catch(() => null);
+
+if (savedData) {
+  lastImport = { imported_at: savedData.imported_at, imported_by: savedData.imported_by };
+  result = {
+    matched: savedData.matched_json ? JSON.parse(savedData.matched_json) : [],
+    brsNotInCrm: savedData.brs_not_in_crm_json ? JSON.parse(savedData.brs_not_in_crm_json) : [],
+    crmNotInBrs: savedData.crm_not_in_brs_json ? JSON.parse(savedData.crm_not_in_brs_json) : [],
+    nameMismatches: savedData.name_mismatches_json ? JSON.parse(savedData.name_mismatches_json) : [],
+    errors: savedData.errors_json ? JSON.parse(savedData.errors_json) : []
+  };
+}
+
+// Parse CSV line handling quoted fields with potential newlines
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+// Parse full CSV handling multi-line quoted fields
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+    } else if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (current.trim()) {
+        rows.push(parseCSVLine(current));
+      }
+      current = '';
+      // Skip \r\n as single newline
+      if (char === '\r' && text[i + 1] === '\n') {
+        i++;
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  // Don't forget the last line
+  if (current.trim()) {
+    rows.push(parseCSVLine(current));
+  }
+
+  return rows;
+}
+
+// Normalize name for comparison
+function normalizeName(name: string | null): string {
+  if (!name) return '';
+  return name.toLowerCase().trim().replace(/[^a-z]/g, '');
+}
+
+// Parse BRS name format "Surname, FirstName [MiddleInitials]"
+function parseBrsName(name: string): { surname: string; firstName: string } {
+  const parts = name.split(',').map(p => p.trim());
+  const surname = parts[0] || '';
+  // First name might have middle initials like "Pete P.S" - take first word
+  const firstNamePart = parts[1] || '';
+  const firstName = firstNamePart.split(/\s+/)[0] || '';
+  return { surname, firstName };
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const file = formData.get('brsfile') as File;
+
+  if (!file || file.size === 0) {
+    error = 'Please select a BRS member list CSV file';
+  } else {
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+
+      if (rows.length < 2) {
+        error = 'CSV file appears to be empty or has no data rows';
+      } else {
+        const header = rows[0];
+
+        // Find column indices
+        const usernameIdx = header.findIndex(h => h.toLowerCase() === 'username');
+        const nameIdx = header.findIndex(h => h.toLowerCase() === 'name');
+        const membershipIdx = header.findIndex(h => h.toLowerCase() === 'membership');
+
+        if (usernameIdx === -1 || nameIdx === -1) {
+          error = 'CSV file must contain "Username" and "Name" columns';
+        } else {
+          // Parse BRS records
+          const brsRecords: Array<{
+            username: string;
+            name: string;
+            membership: string;
+            parsedSurname: string;
+            parsedFirstName: string;
+          }> = [];
+
+          for (let i = 1; i < rows.length; i++) {
+            const values = rows[i];
+            if (values.length > Math.max(usernameIdx, nameIdx)) {
+              const username = values[usernameIdx]?.trim();
+              const name = values[nameIdx]?.trim();
+              const membership = membershipIdx >= 0 ? values[membershipIdx]?.trim() || '' : '';
+
+              if (username && name) {
+                const parsed = parseBrsName(name);
+                brsRecords.push({
+                  username,
+                  name,
+                  membership,
+                  parsedSurname: parsed.surname,
+                  parsedFirstName: parsed.firstName
+                });
+              }
+            }
+          }
+
+          // Get all CRM members with pin
+          const crmMembersResult = await db.prepare(
+            `SELECT id, first_name, surname, pin, subscription_template
+             FROM members
+             WHERE pin IS NOT NULL AND pin != ''
+             ORDER BY surname, first_name`
+          ).all();
+          const crmMembers = (crmMembersResult.results || []) as Array<{
+            id: number;
+            first_name: string;
+            surname: string;
+            pin: string;
+            subscription_template: string | null;
+          }>;
+
+          // Create lookup map for CRM members by pin
+          const crmByPin = new Map<string, typeof crmMembers[0]>();
+          for (const member of crmMembers) {
+            crmByPin.set(member.pin, member);
+          }
+
+          // Track which CRM members are matched
+          const matchedCrmIds = new Set<number>();
+
+          // Build results
+          result = {
+            matched: [],
+            brsNotInCrm: [],
+            crmNotInBrs: [],
+            nameMismatches: [],
+            errors: []
+          };
+
+          // Process BRS records
+          for (const brs of brsRecords) {
+            const crm = crmByPin.get(brs.username);
+
+            if (crm) {
+              matchedCrmIds.add(crm.id);
+
+              // Check if names match
+              const brsNormalizedSurname = normalizeName(brs.parsedSurname);
+              const brsNormalizedFirst = normalizeName(brs.parsedFirstName);
+              const crmNormalizedSurname = normalizeName(crm.surname);
+              const crmNormalizedFirst = normalizeName(crm.first_name);
+
+              const nameMatch = brsNormalizedSurname === crmNormalizedSurname &&
+                               brsNormalizedFirst === crmNormalizedFirst;
+
+              result.matched.push({
+                brsUsername: brs.username,
+                brsName: brs.name,
+                brsMembership: brs.membership,
+                crmId: crm.id,
+                crmName: `${crm.first_name} ${crm.surname}`,
+                crmPin: crm.pin,
+                nameMatch
+              });
+
+              if (!nameMatch) {
+                result.nameMismatches.push({
+                  brsUsername: brs.username,
+                  brsName: brs.name,
+                  crmId: crm.id,
+                  crmName: `${crm.first_name} ${crm.surname}`
+                });
+              }
+            } else {
+              result.brsNotInCrm.push({
+                brsUsername: brs.username,
+                brsName: brs.name,
+                brsMembership: brs.membership
+              });
+            }
+          }
+
+          // Find CRM members with pin not in BRS file
+          // Only include members with active subscriptions (not social, resigned, etc.)
+          const excludedSubscriptions = ['Social', 'Gratis', 'Retention', 'Resigned'];
+          for (const crm of crmMembers) {
+            if (!matchedCrmIds.has(crm.id)) {
+              // Check if subscription should be included
+              const shouldInclude = crm.subscription_template &&
+                !excludedSubscriptions.some(ex =>
+                  crm.subscription_template?.toLowerCase().includes(ex.toLowerCase())
+                );
+
+              if (shouldInclude) {
+                result.crmNotInBrs.push({
+                  crmId: crm.id,
+                  crmName: `${crm.first_name} ${crm.surname}`,
+                  crmPin: crm.pin,
+                  crmSubscription: crm.subscription_template
+                });
+              }
+            }
+          }
+
+          // Save the results to database for persistence
+          await db.prepare(
+            `INSERT INTO brs_consolidation (
+              matched_count, brs_not_in_crm_count, crm_not_in_brs_count, name_mismatch_count,
+              matched_json, brs_not_in_crm_json, crm_not_in_brs_json, name_mismatches_json, errors_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            result.matched.length,
+            result.brsNotInCrm.length,
+            result.crmNotInBrs.length,
+            result.nameMismatches.length,
+            JSON.stringify(result.matched),
+            JSON.stringify(result.brsNotInCrm),
+            JSON.stringify(result.crmNotInBrs),
+            JSON.stringify(result.nameMismatches),
+            JSON.stringify(result.errors)
+          ).run();
+
+          lastImport = { imported_at: new Date().toISOString(), imported_by: null };
+        }
+      }
+    } catch (e: any) {
+      error = `Failed to process file: ${e.message}`;
+    }
+  }
+}
+
+// Get current stats
+const crmWithPinCount = await db.prepare(
+  `SELECT COUNT(*) as count FROM members WHERE pin IS NOT NULL AND pin != ''`
+).first<{ count: number }>();
+
+const activeWithPinCount = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE pin IS NOT NULL AND pin != ''
+   AND subscription_template IS NOT NULL
+   AND subscription_template NOT IN ('Social', 'Gratis', 'Retention', 'Resigned')`
+).first<{ count: number }>();
+
+// Calculate if there are discrepancies (only relevant after processing)
+const hasDiscrepancies = result ? (
+  result.brsNotInCrm.length > 0 ||
+  result.crmNotInBrs.length > 0 ||
+  result.nameMismatches.length > 0
+) : false;
+
+const discrepancyReasons: string[] = [];
+if (result) {
+  if (result.brsNotInCrm.length > 0) {
+    discrepancyReasons.push(`${result.brsNotInCrm.length} BRS members not found in CRM (no matching PIN)`);
+  }
+  if (result.crmNotInBrs.length > 0) {
+    discrepancyReasons.push(`${result.crmNotInBrs.length} CRM members with PIN not in BRS file`);
+  }
+  if (result.nameMismatches.length > 0) {
+    discrepancyReasons.push(`${result.nameMismatches.length} matched PINs have name mismatches`);
+  }
+}
+---
+
+<AdminLayout title="BRS Member Consolidation">
+  <style>
+    .stats-row {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-box {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      flex: 1;
+    }
+    .stat-box h4 {
+      font-size: 0.875rem;
+      color: #666;
+      margin: 0 0 0.5rem 0;
+    }
+    .stat-box .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #1e5631;
+    }
+    .result-section {
+      margin-top: 1.5rem;
+    }
+    .result-section h3 {
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .result-section .count {
+      background: #e0e0e0;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .result-section.success h3 .count { background: #d4edda; color: #155724; }
+    .result-section.warning h3 .count { background: #fff3cd; color: #856404; }
+    .result-section.danger h3 .count { background: #f8d7da; color: #721c24; }
+    .result-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    .result-table th, .result-table td {
+      padding: 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    .result-table th {
+      background: #f4f4f4;
+      font-weight: 600;
+    }
+    .badge-correct { background: #d4edda; color: #155724; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .badge-incorrect { background: #f8d7da; color: #721c24; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .max-height-table {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  </style>
+
+  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+    <a href="/members" class="btn btn-secondary">&larr; Back to Members</a>
+  </div>
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  <div class="stats-row">
+    <div class="stat-box">
+      <h4>CRM Members with PIN</h4>
+      <div class="value">{crmWithPinCount?.count || 0}</div>
+    </div>
+    <div class="stat-box">
+      <h4>Active Members with PIN</h4>
+      <div class="value">{activeWithPinCount?.count || 0}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Import BRS Member List</h3>
+    </div>
+
+    {lastImport && (
+      <div style="margin-bottom: 1rem; padding: 0.75rem; background: #e8f4ea; border-radius: 4px; font-size: 0.875rem;">
+        <strong>Last imported:</strong> {new Date(lastImport.imported_at).toLocaleString('en-GB')}
+        {lastImport.imported_by && <span> by {lastImport.imported_by}</span>}
+      </div>
+    )}
+
+    <p style="margin-bottom: 1rem; color: #666;">
+      Upload the BRS (Booking Reservation System) member list CSV file to consolidate with the CRM.
+      Members are matched by <strong>BRS Username = CRM PIN</strong>, then names are verified.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+      <div class="form-group">
+        <label class="form-label" for="brsfile">BRS Member List CSV File</label>
+        <input type="file" name="brsfile" id="brsfile" accept=".csv" class="form-input" required />
+      </div>
+
+      {hasDiscrepancies && (
+        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+          <strong>Discrepancies found</strong> - review and resolve:
+          <ul style="margin: 0.5rem 0 0 1rem;">
+            {discrepancyReasons.map(reason => <li>{reason}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {result && !hasDiscrepancies && (
+        <div class="alert alert-success" style="margin-bottom: 1rem;">
+          <strong>No discrepancies found.</strong> All BRS members match CRM records correctly.
+        </div>
+      )}
+
+      <button type="submit" class="btn btn-primary">Run Consolidation</button>
+    </form>
+  </div>
+
+  {result && (
+    <div class="card" style="margin-top: 1.5rem;">
+      <div class="card-header">
+        <h3 class="card-title">Consolidation Results</h3>
+      </div>
+
+      {result.errors.length > 0 && (
+        <div class="alert alert-error" style="margin-bottom: 1rem;">
+          <strong>Errors:</strong>
+          <ul style="margin: 0.5rem 0 0 1rem;">
+            {result.errors.map(err => <li>{err}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <!-- Matched Members -->
+      <div class="result-section success">
+        <h3>
+          Matched Members (PIN Found)
+          <span class="count">{result.matched.length}</span>
+        </h3>
+        {result.matched.length > 0 && (
+          <div class="max-height-table">
+            <table class="result-table">
+              <thead>
+                <tr>
+                  <th>BRS Username (PIN)</th>
+                  <th>BRS Name</th>
+                  <th>CRM Name</th>
+                  <th>BRS Membership</th>
+                  <th>Name Match</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.matched.map(m => (
+                  <tr>
+                    <td><code>{m.brsUsername}</code></td>
+                    <td>{m.brsName}</td>
+                    <td>
+                      <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                    </td>
+                    <td>{m.brsMembership}</td>
+                    <td>
+                      {m.nameMatch ? (
+                        <span class="badge-correct">Match</span>
+                      ) : (
+                        <span class="badge-incorrect">Mismatch</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {result.nameMismatches.length > 0 && (
+          <p style="margin-top: 0.5rem; color: #856404; font-size: 0.875rem;">
+            ⚠️ {result.nameMismatches.length} matched PINs have name mismatches - review these carefully.
+          </p>
+        )}
+      </div>
+
+      <!-- Name Mismatches (subset of matched, highlighted) -->
+      {result.nameMismatches.length > 0 && (
+        <div class="result-section warning">
+          <h3>
+            Name Mismatches
+            <span class="count">{result.nameMismatches.length}</span>
+          </h3>
+          <p style="color: #856404; font-size: 0.875rem; margin-bottom: 0.5rem;">
+            These records matched by PIN but the names don't match. This could indicate:
+            data entry errors, name changes, or incorrect PIN assignments.
+          </p>
+          <div class="max-height-table">
+            <table class="result-table">
+              <thead>
+                <tr>
+                  <th>PIN</th>
+                  <th>BRS Name</th>
+                  <th>CRM Name</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.nameMismatches.map(m => (
+                  <tr>
+                    <td><code>{m.brsUsername}</code></td>
+                    <td><strong>{m.brsName}</strong></td>
+                    <td><strong>{m.crmName}</strong></td>
+                    <td>
+                      <a href={`/members/${m.crmId}/edit`} class="btn btn-secondary btn-sm">Edit CRM</a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <!-- BRS Not in CRM -->
+      <div class="result-section warning">
+        <h3>
+          BRS Members Not Found in CRM
+          <span class="count">{result.brsNotInCrm.length}</span>
+        </h3>
+        {result.brsNotInCrm.length > 0 ? (
+          <>
+            <p style="color: #856404; font-size: 0.875rem; margin-bottom: 0.5rem;">
+              These BRS members have no matching PIN in the CRM. They may need to be added or their PIN corrected.
+            </p>
+            <div class="max-height-table">
+              <table class="result-table">
+                <thead>
+                  <tr>
+                    <th>BRS Username</th>
+                    <th>Name</th>
+                    <th>BRS Membership</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.brsNotInCrm.map(m => (
+                    <tr>
+                      <td><code>{m.brsUsername}</code></td>
+                      <td>{m.brsName}</td>
+                      <td>{m.brsMembership}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p style="color: #666;">All BRS members were matched in the CRM.</p>
+        )}
+      </div>
+
+      <!-- CRM Not in BRS -->
+      <div class="result-section danger">
+        <h3>
+          CRM Members Not in BRS
+          <span class="count">{result.crmNotInBrs.length}</span>
+        </h3>
+        {result.crmNotInBrs.length > 0 ? (
+          <>
+            <p style="color: #721c24; font-size: 0.875rem; margin-bottom: 0.5rem;">
+              These CRM members have a PIN but were not found in the BRS export.
+              They may need to be added to BRS or their subscription reviewed.
+              (Excludes Social, Gratis, Retention, and Resigned members)
+            </p>
+            <div class="max-height-table">
+              <table class="result-table">
+                <thead>
+                  <tr>
+                    <th>CRM PIN</th>
+                    <th>Name</th>
+                    <th>Subscription</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.crmNotInBrs.map(m => (
+                    <tr>
+                      <td><code>{m.crmPin}</code></td>
+                      <td>
+                        <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                      </td>
+                      <td>{m.crmSubscription || '-'}</td>
+                      <td>
+                        <a href={`/members/${m.crmId}`} class="btn btn-secondary btn-sm">View</a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p style="color: #666;">All active CRM members with PIN were found in the BRS file.</p>
+        )}
+      </div>
+
+      <!-- Summary -->
+      <div style="margin-top: 1.5rem; padding: 1rem; background: #f4f4f4; border-radius: 4px;">
+        <h4 style="margin: 0 0 0.5rem 0;">Summary</h4>
+        <ul style="margin: 0; padding-left: 1.5rem;">
+          <li><strong>{result.matched.length}</strong> BRS members matched with CRM by PIN</li>
+          <li><strong>{result.matched.filter(m => m.nameMatch).length}</strong> with matching names</li>
+          <li><strong>{result.nameMismatches.length}</strong> with name mismatches</li>
+          <li><strong>{result.brsNotInCrm.length}</strong> BRS members not found in CRM</li>
+          <li><strong>{result.crmNotInBrs.length}</strong> CRM members (with PIN) not in BRS</li>
+        </ul>
+      </div>
+    </div>
+  )}
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Expected CSV Format</h3>
+    </div>
+    <p style="font-size: 0.875rem; color: #666;">
+      The BRS member list CSV file should contain at least these columns:
+    </p>
+    <ul style="font-size: 0.875rem; color: #666; margin: 0.5rem 0 0 1.5rem;">
+      <li><strong>Username</strong> - The BRS user ID (matches CRM PIN)</li>
+      <li><strong>Name</strong> - Member name in format "Surname, FirstName"</li>
+      <li><strong>Membership</strong> (optional) - Membership type in BRS</li>
+    </ul>
+    <p style="font-size: 0.875rem; color: #666; margin-top: 1rem;">
+      Export this file from BRS: Admin → Members → Export Member List
+    </p>
+  </div>
+</AdminLayout>

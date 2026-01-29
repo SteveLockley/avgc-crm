@@ -24,15 +24,15 @@ const expiredMembers = await db.prepare(
    WHERE date_expires < date('now')`
 ).first<{ count: number }>();
 
-// Get subscription type breakdown with fees from payment_items
+// Get subscription type breakdown with fees from payment_items (category holds subscription type)
 const subscriptionBreakdown = await db.prepare(
-  `SELECT m.subscription_template, COUNT(*) as count, pi.fee
+  `SELECT m.category, COUNT(*) as count, pi.fee
    FROM members m
-   LEFT JOIN payment_items pi ON pi.name = m.subscription_template AND pi.category = 'Subscription' AND pi.active = 1
-   WHERE m.subscription_template IS NOT NULL AND m.subscription_template != ''
-   GROUP BY m.subscription_template
+   LEFT JOIN payment_items pi ON pi.name = m.category AND pi.category = 'Subscription' AND pi.active = 1
+   WHERE m.category IS NOT NULL AND m.category != ''
+   GROUP BY m.category
    ORDER BY count DESC`
-).all<{ subscription_template: string; count: number; fee: number | null }>();
+).all<{ category: string; count: number; fee: number | null }>();
 
 // Calculate subscription values
 const subscriptionWithValues = (subscriptionBreakdown.results || []).map(sub => ({
@@ -50,11 +50,11 @@ const excludedCategories = ['Social', 'Gratis', 'Retention', 'Resigned'];
 const allMembersForEgu = await db.prepare(
   `SELECT gender, date_of_birth, home_away, home_club
    FROM members
-   WHERE subscription_template IS NOT NULL
-   AND subscription_template != ''
+   WHERE category IS NOT NULL
+   AND category != ''
    AND national_id IS NOT NULL
    AND national_id != ''
-   AND subscription_template NOT IN ('Social', 'Gratis', 'Retention', 'Resigned')`
+   AND category NOT IN ('Social', 'Gratis', 'Retention', 'Resigned')`
 ).all();
 const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
 
@@ -262,7 +262,7 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
           <tr>
             <td class="label-cell">Expired Members</td>
             <td class="count-cell">
-              <a href="/members?filter=expired" class="count-link danger">{expiredMembers?.count || 0}</a>
+              <span class="count-link danger" style="cursor: pointer;" onclick="window.location.href='/members?filter=expired'">{expiredMembers?.count || 0}</span>
             </td>
           </tr>
         </tbody>
@@ -283,9 +283,9 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
         <tbody>
           {subscriptionWithValues.map((sub) => (
             <tr>
-              <td class="label-cell">{sub.subscription_template}</td>
+              <td class="label-cell">{sub.category}</td>
               <td class="count-cell">
-                <a href={`/members?subscription_template=${encodeURIComponent(sub.subscription_template)}`} class="count-link default">
+                <a href={`/members?subscription_type=${encodeURIComponent(sub.category)}`} class="count-link default">
                   {sub.count}
                 </a>
               </td>
@@ -330,7 +330,7 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
                 {cat.count}
               </a>
             </td>
-            <td class="count-cell">{cat.fees > 0 ? formatCurrency(cat.fees) : '-'}</td>
+            <td class="count-cell">{formatCurrency(cat.fees)}</td>
           </tr>
         ))}
         {eguCategoryWithFees.length === 0 && (

@@ -1,52 +1,21 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { formatCurrency, formatDate, calculateEguCategory, type Member, type PaymentItem } from '../../lib/db';
+import { formatCurrency, formatDate, type PaymentItem } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
-// Membership statistics
-const memberStats = await db.prepare(`
-  SELECT
-    COUNT(*) as total,
-    SUM(CASE WHEN date_expires >= date('now') OR date_expires IS NULL THEN 1 ELSE 0 END) as active,
-    SUM(CASE WHEN date_expires < date('now') THEN 1 ELSE 0 END) as expired,
-    SUM(CASE WHEN date_expires BETWEEN date('now') AND date('now', '+30 days') THEN 1 ELSE 0 END) as expiring_30,
-    SUM(CASE WHEN date_expires BETWEEN date('now') AND date('now', '+60 days') THEN 1 ELSE 0 END) as expiring_60
-  FROM members
-`).first();
-
-// Subscription type breakdown
+// Subscription type breakdown (category holds subscription type)
 const subscriptionStats = await db.prepare(`
   SELECT
-    subscription_template,
+    category,
     COUNT(*) as count,
     SUM(CASE WHEN home_away = 'H' THEN 1 ELSE 0 END) as home,
     SUM(CASE WHEN home_away = 'A' THEN 1 ELSE 0 END) as away
   FROM members
-  WHERE subscription_template IS NOT NULL AND subscription_template != ''
-  GROUP BY subscription_template
+  WHERE category IS NOT NULL AND category != ''
+  GROUP BY category
   ORDER BY count DESC
 `).all();
-
-// Get all members for EGU category calculation
-const allMembersForEgu = await db.prepare(
-  `SELECT gender, date_of_birth, home_away, home_club
-   FROM members
-   WHERE subscription_template IS NOT NULL AND subscription_template != ''`
-).all();
-const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
-
-// Calculate EGU category counts
-const eguCategoryCounts: Record<string, number> = {};
-membersData.forEach(member => {
-  const eguCat = calculateEguCategory(member);
-  if (eguCat) {
-    eguCategoryCounts[eguCat] = (eguCategoryCounts[eguCat] || 0) + 1;
-  }
-});
-const eguCategoryBreakdown = Object.entries(eguCategoryCounts)
-  .map(([category, count]) => ({ category, count }))
-  .sort((a, b) => b.count - a.count);
 
 // Get payment items with revenue from invoices
 const paymentItemsResult = await db.prepare(
@@ -192,26 +161,6 @@ const handicapStats = await db.prepare(`
 ---
 
 <AdminLayout title="Reports">
-  <!-- Overview Stats -->
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-value">{memberStats?.total || 0}</div>
-      <div class="stat-label">Total Members</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value" style="color: #28a745">{memberStats?.active || 0}</div>
-      <div class="stat-label">Active Members</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value" style="color: #ffc107">{memberStats?.expiring_30 || 0}</div>
-      <div class="stat-label">Expiring in 30 Days</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value" style="color: #dc3545">{memberStats?.expired || 0}</div>
-      <div class="stat-label">Expired</div>
-    </div>
-  </div>
-
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
     <!-- Subscription Type Breakdown -->
     <div class="card">
@@ -230,7 +179,7 @@ const handicapStats = await db.prepare(`
         <tbody>
           {subscriptionStats.results?.map((sub) => (
             <tr>
-              <td>{sub.subscription_template}</td>
+              <td>{sub.category}</td>
               <td style="text-align: right">{sub.home}</td>
               <td style="text-align: right">{sub.away}</td>
               <td style="text-align: right; font-weight: 600">{sub.count}</td>
@@ -240,33 +189,6 @@ const handicapStats = await db.prepare(`
       </table>
     </div>
 
-    <!-- EGU Category Breakdown -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Members by EGU Category</h3>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>EGU Category</th>
-            <th style="text-align: right">Count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {eguCategoryBreakdown.map((cat) => (
-            <tr>
-              <td style="font-size: 0.875rem;">{cat.category}</td>
-              <td style="text-align: right">{cat.count}</td>
-            </tr>
-          ))}
-          {eguCategoryBreakdown.length === 0 && (
-            <tr>
-              <td colspan="2" style="text-align: center; color: #666;">No data available</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
   </div>
 
   <!-- Revenue by Payment Item -->
@@ -472,6 +394,7 @@ const handicapStats = await db.prepare(`
       <a href="/members/export" class="btn btn-secondary">Export All Members (CSV)</a>
       <a href="/reports/expiring" class="btn btn-secondary">Expiring Members Report</a>
       <a href="/reports/renewals" class="btn btn-secondary">Renewal Reminders List</a>
+      <a href="/reports/clubhouse" class="btn btn-primary">Clubhouse Financials</a>
     </div>
   </div>
 </AdminLayout>

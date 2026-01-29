@@ -1,19 +1,24 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { formatDate, isExpired, expiresSoon, MEMBER_CATEGORIES, SUBSCRIPTION_TEMPLATES, EGU_CATEGORIES, calculateEguCategory, type Member } from '../../lib/db';
+import { formatDate, isExpired, expiresSoon, EGU_CATEGORIES, calculateEguCategory, type Member } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
 // Get query parameters
 const url = Astro.url;
 const search = url.searchParams.get('search') || '';
-const category = url.searchParams.get('category') || '';
-const subscriptionTemplate = url.searchParams.get('subscription_template') || '';
+const subscriptionType = url.searchParams.get('subscription_type') || '';
 const eguCategory = url.searchParams.get('egu_category') || '';
 const filter = url.searchParams.get('filter') || '';
 const page = parseInt(url.searchParams.get('page') || '1');
 const perPage = 25;
 const offset = (page - 1) * perPage;
+
+// Load subscription types from payment_items
+const subscriptionTypesResult = await db.prepare(
+  `SELECT name FROM payment_items WHERE category = 'Subscription' AND active = 1 ORDER BY name`
+).all();
+const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
 
 // For EGU category filtering, we need to get all members and filter in code
 // because EGU category is calculated, not stored
@@ -26,7 +31,7 @@ if (eguCategory) {
   const allMembers = await db.prepare(
     `SELECT id, gender, date_of_birth, home_away, home_club
      FROM members
-     WHERE subscription_template IS NOT NULL AND subscription_template != ''`
+     WHERE category IS NOT NULL AND category != ''`
   ).all();
 
   eguFilteredIds = (allMembers.results || [])
@@ -48,14 +53,9 @@ if (search) {
   params.push(searchTerm, searchTerm, searchTerm);
 }
 
-if (category) {
+if (subscriptionType) {
   whereClause += ' AND category = ?';
-  params.push(category);
-}
-
-if (subscriptionTemplate) {
-  whereClause += ' AND subscription_template = ?';
-  params.push(subscriptionTemplate);
+  params.push(subscriptionType);
 }
 
 if (filter === 'expiring') {
@@ -92,15 +92,6 @@ const members = await db.prepare(
    LIMIT ? OFFSET ?`
 ).bind(...params, perPage, offset).all();
 
-// Get unique subscription templates for filter dropdown
-const subscriptionTemplatesResult = await db.prepare(
-  `SELECT DISTINCT subscription_template
-   FROM members
-   WHERE subscription_template IS NOT NULL AND subscription_template != ''
-   ORDER BY subscription_template`
-).all();
-const availableSubscriptionTemplates = (subscriptionTemplatesResult.results || []).map((r: any) => r.subscription_template);
-
 // Calculate pagination pages
 const paginationPages: number[] = [];
 const maxPagesToShow = 7;
@@ -118,8 +109,7 @@ if (totalPages <= maxPagesToShow) {
 function buildQueryString(pageNum: number): string {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
-  if (category) params.set('category', category);
-  if (subscriptionTemplate) params.set('subscription_template', subscriptionTemplate);
+  if (subscriptionType) params.set('subscription_type', subscriptionType);
   if (eguCategory) params.set('egu_category', eguCategory);
   if (filter) params.set('filter', filter);
   params.set('page', String(pageNum));
@@ -132,7 +122,10 @@ function buildQueryString(pageNum: number): string {
     <div class="card-header">
       <h3 class="card-title">Member List ({totalCount} members)</h3>
       <div style="display: flex; gap: 0.5rem;">
+        <a href="/members/subscription-review" class="btn btn-secondary">Subscription Review</a>
         <a href="/members/direct-debit" class="btn btn-secondary">DD Consolidation</a>
+        <a href="/members/brs" class="btn btn-secondary">BRS Consolidation</a>
+        <a href="/members/egu" class="btn btn-secondary">EGU Consolidation</a>
         <a href="/members/import" class="btn btn-secondary">Import</a>
         <a href="/members/export" class="btn btn-secondary">Export</a>
         <a href="/members/new" class="btn btn-primary">Add Member</a>
@@ -155,10 +148,10 @@ function buildQueryString(pageNum: number): string {
 
         <div class="form-group" style="margin-bottom: 0;">
           <label class="form-label">Subscription Type</label>
-          <select name="subscription_template" class="form-input">
+          <select name="subscription_type" class="form-input">
             <option value="">All Types</option>
-            {availableSubscriptionTemplates.map(st => (
-              <option value={st} selected={subscriptionTemplate === st}>{st}</option>
+            {subscriptionTypes.map(st => (
+              <option value={st} selected={subscriptionType === st}>{st}</option>
             ))}
           </select>
         </div>
@@ -169,16 +162,6 @@ function buildQueryString(pageNum: number): string {
             <option value="">All EGU Categories</option>
             {EGU_CATEGORIES.map(cat => (
               <option value={cat} selected={eguCategory === cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
-
-        <div class="form-group" style="margin-bottom: 0;">
-          <label class="form-label">Category</label>
-          <select name="category" class="form-input">
-            <option value="">All Categories</option>
-            {MEMBER_CATEGORIES.map(cat => (
-              <option value={cat} selected={category === cat}>{cat}</option>
             ))}
           </select>
         </div>
@@ -199,13 +182,12 @@ function buildQueryString(pageNum: number): string {
     </form>
 
     <!-- Active filters display -->
-    {(subscriptionTemplate || eguCategory || category || filter || search) && (
+    {(subscriptionType || eguCategory || filter || search) && (
       <div style="margin-bottom: 1rem; padding: 0.5rem 1rem; background: #e8f4e8; border-radius: 4px; font-size: 0.875rem;">
         <strong>Active filters:</strong>
         {search && <span class="badge badge-info" style="margin-left: 0.5rem;">Search: {search}</span>}
-        {subscriptionTemplate && <span class="badge badge-info" style="margin-left: 0.5rem;">Type: {subscriptionTemplate}</span>}
+        {subscriptionType && <span class="badge badge-info" style="margin-left: 0.5rem;">Type: {subscriptionType}</span>}
         {eguCategory && <span class="badge badge-info" style="margin-left: 0.5rem;">EGU: {eguCategory}</span>}
-        {category && <span class="badge badge-info" style="margin-left: 0.5rem;">Category: {category}</span>}
         {filter && <span class="badge badge-info" style="margin-left: 0.5rem;">Status: {filter}</span>}
       </div>
     )}
@@ -236,7 +218,12 @@ function buildQueryString(pageNum: number): string {
                     <div style="font-size: 0.75rem; color: #666;">{member.email}</div>
                   )}
                 </td>
-                <td style="font-size: 0.875rem;">{member.subscription_template || '-'}</td>
+                <td style="font-size: 0.875rem;">
+                  {member.category || '-'}
+                  {member.subscription_template && (
+                    <div style="font-size: 0.7rem; color: #888;">{member.subscription_template}</div>
+                  )}
+                </td>
                 <td>
                   <span class={`badge ${member.home_away === 'H' ? 'badge-success' : 'badge-info'}`}>
                     {member.home_away || '-'}

@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { MEMBER_CATEGORIES, SUBSCRIPTION_TEMPLATES, PAYMENT_METHODS, AGE_GROUPS } from '../../../lib/db';
+import { FEE_TEMPLATES, ZERO_COST_SUBSCRIPTIONS, PAYMENT_METHODS, AGE_GROUPS } from '../../../lib/db';
 
 const { id } = Astro.params;
 const db = Astro.locals.runtime.env.DB;
@@ -16,6 +16,18 @@ const member = await db.prepare(
 if (!member) {
   return Astro.redirect('/members');
 }
+
+// Load subscription types from payment_items
+const subscriptionTypesResult = await db.prepare(
+  `SELECT name FROM payment_items WHERE category = 'Subscription' AND active = 1 ORDER BY name`
+).all();
+const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
+
+// Check if current category is a zero-cost subscription
+const isZeroCostSubscription = (category: string | null): boolean => {
+  if (!category) return false;
+  return ZERO_COST_SUBSCRIPTIONS.some(zc => category === zc);
+};
 
 // Handle form submission
 if (Astro.request.method === 'POST') {
@@ -222,22 +234,23 @@ function formatDateForInput(dateStr: string | null): string {
 
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label" for="category">Category</label>
+          <label class="form-label" for="category">Subscription Type</label>
           <select name="category" id="category" class="form-input">
             <option value="">-</option>
-            {MEMBER_CATEGORIES.map(cat => (
-              <option value={cat} selected={member.category === cat}>{cat}</option>
+            {subscriptionTypes.map(sub => (
+              <option value={sub} selected={member.category === sub}>{sub}</option>
             ))}
           </select>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="subscription_template">Subscription Template</label>
+        <div class="form-group" id="fee-template-group" style={isZeroCostSubscription(member.category as string) ? '' : 'display: none;'}>
+          <label class="form-label" for="subscription_template">Fee Template</label>
           <select name="subscription_template" id="subscription_template" class="form-input">
             <option value="">-</option>
-            {SUBSCRIPTION_TEMPLATES.map(sub => (
-              <option value={sub} selected={member.subscription_template === sub}>{sub}</option>
+            {FEE_TEMPLATES.map(ft => (
+              <option value={ft} selected={member.subscription_template === ft}>{ft}</option>
             ))}
           </select>
+          <small style="color: #666;">For Life, Honorary, and Gratis members only</small>
         </div>
       </div>
 
@@ -418,4 +431,25 @@ function formatDateForInput(dateStr: string | null): string {
       <button type="submit" class="btn btn-primary">Save Changes</button>
     </div>
   </form>
+
+  <script is:inline define:vars={{ zeroCostSubscriptions: ZERO_COST_SUBSCRIPTIONS }}>
+    // Show/hide fee template based on subscription type
+    const categorySelect = document.getElementById('category');
+    const feeTemplateGroup = document.getElementById('fee-template-group');
+    const feeTemplateSelect = document.getElementById('subscription_template');
+
+    function updateFeeTemplateVisibility() {
+      const selectedCategory = categorySelect.value;
+      const isZeroCost = zeroCostSubscriptions.includes(selectedCategory);
+
+      if (isZeroCost) {
+        feeTemplateGroup.style.display = '';
+      } else {
+        feeTemplateGroup.style.display = 'none';
+        feeTemplateSelect.value = ''; // Clear fee template when not applicable
+      }
+    }
+
+    categorySelect.addEventListener('change', updateFeeTemplateVisibility);
+  </script>
 </AdminLayout>

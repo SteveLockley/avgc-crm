@@ -31,6 +31,7 @@ interface ConsolidationResult {
 
 let result: ConsolidationResult | null = null;
 let error = '';
+let lastImported: { imported_at: string; imported_by: string | null } | null = null;
 
 // Parse CSV line handling quoted fields
 function parseCSVLine(line: string): string[] {
@@ -223,11 +224,55 @@ if (Astro.request.method === 'POST') {
               })
             ).run();
           }
+
+          // Save consolidation results to database
+          await db.prepare(
+            `INSERT INTO dd_consolidation (imported_by, matched_count, dd_not_in_crm_count, crm_not_in_dd_count,
+             matched_json, dd_not_in_crm_json, crm_not_in_dd_json, errors_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            Astro.locals.user?.email || 'system',
+            result.matched.length,
+            result.ddNotInCrm.length,
+            result.crmNotInDd.length,
+            JSON.stringify(result.matched),
+            JSON.stringify(result.ddNotInCrm),
+            JSON.stringify(result.crmNotInDd),
+            JSON.stringify(result.errors)
+          ).run();
         }
       }
     } catch (e: any) {
       error = `Failed to process file: ${e.message}`;
     }
+  }
+}
+
+// Load previous consolidation results if no new data
+if (!result && !error) {
+  const savedResult = await db.prepare(
+    `SELECT * FROM dd_consolidation ORDER BY imported_at DESC LIMIT 1`
+  ).first<{
+    imported_at: string;
+    imported_by: string | null;
+    matched_count: number;
+    dd_not_in_crm_count: number;
+    crm_not_in_dd_count: number;
+    matched_json: string | null;
+    dd_not_in_crm_json: string | null;
+    crm_not_in_dd_json: string | null;
+    errors_json: string | null;
+  }>();
+
+  if (savedResult) {
+    lastImported = { imported_at: savedResult.imported_at, imported_by: savedResult.imported_by };
+    result = {
+      matched: savedResult.matched_json ? JSON.parse(savedResult.matched_json) : [],
+      ddNotInCrm: savedResult.dd_not_in_crm_json ? JSON.parse(savedResult.dd_not_in_crm_json) : [],
+      crmNotInDd: savedResult.crm_not_in_dd_json ? JSON.parse(savedResult.crm_not_in_dd_json) : [],
+      updated: 0,
+      errors: savedResult.errors_json ? JSON.parse(savedResult.errors_json) : []
+    };
   }
 }
 
@@ -239,6 +284,27 @@ const ddMemberCount = await db.prepare(
 const clubwiseCount = await db.prepare(
   `SELECT COUNT(*) as count FROM members WHERE default_payment_method = 'Clubwise Direct Debit'`
 ).first<{ count: number }>();
+
+// Calculate if there are discrepancies (only relevant after preview)
+const hasDiscrepancies = result ? (
+  result.ddNotInCrm.length > 0 ||
+  result.crmNotInDd.length > 0 ||
+  result.matched.filter(m => !m.paymentMethodCorrect).length > 0
+) : false;
+
+const discrepancyReasons: string[] = [];
+if (result) {
+  if (result.ddNotInCrm.length > 0) {
+    discrepancyReasons.push(`${result.ddNotInCrm.length} DD members not found in CRM`);
+  }
+  if (result.crmNotInDd.length > 0) {
+    discrepancyReasons.push(`${result.crmNotInDd.length} CRM Clubwise DD members not in DD file`);
+  }
+  const incorrectPaymentCount = result.matched.filter(m => !m.paymentMethodCorrect).length;
+  if (incorrectPaymentCount > 0) {
+    discrepancyReasons.push(`${incorrectPaymentCount} matched members have incorrect payment method`);
+  }
+}
 ---
 
 <AdminLayout title="Direct Debit Consolidation">
@@ -343,9 +409,24 @@ const clubwiseCount = await db.prepare(
         <label class="form-label" for="mode">Mode</label>
         <select name="mode" id="mode" class="form-input">
           <option value="preview">Preview Only (don't update CRM)</option>
-          <option value="apply">Apply Updates (save DD Member IDs to CRM)</option>
+          <option value="apply" disabled={hasDiscrepancies}>Apply Updates (save DD Member IDs to CRM)</option>
         </select>
       </div>
+
+      {hasDiscrepancies && (
+        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+          <strong>Apply mode is disabled</strong> - resolve these discrepancies first:
+          <ul style="margin: 0.5rem 0 0 1rem;">
+            {discrepancyReasons.map(reason => <li>{reason}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {result && !hasDiscrepancies && (
+        <div class="alert alert-success" style="margin-bottom: 1rem;">
+          <strong>No discrepancies found.</strong> You can now select "Apply Updates" and re-run to save the DD Member IDs to the CRM.
+        </div>
+      )}
 
       <button type="submit" class="btn btn-primary">Run Consolidation</button>
     </form>
@@ -355,9 +436,17 @@ const clubwiseCount = await db.prepare(
     <div class="card" style="margin-top: 1.5rem;">
       <div class="card-header">
         <h3 class="card-title">Consolidation Results</h3>
-        {result.updated > 0 && (
-          <span class="badge badge-success">{result.updated} members updated</span>
-        )}
+        <div style="display: flex; gap: 1rem; align-items: center;">
+          {lastImported && (
+            <span style="font-size: 0.875rem; color: #666;">
+              Last imported: {formatDate(lastImported.imported_at)}
+              {lastImported.imported_by && ` by ${lastImported.imported_by}`}
+            </span>
+          )}
+          {result.updated > 0 && (
+            <span class="badge badge-success">{result.updated} members updated</span>
+          )}
+        </div>
       </div>
 
       {result.errors.length > 0 && (

@@ -136,37 +136,20 @@ export interface InvoiceSetting {
 // Invoice statuses
 export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'cancelled'] as const;
 
-// Member categories
-export const MEMBER_CATEGORIES = [
-  'Full',
-  'Senior',
-  'Social',
-  'Under 30',
-  'Junior',
-  'Junior Academy',
-  'Over 80',
-  'Twilight',
-  'Out Of County (100 Miles or More)',
-  'Out Of County (Less than 100 miles)'
+// Zero-cost subscription types (Life, Honorary, Gratis)
+// These may still have fees (EGU, County, Locker) depending on member circumstances
+export const ZERO_COST_SUBSCRIPTIONS = ['Life', 'Honorary', 'Gratis'] as const;
+
+// Fee templates for zero-cost subscriptions
+// Used when a Life/Honorary/Gratis member still owes fees
+export const FEE_TEMPLATES = [
+  'England Golf and County Fees',
+  'England Golf and County Fees and Locker',
+  'Locker'
 ] as const;
 
-// Subscription templates from your data
-export const SUBSCRIPTION_TEMPLATES = [
-  'A) Full Home',
-  'B) Full Away',
-  'C) Under 30 Home',
-  'D) Under 30 Away',
-  'E) Senior Home',
-  'F) Senior Away',
-  'G) Over 80 Home',
-  'M) Junior Home',
-  'O) Junior Academy',
-  'S) Social Membership',
-  'T) Twilight Member',
-  'U) Out Of County (Less than 100 miles) Home Member',
-  'W) Out Of County (100 miles or more) Away Member',
-  '3) 18 Month Full Membership'
-] as const;
+// Legacy - kept for backwards compatibility during migration
+export const SUBSCRIPTION_TEMPLATES = FEE_TEMPLATES;
 
 // Payment methods
 export const PAYMENT_METHODS = [

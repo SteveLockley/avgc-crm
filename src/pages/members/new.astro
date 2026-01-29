@@ -1,8 +1,14 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { MEMBER_CATEGORIES, SUBSCRIPTION_TEMPLATES, PAYMENT_METHODS, AGE_GROUPS } from '../../lib/db';
+import { PAYMENT_METHODS, AGE_GROUPS, FEE_TEMPLATES, ZERO_COST_SUBSCRIPTIONS } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
+
+// Load subscription types from payment_items
+const subscriptionTypesResult = await db.prepare(
+  `SELECT name FROM payment_items WHERE category = 'Subscription' AND active = 1 ORDER BY name`
+).all();
+const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
 
 let error = '';
 
@@ -32,6 +38,27 @@ if (Astro.request.method === 'POST') {
   // Convert numeric fields
   if (member.handicap_index) {
     member.handicap_index = parseFloat(member.handicap_index) || null;
+  }
+
+  // For zero-cost subscriptions, auto-calculate the fee template
+  const category = member.category || '';
+  if (ZERO_COST_SUBSCRIPTIONS.includes(category as any)) {
+    const hasNationalId = member.national_id && member.national_id.trim() !== '';
+    const isHomeClub = member.home_away === 'H';
+    const hasLocker = member.locker_number && member.locker_number.trim() !== '';
+
+    if (hasNationalId && isHomeClub && hasLocker) {
+      member.subscription_template = 'England Golf and County Fees and Locker';
+    } else if (hasNationalId && isHomeClub) {
+      member.subscription_template = 'England Golf and County Fees';
+    } else if (hasLocker) {
+      member.subscription_template = 'Locker';
+    } else {
+      member.subscription_template = null;
+    }
+  } else {
+    // Non-zero-cost subscriptions don't use fee templates
+    member.subscription_template = null;
   }
 
   // Set defaults
@@ -186,26 +213,14 @@ const today = new Date().toISOString().split('T')[0];
 
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label" for="category">Category *</label>
+          <label class="form-label" for="category">Subscription Type *</label>
           <select name="category" id="category" class="form-input" required>
-            <option value="">Select category...</option>
-            {MEMBER_CATEGORIES.map(cat => (
-              <option value={cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="subscription_template">Subscription Template</label>
-          <select name="subscription_template" id="subscription_template" class="form-input">
-            <option value="">-</option>
-            {SUBSCRIPTION_TEMPLATES.map(sub => (
+            <option value="">Select subscription type...</option>
+            {subscriptionTypes.map(sub => (
               <option value={sub}>{sub}</option>
             ))}
           </select>
         </div>
-      </div>
-
-      <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="home_away">Home/Away</label>
           <select name="home_away" id="home_away" class="form-input">
@@ -230,6 +245,19 @@ const today = new Date().toISOString().split('T')[0];
           <input type="date" name="date_expires" id="date_expires" class="form-input" />
         </div>
       </div>
+
+      <div id="fee-template-section" class="form-group" style="display: none;">
+        <label class="form-label" for="subscription_template">Fee Template</label>
+        <select name="subscription_template" id="subscription_template" class="form-input">
+          <option value="">No additional fees</option>
+          {FEE_TEMPLATES.map(ft => (
+            <option value={ft}>{ft}</option>
+          ))}
+        </select>
+        <small style="color: #666; display: block; margin-top: 0.25rem;">
+          For Life/Honorary/Gratis members who still owe EGU, County, or Locker fees
+        </small>
+      </div>
     </div>
 
     <div class="card">
@@ -243,7 +271,7 @@ const today = new Date().toISOString().split('T')[0];
           <input type="number" step="0.1" name="handicap_index" id="handicap_index" class="form-input" />
         </div>
         <div class="form-group">
-          <label class="form-label" for="national_id">WHS National ID</label>
+          <label class="form-label" for="national_id">CDH Number</label>
           <input type="text" name="national_id" id="national_id" class="form-input" />
         </div>
         <div class="form-group">
@@ -303,4 +331,153 @@ const today = new Date().toISOString().split('T')[0];
       <button type="submit" class="btn btn-primary">Create Member</button>
     </div>
   </form>
+
+  <script is:inline define:vars={{ zeroCostSubscriptions: ZERO_COST_SUBSCRIPTIONS }}>
+    const dobInput = document.getElementById('date_of_birth');
+    const homeAwayInput = document.getElementById('home_away');
+    const categoryInput = document.getElementById('category');
+    const dateJoinedInput = document.getElementById('date_joined');
+    const feeTemplateSection = document.getElementById('fee-template-section');
+    const feeTemplateInput = document.getElementById('subscription_template');
+    const nationalIdInput = document.getElementById('national_id');
+    const lockerInput = document.getElementById('locker_number');
+
+    // Show/hide fee template section based on subscription type
+    function updateFeeTemplateVisibility() {
+      const category = categoryInput.value;
+      const isZeroCost = zeroCostSubscriptions.includes(category);
+      feeTemplateSection.style.display = isZeroCost ? 'block' : 'none';
+      if (!isZeroCost) {
+        feeTemplateInput.value = '';
+      }
+    }
+
+    // Auto-calculate fee template for zero-cost subscriptions
+    function calculateFeeTemplate() {
+      const category = categoryInput.value;
+      if (!zeroCostSubscriptions.includes(category)) return;
+
+      const hasNationalId = nationalIdInput.value.trim() !== '';
+      const isHomeClub = homeAwayInput.value === 'H';
+      const hasLocker = lockerInput.value.trim() !== '';
+
+      if (hasNationalId && isHomeClub && hasLocker) {
+        feeTemplateInput.value = 'England Golf and County Fees and Locker';
+      } else if (hasNationalId && isHomeClub) {
+        feeTemplateInput.value = 'England Golf and County Fees';
+      } else if (hasLocker) {
+        feeTemplateInput.value = 'Locker';
+      } else {
+        feeTemplateInput.value = '';
+      }
+    }
+
+    function getApril1stOfCurrentYear() {
+      const now = new Date();
+      return new Date(now.getFullYear(), 3, 1);
+    }
+
+    function calculateAgeOnDate(dateOfBirth, asOfDate) {
+      if (!dateOfBirth) return null;
+      const dob = new Date(dateOfBirth);
+      let age = asOfDate.getFullYear() - dob.getFullYear();
+      const monthDiff = asOfDate.getMonth() - dob.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && asOfDate.getDate() < dob.getDate())) {
+        age--;
+      }
+      return age;
+    }
+
+    function calculateYearsOfMembership(dateJoined, asOfDate) {
+      if (!dateJoined) return null;
+      const joined = new Date(dateJoined);
+      let years = asOfDate.getFullYear() - joined.getFullYear();
+      const monthDiff = asOfDate.getMonth() - joined.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && asOfDate.getDate() < joined.getDate())) {
+        years--;
+      }
+      return Math.max(0, years);
+    }
+
+    function calculateDefaultSubscription() {
+      const dob = dobInput.value;
+      const homeAway = homeAwayInput.value || 'H';
+      const dateJoined = dateJoinedInput.value;
+
+      if (!dob) return;
+
+      const april1st = getApril1stOfCurrentYear();
+      const now = new Date();
+      const currentYear = now.getFullYear();
+
+      const ageOnApril1 = calculateAgeOnDate(dob, april1st);
+      const yearsOfMembership = calculateYearsOfMembership(dateJoined, now);
+      const yearsInYear = dateJoined ? calculateYearsOfMembership(dateJoined, new Date(currentYear, 11, 31)) : null;
+
+      if (ageOnApril1 === null) return;
+
+      let subscriptionType;
+      const suffix = homeAway === 'A' ? ' Away' : ' Home';
+
+      // Life: 50+ years
+      if (yearsInYear !== null && yearsInYear >= 50) {
+        subscriptionType = 'Life';
+      }
+      // Over 80
+      else if (ageOnApril1 >= 80) {
+        subscriptionType = 'Over 80' + suffix;
+      }
+      // Senior Loyalty: 65+ with 25+ years
+      else if (ageOnApril1 >= 65 && yearsOfMembership !== null && yearsOfMembership >= 25) {
+        subscriptionType = 'Senior Loyalty' + suffix;
+      }
+      // Full: 30+
+      else if (ageOnApril1 >= 30) {
+        subscriptionType = 'Full' + suffix;
+      }
+      // Under 30: 21-29
+      else if (ageOnApril1 >= 21) {
+        subscriptionType = 'Under 30' + suffix;
+      }
+      // Intermediate: 18-20
+      else if (ageOnApril1 >= 18) {
+        subscriptionType = 'Intermediate' + suffix;
+      }
+      // Junior: under 18
+      else {
+        subscriptionType = 'Junior' + suffix;
+      }
+
+      // Find and select the matching option
+      const options = categoryInput.options;
+      for (let i = 0; i < options.length; i++) {
+        if (options[i].value === subscriptionType) {
+          categoryInput.selectedIndex = i;
+          categoryInput.style.backgroundColor = '#e8f4ea';
+          setTimeout(() => {
+            categoryInput.style.backgroundColor = '';
+          }, 2000);
+          updateFeeTemplateVisibility();
+          break;
+        }
+      }
+    }
+
+    // Add event listeners
+    dobInput.addEventListener('change', calculateDefaultSubscription);
+    homeAwayInput.addEventListener('change', () => {
+      calculateDefaultSubscription();
+      calculateFeeTemplate();
+    });
+    dateJoinedInput.addEventListener('change', calculateDefaultSubscription);
+    categoryInput.addEventListener('change', () => {
+      updateFeeTemplateVisibility();
+      calculateFeeTemplate();
+    });
+    nationalIdInput.addEventListener('change', calculateFeeTemplate);
+    lockerInput.addEventListener('change', calculateFeeTemplate);
+
+    // Initial state
+    updateFeeTemplateVisibility();
+  </script>
 </AdminLayout>

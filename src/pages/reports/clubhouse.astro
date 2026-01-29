@@ -1,0 +1,680 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import {
+  processNominalActivityCSV,
+  getAccountBreakdown,
+  formatCurrency,
+  formatPercent,
+  MONTHS,
+  type FinancialSummary,
+  type AccountBreakdown
+} from '../../lib/financials';
+
+const db = Astro.locals.runtime.env.DB;
+
+let summary: FinancialSummary | null = null;
+let salesBreakdown: AccountBreakdown[] = [];
+let expensesBreakdown: AccountBreakdown[] = [];
+let error = '';
+let lastImport: { imported_at: string; imported_by: string | null } | null = null;
+
+// Load previously saved financial data
+const savedData = await db.prepare(
+  `SELECT * FROM clubhouse_financials ORDER BY imported_at DESC LIMIT 1`
+).first<{
+  id: number;
+  imported_at: string;
+  imported_by: string | null;
+  total_sales_2024: number;
+  total_sales_2025: number;
+  total_expenses_2024: number;
+  total_expenses_2025: number;
+  total_margin_2024: number;
+  total_margin_2025: number;
+  avg_margin_pct_2024: number;
+  avg_margin_pct_2025: number;
+  monthly_data_json: string | null;
+  sales_breakdown_json: string | null;
+  expenses_breakdown_json: string | null;
+}>().catch(() => null);
+
+if (savedData) {
+  lastImport = { imported_at: savedData.imported_at, imported_by: savedData.imported_by };
+  const monthlyData = savedData.monthly_data_json ? JSON.parse(savedData.monthly_data_json) : [];
+  summary = {
+    totalSales2024: savedData.total_sales_2024,
+    totalSales2025: savedData.total_sales_2025,
+    totalExpenses2024: savedData.total_expenses_2024,
+    totalExpenses2025: savedData.total_expenses_2025,
+    totalMargin2024: savedData.total_margin_2024,
+    totalMargin2025: savedData.total_margin_2025,
+    avgMarginPct2024: savedData.avg_margin_pct_2024,
+    avgMarginPct2025: savedData.avg_margin_pct_2025,
+    salesYoY: savedData.total_sales_2024 > 0 ? ((savedData.total_sales_2025 - savedData.total_sales_2024) / savedData.total_sales_2024) * 100 : null,
+    expensesYoY: savedData.total_expenses_2024 > 0 ? ((savedData.total_expenses_2025 - savedData.total_expenses_2024) / savedData.total_expenses_2024) * 100 : null,
+    marginYoY: savedData.total_margin_2024 > 0 ? ((savedData.total_margin_2025 - savedData.total_margin_2024) / savedData.total_margin_2024) * 100 : null,
+    monthlyData
+  };
+  salesBreakdown = savedData.sales_breakdown_json ? JSON.parse(savedData.sales_breakdown_json) : [];
+  expensesBreakdown = savedData.expenses_breakdown_json ? JSON.parse(savedData.expenses_breakdown_json) : [];
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const file = formData.get('csvfile') as File;
+
+  if (!file || file.size === 0) {
+    error = 'Please select a CSV file';
+  } else {
+    try {
+      const csvText = await file.text();
+      summary = processNominalActivityCSV(csvText);
+      const breakdown = getAccountBreakdown(csvText);
+      salesBreakdown = breakdown.sales;
+      expensesBreakdown = breakdown.expenses;
+
+      // Save the results to database for persistence
+      await db.prepare(
+        `INSERT INTO clubhouse_financials (
+          total_sales_2024, total_sales_2025, total_expenses_2024, total_expenses_2025,
+          total_margin_2024, total_margin_2025, avg_margin_pct_2024, avg_margin_pct_2025,
+          monthly_data_json, sales_breakdown_json, expenses_breakdown_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        summary.totalSales2024,
+        summary.totalSales2025,
+        summary.totalExpenses2024,
+        summary.totalExpenses2025,
+        summary.totalMargin2024,
+        summary.totalMargin2025,
+        summary.avgMarginPct2024,
+        summary.avgMarginPct2025,
+        JSON.stringify(summary.monthlyData),
+        JSON.stringify(salesBreakdown),
+        JSON.stringify(expensesBreakdown)
+      ).run();
+
+      lastImport = { imported_at: new Date().toISOString(), imported_by: null };
+    } catch (e: any) {
+      error = `Failed to process file: ${e.message}`;
+    }
+  }
+}
+
+// Prepare chart data as JSON for client-side
+const chartData = summary ? {
+  labels: MONTHS,
+  sales2024: summary.monthlyData.map(m => m.sales2024),
+  sales2025: summary.monthlyData.map(m => m.sales2025),
+  margin2024: summary.monthlyData.map(m => m.margin2024),
+  margin2025: summary.monthlyData.map(m => m.margin2025),
+  marginPct2024: summary.monthlyData.map(m => m.marginPct2024),
+  marginPct2025: summary.monthlyData.map(m => m.marginPct2025)
+} : null;
+---
+
+<AdminLayout title="Clubhouse Financials">
+  <style>
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .summary-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.25rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .summary-card h4 {
+      font-size: 0.875rem;
+      color: #666;
+      margin: 0 0 0.5rem 0;
+    }
+    .summary-card .value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1e5631;
+    }
+    .summary-card .comparison {
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+    }
+    .summary-card .yoy {
+      font-size: 0.75rem;
+      padding: 0.125rem 0.375rem;
+      border-radius: 3px;
+      margin-left: 0.5rem;
+    }
+    .yoy.positive { background: #d4edda; color: #155724; }
+    .yoy.negative { background: #f8d7da; color: #721c24; }
+    .yoy.neutral { background: #e9ecef; color: #495057; }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      margin-bottom: 1.5rem;
+    }
+    .data-table th, .data-table td {
+      padding: 0.5rem 0.75rem;
+      text-align: right;
+      border-bottom: 1px solid #eee;
+    }
+    .data-table th {
+      background: #f4f4f4;
+      font-weight: 600;
+      text-align: center;
+    }
+    .data-table th:first-child,
+    .data-table td:first-child {
+      text-align: left;
+    }
+    .data-table .group-header {
+      background: #e8e8e8;
+      font-weight: 600;
+    }
+    .data-table tfoot td {
+      background: #f4f4f4;
+      font-weight: 600;
+      border-top: 2px solid #ddd;
+    }
+    .data-table .yoy-cell {
+      font-size: 0.75rem;
+    }
+    .data-table .positive { color: #155724; }
+    .data-table .negative { color: #721c24; }
+
+    .chart-container {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      margin-bottom: 1.5rem;
+    }
+    .chart-container h3 {
+      font-size: 1rem;
+      margin: 0 0 1rem 0;
+      color: #333;
+    }
+    .chart-wrapper {
+      position: relative;
+      height: 300px;
+    }
+
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .breakdown-section {
+      margin-top: 2rem;
+    }
+    .breakdown-section h3 {
+      font-size: 1rem;
+      margin: 0 0 1rem 0;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid #1e5631;
+    }
+  </style>
+
+  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+    <a href="/reports" class="btn btn-secondary">&larr; Back to Reports</a>
+  </div>
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Import Nominal Activity Report</h3>
+    </div>
+
+    {lastImport && (
+      <div style="margin-bottom: 1rem; padding: 0.75rem; background: #e8f4ea; border-radius: 4px; font-size: 0.875rem;">
+        <strong>Last imported:</strong> {new Date(lastImport.imported_at).toLocaleString('en-GB')}
+        {lastImport.imported_by && <span> by {lastImport.imported_by}</span>}
+      </div>
+    )}
+
+    <p style="margin-bottom: 1rem; color: #666;">
+      Upload the Nominal Activity CSV export from your accounting software.
+      This report shows clubhouse trading (bar, food, coffee, merchandise) with year-on-year comparison.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+      <div class="form-group">
+        <label class="form-label" for="csvfile">Nominal Activity CSV File</label>
+        <input type="file" name="csvfile" id="csvfile" accept=".csv" class="form-input" required />
+      </div>
+      <button type="submit" class="btn btn-primary">Process Report</button>
+    </form>
+  </div>
+
+  {summary && (
+    <>
+      <!-- Summary Cards -->
+      <div class="summary-cards" style="margin-top: 1.5rem;">
+        <div class="summary-card">
+          <h4>Total Sales (2025 YTD)</h4>
+          <div class="value">{formatCurrency(summary.totalSales2025)}</div>
+          <div class="comparison">
+            2024: {formatCurrency(summary.totalSales2024)}
+            <span class={`yoy ${summary.salesYoY !== null ? (summary.salesYoY >= 0 ? 'positive' : 'negative') : 'neutral'}`}>
+              {formatPercent(summary.salesYoY)}
+            </span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <h4>Direct Expenses (2025 YTD)</h4>
+          <div class="value">{formatCurrency(summary.totalExpenses2025)}</div>
+          <div class="comparison">
+            2024: {formatCurrency(summary.totalExpenses2024)}
+            <span class={`yoy ${summary.expensesYoY !== null ? (summary.expensesYoY <= 0 ? 'positive' : 'negative') : 'neutral'}`}>
+              {formatPercent(summary.expensesYoY)}
+            </span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <h4>Gross Margin (2025 YTD)</h4>
+          <div class="value">{formatCurrency(summary.totalMargin2025)}</div>
+          <div class="comparison">
+            2024: {formatCurrency(summary.totalMargin2024)}
+            <span class={`yoy ${summary.marginYoY !== null ? (summary.marginYoY >= 0 ? 'positive' : 'negative') : 'neutral'}`}>
+              {formatPercent(summary.marginYoY)}
+            </span>
+          </div>
+        </div>
+
+        <div class="summary-card">
+          <h4>Gross Margin %</h4>
+          <div class="value">{summary.avgMarginPct2025.toFixed(1)}%</div>
+          <div class="comparison">
+            2024: {summary.avgMarginPct2024.toFixed(1)}%
+          </div>
+        </div>
+      </div>
+
+      <!-- Monthly Comparison Table -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Monthly Comparison</h3>
+        </div>
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th rowspan="2">Month</th>
+                <th colspan="3">Sales</th>
+                <th colspan="3">Direct Expenses</th>
+                <th colspan="3">Gross Margin</th>
+                <th colspan="2">Margin %</th>
+              </tr>
+              <tr>
+                <th>2024</th>
+                <th>2025</th>
+                <th>YoY</th>
+                <th>2024</th>
+                <th>2025</th>
+                <th>YoY</th>
+                <th>2024</th>
+                <th>2025</th>
+                <th>YoY</th>
+                <th>2024</th>
+                <th>2025</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.monthlyData.map(m => (
+                <tr>
+                  <td><strong>{m.month}</strong></td>
+                  <td>{formatCurrency(m.sales2024)}</td>
+                  <td>{formatCurrency(m.sales2025)}</td>
+                  <td class={`yoy-cell ${m.salesYoY !== null ? (m.salesYoY >= 0 ? 'positive' : 'negative') : ''}`}>
+                    {formatPercent(m.salesYoY)}
+                  </td>
+                  <td>{formatCurrency(m.expenses2024)}</td>
+                  <td>{formatCurrency(m.expenses2025)}</td>
+                  <td class={`yoy-cell ${m.expensesYoY !== null ? (m.expensesYoY <= 0 ? 'positive' : 'negative') : ''}`}>
+                    {formatPercent(m.expensesYoY)}
+                  </td>
+                  <td>{formatCurrency(m.margin2024)}</td>
+                  <td>{formatCurrency(m.margin2025)}</td>
+                  <td class={`yoy-cell ${m.marginYoY !== null ? (m.marginYoY >= 0 ? 'positive' : 'negative') : ''}`}>
+                    {formatPercent(m.marginYoY)}
+                  </td>
+                  <td>{m.marginPct2024.toFixed(1)}%</td>
+                  <td>{m.marginPct2025.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Total</strong></td>
+                <td>{formatCurrency(summary.totalSales2024)}</td>
+                <td>{formatCurrency(summary.totalSales2025)}</td>
+                <td class={`yoy-cell ${summary.salesYoY !== null ? (summary.salesYoY >= 0 ? 'positive' : 'negative') : ''}`}>
+                  {formatPercent(summary.salesYoY)}
+                </td>
+                <td>{formatCurrency(summary.totalExpenses2024)}</td>
+                <td>{formatCurrency(summary.totalExpenses2025)}</td>
+                <td class={`yoy-cell ${summary.expensesYoY !== null ? (summary.expensesYoY <= 0 ? 'positive' : 'negative') : ''}`}>
+                  {formatPercent(summary.expensesYoY)}
+                </td>
+                <td>{formatCurrency(summary.totalMargin2024)}</td>
+                <td>{formatCurrency(summary.totalMargin2025)}</td>
+                <td class={`yoy-cell ${summary.marginYoY !== null ? (summary.marginYoY >= 0 ? 'positive' : 'negative') : ''}`}>
+                  {formatPercent(summary.marginYoY)}
+                </td>
+                <td>{summary.avgMarginPct2024.toFixed(1)}%</td>
+                <td>{summary.avgMarginPct2025.toFixed(1)}%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="charts-grid">
+        <div class="chart-container">
+          <h3>Sales: 2024 vs 2025</h3>
+          <div class="chart-wrapper">
+            <canvas id="salesChart"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <h3>Gross Margin: 2024 vs 2025</h3>
+          <div class="chart-wrapper">
+            <canvas id="marginChart"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <h3>Gross Margin %: 2024 vs 2025</h3>
+          <div class="chart-wrapper">
+            <canvas id="marginPctChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Account Breakdown -->
+      <div class="breakdown-section">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Sales Breakdown by Account</h3>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  {MONTHS.map(m => <th>{m}</th>)}
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="group-header">
+                  <td colspan={MONTHS.length + 2}>2024</td>
+                </tr>
+                {salesBreakdown.map(acc => (
+                  <tr>
+                    <td>{acc.name}</td>
+                    {acc.monthly2024.map(v => <td>{formatCurrency(v)}</td>)}
+                    <td><strong>{formatCurrency(acc.total2024)}</strong></td>
+                  </tr>
+                ))}
+                <tr class="group-header">
+                  <td colspan={MONTHS.length + 2}>2025</td>
+                </tr>
+                {salesBreakdown.map(acc => (
+                  <tr>
+                    <td>{acc.name}</td>
+                    {acc.monthly2025.map(v => <td>{formatCurrency(v)}</td>)}
+                    <td><strong>{formatCurrency(acc.total2025)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 1.5rem;">
+          <div class="card-header">
+            <h3 class="card-title">Direct Expenses Breakdown by Account</h3>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  {MONTHS.map(m => <th>{m}</th>)}
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="group-header">
+                  <td colspan={MONTHS.length + 2}>2024</td>
+                </tr>
+                {expensesBreakdown.map(acc => (
+                  <tr>
+                    <td>{acc.name}</td>
+                    {acc.monthly2024.map(v => <td>{formatCurrency(v)}</td>)}
+                    <td><strong>{formatCurrency(acc.total2024)}</strong></td>
+                  </tr>
+                ))}
+                <tr class="group-header">
+                  <td colspan={MONTHS.length + 2}>2025</td>
+                </tr>
+                {expensesBreakdown.map(acc => (
+                  <tr>
+                    <td>{acc.name}</td>
+                    {acc.monthly2025.map(v => <td>{formatCurrency(v)}</td>)}
+                    <td><strong>{formatCurrency(acc.total2025)}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart.js Script -->
+      <script is:inline define:vars={{ chartData }}>
+        window.financialChartData = chartData;
+      </script>
+      <script is:inline src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      <script is:inline>
+        document.addEventListener('DOMContentLoaded', function() {
+          const chartData = window.financialChartData;
+          if (!chartData) return;
+
+          const chartColors = {
+            color2024: 'rgb(108, 117, 125)',
+            color2024Fill: 'rgba(108, 117, 125, 0.1)',
+            color2025: 'rgb(30, 86, 49)',
+            color2025Fill: 'rgba(30, 86, 49, 0.1)'
+          };
+
+          const commonOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              intersect: false,
+              mode: 'index'
+            },
+            plugins: {
+              legend: {
+                position: 'top'
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true
+              }
+            }
+          };
+
+          // Sales Chart
+          new Chart(document.getElementById('salesChart'), {
+            type: 'line',
+            data: {
+              labels: chartData.labels,
+              datasets: [
+                {
+                  label: '2024',
+                  data: chartData.sales2024,
+                  borderColor: chartColors.color2024,
+                  backgroundColor: chartColors.color2024Fill,
+                  tension: 0.3,
+                  fill: true
+                },
+                {
+                  label: '2025',
+                  data: chartData.sales2025,
+                  borderColor: chartColors.color2025,
+                  backgroundColor: chartColors.color2025Fill,
+                  tension: 0.3,
+                  fill: true
+                }
+              ]
+            },
+            options: {
+              ...commonOptions,
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return '£' + value.toLocaleString();
+                    }
+                  }
+                }
+              }
+            }
+          });
+
+          // Margin Chart
+          new Chart(document.getElementById('marginChart'), {
+            type: 'line',
+            data: {
+              labels: chartData.labels,
+              datasets: [
+                {
+                  label: '2024',
+                  data: chartData.margin2024,
+                  borderColor: chartColors.color2024,
+                  backgroundColor: chartColors.color2024Fill,
+                  tension: 0.3,
+                  fill: true
+                },
+                {
+                  label: '2025',
+                  data: chartData.margin2025,
+                  borderColor: chartColors.color2025,
+                  backgroundColor: chartColors.color2025Fill,
+                  tension: 0.3,
+                  fill: true
+                }
+              ]
+            },
+            options: {
+              ...commonOptions,
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  ticks: {
+                    callback: function(value) {
+                      return '£' + value.toLocaleString();
+                    }
+                  }
+                }
+              }
+            }
+          });
+
+          // Margin % Chart
+          new Chart(document.getElementById('marginPctChart'), {
+            type: 'line',
+            data: {
+              labels: chartData.labels,
+              datasets: [
+                {
+                  label: '2024',
+                  data: chartData.marginPct2024,
+                  borderColor: chartColors.color2024,
+                  backgroundColor: chartColors.color2024Fill,
+                  tension: 0.3,
+                  fill: true
+                },
+                {
+                  label: '2025',
+                  data: chartData.marginPct2025,
+                  borderColor: chartColors.color2025,
+                  backgroundColor: chartColors.color2025Fill,
+                  tension: 0.3,
+                  fill: true
+                }
+              ]
+            },
+            options: {
+              ...commonOptions,
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  max: 100,
+                  ticks: {
+                    callback: function(value) {
+                      return value + '%';
+                    }
+                  }
+                }
+              }
+            }
+          });
+        });
+      </script>
+    </>
+  )}
+
+  {!summary && !error && (
+    <div class="card" style="margin-top: 1.5rem;">
+      <div class="card-header">
+        <h3 class="card-title">Expected CSV Format</h3>
+      </div>
+      <p style="font-size: 0.875rem; color: #666;">
+        The Nominal Activity CSV should be exported from your accounting software with:
+      </p>
+      <ul style="font-size: 0.875rem; color: #666; margin: 0.5rem 0 0 1.5rem;">
+        <li><strong>Nominal Code</strong> - Account code (e.g., 4000, 5000)</li>
+        <li><strong>Name</strong> - Account name</li>
+        <li><strong>Monthly columns</strong> - Debit and Credit for each month of 2024 and 2025</li>
+      </ul>
+
+      <h4 style="margin-top: 1.5rem; font-size: 0.875rem;">Accounts Included in Analysis:</h4>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
+        <div>
+          <strong style="font-size: 0.875rem; color: #1e5631;">Sales (Income):</strong>
+          <ul style="font-size: 0.875rem; color: #666; margin: 0.25rem 0 0 1.5rem;">
+            <li>4000 - Bar Sales</li>
+            <li>4010 - Food Sales</li>
+            <li>4020 - Coffee Machine Sales</li>
+            <li>4070 - Merchandise Sales</li>
+            <li>4999 - Sundry Income</li>
+          </ul>
+        </div>
+        <div>
+          <strong style="font-size: 0.875rem; color: #721c24;">Direct Expenses:</strong>
+          <ul style="font-size: 0.875rem; color: #666; margin: 0.25rem 0 0 1.5rem;">
+            <li>5000 - Bar Purchases</li>
+            <li>5020 - Food Purchases</li>
+            <li>5065 - Merchandise Purchases</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )}
+</AdminLayout>
