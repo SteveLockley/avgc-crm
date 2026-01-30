@@ -211,7 +211,7 @@ if (totalPages <= maxPagesToShow) {
       <input type="hidden" name="invoice_ids" id="selected-invoice-ids" value="" />
 
       <div style="margin-bottom: 0.5rem; display: flex; gap: 0.5rem; align-items: center;">
-        <button type="submit" class="btn btn-danger btn-sm" id="bulk-delete-btn" disabled onclick="return confirm('Delete selected invoices? Only draft and cancelled invoices will be deleted.')">
+        <button type="submit" class="btn btn-danger btn-sm" id="bulk-delete-btn" disabled>
           Delete Selected
         </button>
         <span id="selected-count" style="font-size: 0.875rem; color: #666;">0 selected</span>
@@ -362,5 +362,28 @@ if (totalPages <= maxPagesToShow) {
 
   checkboxes.forEach(cb => {
     cb.addEventListener('change', updateSelection);
+  });
+
+  // M3 confirm for bulk delete
+  document.getElementById('bulk-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const selected = document.querySelectorAll('.invoice-checkbox:checked');
+    const deletableCount = Array.from(selected).filter(cb =>
+      cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
+    ).length;
+
+    const confirmed = await m3Confirm(
+      `Delete ${deletableCount} invoice(s)? Only draft and cancelled invoices will be deleted.`,
+      {
+        title: 'Delete Invoices?',
+        type: 'delete',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        danger: true
+      }
+    );
+    if (confirmed) {
+      e.target.submit();
+    }
   });
 </script>

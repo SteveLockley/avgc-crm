@@ -290,14 +290,13 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
           </p>
         </form>
 
-        <form method="POST">
+        <form method="POST" id="send-all-form" data-count={invoices.length}>
           <input type="hidden" name="action" value="send_all" />
           <button
             type="submit"
             class="btn btn-primary"
             style="width: 100%;"
             disabled={!emailConfigured}
-            onclick={`return confirm('Send ${invoices.length} invoice(s) to members? This cannot be undone.')`}
           >
             Send All {invoices.length} Invoice(s)
           </button>
@@ -372,4 +371,23 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
       </div>
     </div>
   </div>
+
+  <script is:inline>
+    document.getElementById('send-all-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const count = e.target.dataset.count;
+      const confirmed = await m3Confirm(
+        `This will send ${count} invoice(s) to members via email. This cannot be undone.`,
+        {
+          title: 'Send Invoices?',
+          type: 'warning',
+          confirmText: 'Send All',
+          cancelText: 'Cancel'
+        }
+      );
+      if (confirmed) {
+        e.target.submit();
+      }
+    });
+  </script>
 </AdminLayout>
