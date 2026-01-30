@@ -7,6 +7,8 @@
     "build": "astro build",
     "preview": "wrangler pages dev ./dist",
     "deploy": "astro build && wrangler pages deploy ./dist",
+    "test": "vitest",
+    "test:run": "vitest run",
     "db:create": "wrangler d1 create alnmouth-golf-db",
     "db:migrate": "wrangler d1 execute alnmouth-golf-db --remote --file=./migrations/001_initial.sql",
     "db:migrate:local": "wrangler d1 execute alnmouth-golf-db --local --file=./migrations/001_initial.sql",
@@ -19,8 +21,11 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.6.2",
     "typescript": "^5.7.0",
+    "vitest": "^4.0.18",
     "wrangler": "^4.60.0"
   }
 }
