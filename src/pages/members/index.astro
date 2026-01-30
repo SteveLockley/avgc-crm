@@ -255,6 +255,7 @@ function buildFilterQueryString(): string {
                 <td>
                   <a href={`/members/${member.id}`} class="btn btn-secondary btn-sm">View</a>
                   <a href={`/members/${member.id}/edit`} class="btn btn-secondary btn-sm">Edit</a>
+                  <button type="button" class="btn btn-danger btn-sm" onclick={`deleteMember(${member.id}, '${member.surname}, ${member.first_name}')`}>Del</button>
                 </td>
               </tr>
             ))}
@@ -296,4 +297,24 @@ function buildFilterQueryString(): string {
     )}
   </div>
 
+  <script is:inline>
+    async function deleteMember(id, name) {
+      if (!confirm(`Are you sure you want to delete ${name}?\n\nThis will also delete all their payments, invoices, and subscription history.`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/members/${id}`, { method: 'DELETE' });
+        const data = await response.json();
+
+        if (data.success) {
+          location.reload();
+        } else {
+          alert('Delete failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (error) {
+        alert('Delete failed: ' + error.message);
+      }
+    }
+  </script>
 </AdminLayout>
