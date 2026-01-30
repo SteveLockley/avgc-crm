@@ -390,9 +390,18 @@ function getSortIndicator(column: string): string {
 
   <script is:inline>
     async function deleteMember(id, name) {
-      if (!confirm(`Are you sure you want to delete ${name}?\n\nThis will also delete all their payments, invoices, and subscription history.`)) {
-        return;
-      }
+      const confirmed = await m3Confirm(
+        `This will permanently delete ${name} and all their payments, invoices, and subscription history.`,
+        {
+          title: 'Delete Member?',
+          type: 'delete',
+          confirmText: 'Delete',
+          cancelText: 'Cancel',
+          danger: true
+        }
+      );
+
+      if (!confirmed) return;
 
       try {
         const response = await fetch(`/api/members/${id}`, { method: 'DELETE' });
@@ -401,10 +410,10 @@ function getSortIndicator(column: string): string {
         if (data.success) {
           location.reload();
         } else {
-          alert('Delete failed: ' + (data.error || 'Unknown error'));
+          await m3Alert('Delete failed: ' + (data.error || 'Unknown error'), { title: 'Error', type: 'error' });
         }
       } catch (error) {
-        alert('Delete failed: ' + error.message);
+        await m3Alert('Delete failed: ' + error.message, { title: 'Error', type: 'error' });
       }
     }
   </script>

@@ -387,6 +387,144 @@ const navItems = [
       border: 1px solid #f5c6cb;
     }
 
+    .alert-warning {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeeba;
+    }
+
+    /* M3 Dialog */
+    .m3-dialog-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+
+    .m3-dialog-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .m3-dialog {
+      background: var(--white);
+      border-radius: 28px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+      min-width: 280px;
+      max-width: 560px;
+      width: 90%;
+      transform: scale(0.9);
+      transition: transform 0.2s ease;
+      overflow: hidden;
+    }
+
+    .m3-dialog-overlay.open .m3-dialog {
+      transform: scale(1);
+    }
+
+    .m3-dialog-icon {
+      display: flex;
+      justify-content: center;
+      padding: 24px 24px 0;
+    }
+
+    .m3-dialog-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .m3-dialog-icon.error svg {
+      color: var(--danger);
+    }
+
+    .m3-dialog-icon.warning svg {
+      color: #ed6c02;
+    }
+
+    .m3-dialog-icon.success svg {
+      color: var(--success);
+    }
+
+    .m3-dialog-icon.info svg {
+      color: var(--primary);
+    }
+
+    .m3-dialog-title {
+      font-size: 1.5rem;
+      font-weight: 400;
+      text-align: center;
+      padding: 16px 24px 0;
+      color: var(--text);
+    }
+
+    .m3-dialog-content {
+      padding: 16px 24px;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: var(--text-light);
+      text-align: center;
+      white-space: pre-line;
+    }
+
+    .m3-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 16px 24px 24px;
+    }
+
+    .m3-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 24px;
+      border-radius: 100px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      min-width: 64px;
+    }
+
+    .m3-btn-text {
+      background: transparent;
+      color: var(--primary);
+    }
+
+    .m3-btn-text:hover {
+      background: rgba(30, 86, 49, 0.08);
+    }
+
+    .m3-btn-filled {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .m3-btn-filled:hover {
+      background: var(--primary-dark);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .m3-btn-danger {
+      background: var(--danger);
+      color: var(--white);
+    }
+
+    .m3-btn-danger:hover {
+      background: #c82333;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
     /* Dashboard tables */
     .dashboard-grid {
       display: grid;
@@ -493,5 +631,110 @@ const navItems = [
       </div>
     </main>
   </div>
+
+  <!-- M3 Dialog Container -->
+  <div id="m3-dialog-overlay" class="m3-dialog-overlay">
+    <div class="m3-dialog" role="dialog" aria-modal="true">
+      <div id="m3-dialog-icon" class="m3-dialog-icon"></div>
+      <div id="m3-dialog-title" class="m3-dialog-title"></div>
+      <div id="m3-dialog-content" class="m3-dialog-content"></div>
+      <div id="m3-dialog-actions" class="m3-dialog-actions"></div>
+    </div>
+  </div>
+
+  <script is:inline>
+    // M3 Dialog System
+    (function() {
+      const overlay = document.getElementById('m3-dialog-overlay');
+      const iconEl = document.getElementById('m3-dialog-icon');
+      const titleEl = document.getElementById('m3-dialog-title');
+      const contentEl = document.getElementById('m3-dialog-content');
+      const actionsEl = document.getElementById('m3-dialog-actions');
+
+      const icons = {
+        error: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        warning: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
+        success: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>',
+        info: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>',
+        delete: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>'
+      };
+
+      let resolvePromise = null;
+
+      function closeDialog(result) {
+        overlay.classList.remove('open');
+        if (resolvePromise) {
+          resolvePromise(result);
+          resolvePromise = null;
+        }
+      }
+
+      // Close on overlay click
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          closeDialog(false);
+        }
+      });
+
+      // Close on Escape key
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && overlay.classList.contains('open')) {
+          closeDialog(false);
+        }
+      });
+
+      // M3 Alert - replacement for alert()
+      window.m3Alert = function(message, options = {}) {
+        const { title = 'Alert', type = 'info' } = options;
+
+        iconEl.className = 'm3-dialog-icon ' + type;
+        iconEl.innerHTML = icons[type] || icons.info;
+        titleEl.textContent = title;
+        contentEl.textContent = message;
+        actionsEl.innerHTML = '<button class="m3-btn m3-btn-filled" id="m3-ok-btn">OK</button>';
+
+        document.getElementById('m3-ok-btn').onclick = () => closeDialog(true);
+
+        overlay.classList.add('open');
+        document.getElementById('m3-ok-btn').focus();
+
+        return new Promise((resolve) => {
+          resolvePromise = resolve;
+        });
+      };
+
+      // M3 Confirm - replacement for confirm()
+      window.m3Confirm = function(message, options = {}) {
+        const {
+          title = 'Confirm',
+          type = 'warning',
+          confirmText = 'Confirm',
+          cancelText = 'Cancel',
+          danger = false
+        } = options;
+
+        iconEl.className = 'm3-dialog-icon ' + type;
+        iconEl.innerHTML = icons[type] || icons.warning;
+        titleEl.textContent = title;
+        contentEl.textContent = message;
+
+        const btnClass = danger ? 'm3-btn-danger' : 'm3-btn-filled';
+        actionsEl.innerHTML = `
+          <button class="m3-btn m3-btn-text" id="m3-cancel-btn">${cancelText}</button>
+          <button class="m3-btn ${btnClass}" id="m3-confirm-btn">${confirmText}</button>
+        `;
+
+        document.getElementById('m3-cancel-btn').onclick = () => closeDialog(false);
+        document.getElementById('m3-confirm-btn').onclick = () => closeDialog(true);
+
+        overlay.classList.add('open');
+        document.getElementById('m3-confirm-btn').focus();
+
+        return new Promise((resolve) => {
+          resolvePromise = resolve;
+        });
+      };
+    })();
+  </script>
 </body>
 </html>

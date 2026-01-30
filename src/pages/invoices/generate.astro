@@ -502,11 +502,11 @@ allMembers.forEach(member => {
   // Form validation
   const generateForm = document.getElementById('generate-form');
   if (generateForm) {
-    generateForm.addEventListener('submit', (e) => {
+    generateForm.addEventListener('submit', async (e) => {
       const selected = document.querySelectorAll('.member-checkbox:checked');
       if (selected.length === 0) {
         e.preventDefault();
-        alert('Please select at least one member');
+        await m3Alert('Please select at least one member', { title: 'No Members Selected', type: 'warning' });
       }
     });
   }

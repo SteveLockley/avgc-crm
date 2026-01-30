@@ -144,9 +144,9 @@ const emailPreview = generateInvoiceEmail({
       {invoice.status === 'draft' && (
         <>
           <a href={`/invoices/preview?ids=${invoice.id}`} class="btn btn-primary">Send Invoice</a>
-          <form method="POST" style="display: inline;">
+          <form method="POST" style="display: inline;" data-confirm="cancel">
             <input type="hidden" name="action" value="cancel" />
-            <button type="submit" class="btn btn-danger" onclick="return confirm('Cancel this invoice?')">Cancel</button>
+            <button type="submit" class="btn btn-danger">Cancel</button>
           </form>
         </>
       )}
@@ -156,9 +156,9 @@ const emailPreview = generateInvoiceEmail({
             <input type="hidden" name="action" value="mark_paid" />
             <button type="submit" class="btn btn-primary">Mark as Paid</button>
           </form>
-          <form method="POST" style="display: inline;">
+          <form method="POST" style="display: inline;" data-confirm="cancel">
             <input type="hidden" name="action" value="cancel" />
-            <button type="submit" class="btn btn-danger" onclick="return confirm('Cancel this invoice?')">Cancel</button>
+            <button type="submit" class="btn btn-danger">Cancel</button>
           </form>
         </>
       )}
@@ -169,9 +169,9 @@ const emailPreview = generateInvoiceEmail({
         </form>
       )}
       {(invoice.status === 'draft' || invoice.status === 'cancelled') && (
-        <form method="POST" style="display: inline;">
+        <form method="POST" style="display: inline;" data-confirm="delete">
           <input type="hidden" name="action" value="delete" />
-          <button type="submit" class="btn btn-danger" onclick="return confirm('Permanently delete this invoice? This cannot be undone.')">Delete</button>
+          <button type="submit" class="btn btn-danger">Delete</button>
         </form>
       )}
       <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
@@ -390,4 +390,35 @@ const emailPreview = generateInvoiceEmail({
       const container = document.getElementById('related-invoices');
       if (container) container.innerHTML = '<p style="color: #666;">Could not load</p>';
     });
+
+  // M3 confirmation dialogs for forms
+  document.querySelectorAll('form[data-confirm]').forEach(form => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const confirmType = form.dataset.confirm;
+
+      let confirmed = false;
+      if (confirmType === 'cancel') {
+        confirmed = await m3Confirm('Are you sure you want to cancel this invoice?', {
+          title: 'Cancel Invoice?',
+          type: 'warning',
+          confirmText: 'Cancel Invoice',
+          cancelText: 'Keep It',
+          danger: true
+        });
+      } else if (confirmType === 'delete') {
+        confirmed = await m3Confirm('This will permanently delete this invoice. This cannot be undone.', {
+          title: 'Delete Invoice?',
+          type: 'delete',
+          confirmText: 'Delete',
+          cancelText: 'Keep It',
+          danger: true
+        });
+      }
+
+      if (confirmed) {
+        form.submit();
+      }
+    });
+  });
 </script>
