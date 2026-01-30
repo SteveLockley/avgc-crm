@@ -386,7 +386,9 @@ function getSortIndicator(column: string): string {
         }
       }
     })();
+  </script>
 
+  <script is:inline>
     async function deleteMember(id, name) {
       if (!confirm(`Are you sure you want to delete ${name}?\n\nThis will also delete all their payments, invoices, and subscription history.`)) {
         return;
