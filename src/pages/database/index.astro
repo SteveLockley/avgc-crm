@@ -47,6 +47,11 @@ for (const table of tables) {
       <h3 class="card-title">Database Explorer</h3>
       <div style="display: flex; gap: 0.5rem;">
         {canBackup && (
+          <button type="button" id="restore-btn" class="btn btn-secondary" onclick="showRestoreDialog()">
+            Restore from SharePoint
+          </button>
+        )}
+        {canBackup && (
           <button type="button" id="backup-btn" class="btn btn-secondary" onclick="runBackup()">
             Backup to SharePoint
           </button>
@@ -128,7 +133,184 @@ for (const table of tables) {
   </div>
 
   {canBackup && (
+    <!-- Restore Dialog -->
+    <div id="restore-dialog" class="modal-overlay" style="display: none;">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h3>Restore from SharePoint</h3>
+          <button type="button" class="modal-close" onclick="hideRestoreDialog()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="restore-loading" style="text-align: center; padding: 2rem;">
+            Loading backups...
+          </div>
+          <div id="restore-error" style="display: none; background: #f8d7da; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;"></div>
+          <div id="backup-list" style="display: none;">
+            <p style="color: #666; margin-bottom: 1rem;">Select a backup to restore:</p>
+            <div id="backup-items"></div>
+          </div>
+          <div id="restore-preview" style="display: none;">
+            <div style="background: #fff3cd; color: #856404; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
+              <strong>Warning:</strong> This will replace ALL data in the database with the backup data. This action cannot be undone.
+            </div>
+            <p><strong>Backup:</strong> <span id="preview-filename"></span></p>
+            <p><strong>Created:</strong> <span id="preview-date"></span></p>
+            <p><strong>Tables to restore:</strong></p>
+            <div id="preview-tables" style="max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; margin-bottom: 1rem;"></div>
+            <p><strong>Total rows:</strong> <span id="preview-total"></span></p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="hideRestoreDialog()">Cancel</button>
+          <button type="button" id="restore-confirm-btn" class="btn btn-danger" style="display: none;" onclick="confirmRestore()">
+            Restore Database
+          </button>
+          <button type="button" id="restore-back-btn" class="btn btn-secondary" style="display: none;" onclick="backToList()">
+            Back
+          </button>
+        </div>
+      </div>
+    </div>
+
     <script is:inline>
+      let selectedBackup = null;
+
+      async function showRestoreDialog() {
+        document.getElementById('restore-dialog').style.display = 'flex';
+        document.getElementById('restore-loading').style.display = 'block';
+        document.getElementById('backup-list').style.display = 'none';
+        document.getElementById('restore-preview').style.display = 'none';
+        document.getElementById('restore-error').style.display = 'none';
+        document.getElementById('restore-confirm-btn').style.display = 'none';
+        document.getElementById('restore-back-btn').style.display = 'none';
+
+        try {
+          const response = await fetch('/api/restore');
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('backup-list').style.display = 'block';
+
+          const itemsContainer = document.getElementById('backup-items');
+          if (data.backups.length === 0) {
+            itemsContainer.innerHTML = '<p style="color: #666; text-align: center;">No backups found</p>';
+          } else {
+            itemsContainer.innerHTML = data.backups.map(b => `
+              <div class="backup-item" onclick="selectBackup('${b.name}')" style="padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.5rem; cursor: pointer; transition: background 0.2s;">
+                <div style="font-weight: 500;">${b.name}</div>
+                <div style="font-size: 0.875rem; color: #666;">
+                  ${(b.size / 1024).toFixed(1)} KB • ${new Date(b.modified).toLocaleString()}
+                </div>
+              </div>
+            `).join('');
+
+            // Add hover effect
+            document.querySelectorAll('.backup-item').forEach(item => {
+              item.addEventListener('mouseenter', () => item.style.background = '#f0f0f0');
+              item.addEventListener('mouseleave', () => item.style.background = 'white');
+            });
+          }
+        } catch (error) {
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-error').style.display = 'block';
+          document.getElementById('restore-error').textContent = 'Failed to load backups: ' + error.message;
+        }
+      }
+
+      function hideRestoreDialog() {
+        document.getElementById('restore-dialog').style.display = 'none';
+        selectedBackup = null;
+      }
+
+      async function selectBackup(filename) {
+        selectedBackup = filename;
+        document.getElementById('backup-list').style.display = 'none';
+        document.getElementById('restore-loading').style.display = 'block';
+        document.getElementById('restore-loading').textContent = 'Loading backup preview...';
+
+        try {
+          const response = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, confirm: false })
+          });
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-preview').style.display = 'block';
+          document.getElementById('restore-confirm-btn').style.display = 'inline-block';
+          document.getElementById('restore-back-btn').style.display = 'inline-block';
+
+          document.getElementById('preview-filename').textContent = data.filename;
+          document.getElementById('preview-date').textContent = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'Unknown';
+          document.getElementById('preview-total').textContent = data.totalRows.toLocaleString() + ' rows';
+
+          const tablesHtml = Object.entries(data.tables)
+            .map(([table, count]) => `<div style="display: flex; justify-content: space-between; padding: 0.25rem 0;"><span>${table}</span><span>${count.toLocaleString()} rows</span></div>`)
+            .join('');
+          document.getElementById('preview-tables').innerHTML = tablesHtml;
+        } catch (error) {
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-error').style.display = 'block';
+          document.getElementById('restore-error').textContent = 'Failed to load backup: ' + error.message;
+          document.getElementById('restore-back-btn').style.display = 'inline-block';
+        }
+      }
+
+      function backToList() {
+        selectedBackup = null;
+        document.getElementById('restore-preview').style.display = 'none';
+        document.getElementById('restore-error').style.display = 'none';
+        document.getElementById('restore-confirm-btn').style.display = 'none';
+        document.getElementById('restore-back-btn').style.display = 'none';
+        document.getElementById('backup-list').style.display = 'block';
+      }
+
+      async function confirmRestore() {
+        if (!selectedBackup) return;
+
+        const btn = document.getElementById('restore-confirm-btn');
+        btn.disabled = true;
+        btn.textContent = 'Restoring...';
+
+        try {
+          const response = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: selectedBackup, confirm: true })
+          });
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          hideRestoreDialog();
+          const resultDiv = document.getElementById('backup-result');
+          resultDiv.style.display = 'block';
+          resultDiv.style.background = '#d4edda';
+          resultDiv.style.color = '#155724';
+          resultDiv.innerHTML = `<strong>Restore successful!</strong><br>
+            File: ${data.filename}<br>
+            Restored: ${data.totalRestored.toLocaleString()} rows<br>
+            <a href="javascript:location.reload()">Refresh page to see updated data</a>`;
+        } catch (error) {
+          document.getElementById('restore-error').style.display = 'block';
+          document.getElementById('restore-error').textContent = 'Restore failed: ' + error.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Restore Database';
+        }
+      }
+
       async function runBackup() {
         const btn = document.getElementById('backup-btn');
         const resultDiv = document.getElementById('backup-result');
@@ -164,5 +346,72 @@ for (const table of tables) {
         }
       }
     </script>
+
+    <style>
+      .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+      .modal-content {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        width: 90%;
+        max-height: 90vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #e0e0e0;
+      }
+      .modal-header h3 {
+        margin: 0;
+      }
+      .modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: #666;
+        padding: 0;
+        line-height: 1;
+      }
+      .modal-close:hover {
+        color: #333;
+      }
+      .modal-body {
+        padding: 1.5rem;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        padding: 1rem 1.5rem;
+        border-top: 1px solid #e0e0e0;
+      }
+      .btn-danger {
+        background: #dc3545;
+        color: white;
+        border: none;
+      }
+      .btn-danger:hover {
+        background: #c82333;
+      }
+    </style>
   )}
 </AdminLayout>
