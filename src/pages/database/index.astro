@@ -2,6 +2,9 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 
 const db = Astro.locals.runtime.env.DB;
+const userEmail = Astro.locals.user?.email?.toLowerCase() || '';
+const BACKUP_ADMINS = ['admin@alnmouthvillage.golf', 'steve.lockley@alnmouthvillage.golf'];
+const canBackup = BACKUP_ADMINS.includes(userEmail);
 
 // Get all tables (excluding internal SQLite tables and FTS shadow tables)
 const tablesResult = await db.prepare(
@@ -42,8 +45,17 @@ for (const table of tables) {
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">Database Explorer</h3>
-      <a href="/database/query" class="btn btn-primary">SQL Query</a>
+      <div style="display: flex; gap: 0.5rem;">
+        {canBackup && (
+          <button type="button" id="backup-btn" class="btn btn-secondary" onclick="runBackup()">
+            Backup to SharePoint
+          </button>
+        )}
+        <a href="/database/query" class="btn btn-primary">SQL Query</a>
+      </div>
     </div>
+
+    <div id="backup-result" style="display: none; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;"></div>
 
     {errorParam === 'fts' && (
       <div style="background: #fff3cd; color: #856404; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
@@ -114,4 +126,43 @@ for (const table of tables) {
       <div style="color: #666;">Indexes</div>
     </div>
   </div>
+
+  {canBackup && (
+    <script is:inline>
+      async function runBackup() {
+        const btn = document.getElementById('backup-btn');
+        const resultDiv = document.getElementById('backup-result');
+
+        btn.disabled = true;
+        btn.textContent = 'Backing up...';
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = '#e7f3ff';
+        resultDiv.style.color = '#0066cc';
+        resultDiv.textContent = 'Starting backup to SharePoint...';
+
+        try {
+          const response = await fetch('/api/backup', { method: 'POST' });
+          const data = await response.json();
+
+          if (data.success) {
+            resultDiv.style.background = '#d4edda';
+            resultDiv.style.color = '#155724';
+            resultDiv.innerHTML = `<strong>Backup successful!</strong><br>
+              File: ${data.filename}<br>
+              Size: ${(data.size / 1024).toFixed(1)} KB<br>
+              Time: ${new Date(data.timestamp).toLocaleString()}`;
+          } else {
+            throw new Error(data.error || 'Backup failed');
+          }
+        } catch (error) {
+          resultDiv.style.background = '#f8d7da';
+          resultDiv.style.color = '#721c24';
+          resultDiv.textContent = 'Backup failed: ' + error.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Backup to SharePoint';
+        }
+      }
+    </script>
+  )}
 </AdminLayout>

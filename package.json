@@ -11,10 +11,7 @@
     "db:migrate": "wrangler d1 execute alnmouth-golf-db --remote --file=./migrations/001_initial.sql",
     "db:migrate:local": "wrangler d1 execute alnmouth-golf-db --local --file=./migrations/001_initial.sql",
     "db:seed": "wrangler d1 execute alnmouth-golf-db --remote --file=./migrations/002_seed.sql",
-    "db:seed:local": "wrangler d1 execute alnmouth-golf-db --local --file=./migrations/002_seed.sql",
-    "backup:deploy": "wrangler deploy --config wrangler.backup.toml",
-    "backup:logs": "wrangler tail avgc-backup-worker",
-    "backup:trigger": "wrangler d1 export alnmouth-golf-db --remote --output avgc-backup.sql"
+    "db:seed:local": "wrangler d1 execute alnmouth-golf-db --local --file=./migrations/002_seed.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.0.0",
