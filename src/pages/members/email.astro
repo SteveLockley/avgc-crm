@@ -6,10 +6,8 @@ import { sendEmail, isEmailConfigured, isValidEmail } from '../../lib/email';
 const db = Astro.locals.runtime.env.DB;
 const env = Astro.locals.runtime.env;
 
-// Check if email is configured
 const emailConfigured = isEmailConfigured(env);
 
-// Get filter parameters (same as index page)
 const url = Astro.url;
 const search = url.searchParams.get('search') || '';
 const subscriptionType = url.searchParams.get('subscription_type') || '';
@@ -17,7 +15,6 @@ const eguCategory = url.searchParams.get('egu_category') || '';
 const filter = url.searchParams.get('filter') || '';
 const singleMemberId = url.searchParams.get('member_id');
 
-// Check if emailing a single member
 let singleMember: { id: number; first_name: string; surname: string; email: string } | null = null;
 if (singleMemberId) {
   const memberResult = await db.prepare(
@@ -28,7 +25,6 @@ if (singleMemberId) {
   }
 }
 
-// For EGU category filtering
 let filteredByEgu = false;
 let eguFilteredIds: number[] = [];
 
@@ -36,16 +32,13 @@ if (!singleMember && eguCategory) {
   filteredByEgu = true;
   const allMembers = await db.prepare(
     `SELECT id, gender, date_of_birth, home_away, home_club
-     FROM members
-     WHERE category IS NOT NULL AND category != ''`
+     FROM members WHERE category IS NOT NULL AND category != ''`
   ).all();
-
   eguFilteredIds = (allMembers.results || [])
     .filter((m: any) => calculateEguCategory(m as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>) === eguCategory)
     .map((m: any) => m.id);
 }
 
-// Build query with filters
 let whereClause = '1=1';
 const params: any[] = [];
 
@@ -55,12 +48,10 @@ if (!singleMember) {
     const searchTerm = `%${search}%`;
     params.push(searchTerm, searchTerm, searchTerm);
   }
-
   if (subscriptionType) {
     whereClause += ' AND category = ?';
     params.push(subscriptionType);
   }
-
   if (filter === 'expiring') {
     whereClause += ` AND date_expires BETWEEN date('now') AND date('now', '+30 days')`;
   } else if (filter === 'expired') {
@@ -68,7 +59,6 @@ if (!singleMember) {
   } else if (filter === 'active') {
     whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
   }
-
   if (filteredByEgu && eguFilteredIds.length > 0) {
     const placeholders = eguFilteredIds.map(() => '?').join(',');
     whereClause += ` AND id IN (${placeholders})`;
@@ -78,7 +68,6 @@ if (!singleMember) {
   }
 }
 
-// Get filtered members with email addresses (or use single member)
 let validMembers: { id: number; first_name: string; surname: string; email: string }[] = [];
 
 if (singleMember) {
@@ -91,12 +80,48 @@ if (singleMember) {
      WHERE ${whereClause} AND email IS NOT NULL AND email != ''
      ORDER BY surname, first_name`
   ).bind(...params).all();
-
   const membersWithEmail = (members.results || []) as { id: number; first_name: string; surname: string; email: string }[];
   validMembers = membersWithEmail.filter(m => isValidEmail(m.email));
 }
 
-// Handle form submission
+function generateEmailHtml(body: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background-color: #1e5631; padding: 24px 30px; border-radius: 8px 8px 0 0;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 600;">Alnmouth Village Golf Club</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 30px;">
+              <div style="font-size: 15px; line-height: 1.6; color: #333;">${body.replace(/\n/g, '<br>')}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
+              <p style="margin: 0; font-size: 13px; color: #666;"><strong>Alnmouth Village Golf Club</strong></p>
+              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
+              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Tel: 01665 830231 | <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
+              <p style="margin: 8px 0 0 0; font-size: 13px;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`.trim();
+}
+
 let sendResult: { sent: number; failed: number; errors: string[] } | null = null;
 let sendError: string | null = null;
 
@@ -108,29 +133,24 @@ if (Astro.request.method === 'POST' && emailConfigured) {
     const selectedIds = formData.getAll('member_ids') as string[];
 
     if (!subject || !body) {
-      sendError = 'Subject and body are required';
+      sendError = 'Subject and message are required';
     } else if (selectedIds.length === 0) {
       sendError = 'No members selected';
     } else {
       const selectedMembers = validMembers.filter(m => selectedIds.includes(String(m.id)));
-
       sendResult = { sent: 0, failed: 0, errors: [] };
 
       for (const member of selectedMembers) {
-        // Personalize the email
         const personalizedBody = body
           .replace(/\{first_name\}/g, member.first_name)
           .replace(/\{surname\}/g, member.surname)
           .replace(/\{name\}/g, `${member.first_name} ${member.surname}`);
 
-        const result = await sendEmail(
-          {
-            to: member.email,
-            subject: subject,
-            html: personalizedBody.replace(/\n/g, '<br>'),
-          },
-          env
-        );
+        const result = await sendEmail({
+          to: member.email,
+          subject: subject,
+          html: generateEmailHtml(personalizedBody),
+        }, env);
 
         if (result.success) {
           sendResult.sent++;
@@ -138,8 +158,6 @@ if (Astro.request.method === 'POST' && emailConfigured) {
           sendResult.failed++;
           sendResult.errors.push(`${member.email}: ${result.error}`);
         }
-
-        // Rate limiting
         await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
@@ -148,141 +166,295 @@ if (Astro.request.method === 'POST' && emailConfigured) {
   }
 }
 
-// Build filter description
-let filterDescription: string;
-if (singleMember) {
-  filterDescription = `${singleMember.first_name} ${singleMember.surname}`;
-} else {
-  const filterParts: string[] = [];
-  if (search) filterParts.push(`Search: "${search}"`);
-  if (subscriptionType) filterParts.push(`Type: ${subscriptionType}`);
-  if (eguCategory) filterParts.push(`EGU: ${eguCategory}`);
-  if (filter) filterParts.push(`Status: ${filter}`);
-  filterDescription = filterParts.length > 0 ? filterParts.join(', ') : 'All members';
-}
-
-// Build back link with filters
 function buildBackLink(): string {
-  if (singleMember) {
-    return `/members/${singleMember.id}`;
-  }
-  const params = new URLSearchParams();
-  if (search) params.set('search', search);
-  if (subscriptionType) params.set('subscription_type', subscriptionType);
-  if (eguCategory) params.set('egu_category', eguCategory);
-  if (filter) params.set('filter', filter);
-  return `/members${params.toString() ? '?' + params.toString() : ''}`;
+  if (singleMember) return `/members/${singleMember.id}`;
+  const p = new URLSearchParams();
+  if (search) p.set('search', search);
+  if (subscriptionType) p.set('subscription_type', subscriptionType);
+  if (eguCategory) p.set('egu_category', eguCategory);
+  if (filter) p.set('filter', filter);
+  return `/members${p.toString() ? '?' + p.toString() : ''}`;
 }
 
 const pageTitle = singleMember ? `Email ${singleMember.first_name} ${singleMember.surname}` : 'Email Members';
+const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dear {first_name},\n\n`;
 ---
 
 <AdminLayout title={pageTitle}>
-  <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">{pageTitle}</h3>
-      <a href={buildBackLink()} class="btn btn-secondary">{singleMember ? 'Back to Member' : 'Back to Members'}</a>
+  <div class="email-page">
+    <div class="email-header">
+      <h2>{pageTitle}</h2>
+      <a href={buildBackLink()} class="btn btn-secondary">← Back</a>
     </div>
 
     {!emailConfigured && (
       <div class="alert alert-error">
-        Email is not configured. Please set up Azure/Microsoft 365 credentials in the environment variables.
+        Email not configured. Please set up Azure/Microsoft 365 credentials.
       </div>
     )}
 
     {sendResult && (
       <div class={`alert ${sendResult.failed === 0 ? 'alert-success' : 'alert-warning'}`}>
-        <strong>Emails sent:</strong> {sendResult.sent} successful, {sendResult.failed} failed
+        <strong>{sendResult.sent} sent</strong>{sendResult.failed > 0 && `, ${sendResult.failed} failed`}
         {sendResult.errors.length > 0 && (
-          <details style="margin-top: 0.5rem;">
-            <summary>View errors</summary>
-            <ul style="margin: 0.5rem 0; padding-left: 1.5rem;">
-              {sendResult.errors.map(err => <li style="font-size: 0.875rem;">{err}</li>)}
-            </ul>
+          <details><summary>Errors</summary>
+            <ul>{sendResult.errors.map(e => <li>{e}</li>)}</ul>
           </details>
         )}
       </div>
     )}
 
-    {sendError && (
-      <div class="alert alert-error">{sendError}</div>
-    )}
-
-    <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; background: #e8f4e8; border-radius: 4px;">
-      <strong>Filter:</strong> {filterDescription}<br>
-      <strong>Recipients:</strong> {validMembers.length} members with valid email addresses
-      {membersWithEmail.length !== validMembers.length && (
-        <span style="color: #666;"> ({membersWithEmail.length - validMembers.length} with invalid emails excluded)</span>
-      )}
-    </div>
+    {sendError && <div class="alert alert-error">{sendError}</div>}
 
     {emailConfigured && validMembers.length > 0 && !sendResult && (
-      <form method="POST">
-        <div class="form-group">
-          <label class="form-label">Subject</label>
-          <input type="text" name="subject" class="form-input" required placeholder="Email subject..." />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">
-            Message Body
-            <span style="font-weight: normal; color: #666; margin-left: 0.5rem;">
-              (Use {'{first_name}'}, {'{surname}'}, or {'{name}'} for personalization)
-            </span>
-          </label>
-          <textarea
-            name="body"
-            class="form-input"
-            rows="10"
-            required
-            placeholder="Enter your message here..."
-          ></textarea>
-        </div>
-
+      <form method="POST" id="email-form">
         {singleMember ? (
           <input type="hidden" name="member_ids" value={singleMember.id} />
         ) : (
-          <div class="form-group">
-            <label class="form-label">Select Recipients ({validMembers.length} available)</label>
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-              <button type="button" id="selectAll" class="btn btn-secondary btn-sm">Select All</button>
-              <button type="button" id="selectNone" class="btn btn-secondary btn-sm">Select None</button>
-            </div>
-            <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 0.5rem;">
-              {validMembers.map(member => (
-                <label style="display: flex; align-items: center; padding: 0.25rem 0.5rem; cursor: pointer;">
-                  <input type="checkbox" name="member_ids" value={member.id} checked style="margin-right: 0.5rem;" />
-                  <span>{member.surname}, {member.first_name}</span>
-                  <span style="color: #666; margin-left: 0.5rem; font-size: 0.875rem;">({member.email})</span>
-                </label>
-              ))}
-            </div>
-            <p style="font-size: 0.75rem; color: #666; margin-top: 0.5rem;">
-              Each recipient receives an individual email (BCC style) - members cannot see other recipients.
-            </p>
-          </div>
+          validMembers.map(m => <input type="hidden" name="member_ids" value={m.id} />)
         )}
 
-        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-          <button type="submit" class="btn btn-primary">{singleMember ? 'Send Email' : 'Send Emails'}</button>
+        <div class="email-preview">
+          <!-- Header -->
+          <div class="email-preview-header">
+            <div class="club-name">Alnmouth Village Golf Club</div>
+          </div>
+
+          <!-- To/Subject -->
+          <div class="email-meta">
+            <div class="meta-row">
+              <label>To:</label>
+              <span class="to-value">
+                {singleMember ? singleMember.email : `${validMembers.length} recipients`}
+              </span>
+            </div>
+            <div class="meta-row">
+              <label for="subject">Subject:</label>
+              <input type="text" id="subject" name="subject" placeholder="Enter subject..." required />
+            </div>
+          </div>
+
+          <!-- Body -->
+          <div class="email-body">
+            <textarea name="body" id="body" placeholder="Type your message here..." required>{defaultBody}</textarea>
+            {!singleMember && (
+              <div class="personalization-hint">
+                Tip: Use {'{first_name}'}, {'{surname}'}, or {'{name}'} for personalization
+              </div>
+            )}
+          </div>
+
+          <!-- Footer -->
+          <div class="email-preview-footer">
+            <p><strong>Alnmouth Village Golf Club</strong></p>
+            <p>Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
+            <p>Tel: 01665 830231 | subscriptions@AlnmouthVillage.Golf</p>
+            <p><a href="https://alnmouthvillage.golf">www.AlnmouthVillage.Golf</a></p>
+          </div>
+        </div>
+
+        <div class="email-actions">
+          <button type="submit" class="btn btn-primary">
+            Send {singleMember ? 'Email' : `to ${validMembers.length} Members`}
+          </button>
           <a href={buildBackLink()} class="btn btn-secondary">Cancel</a>
         </div>
       </form>
     )}
 
     {validMembers.length === 0 && (
-      <div style="text-align: center; padding: 2rem; color: #666;">
-        No members with valid email addresses match the current filter.
+      <div class="empty-state">
+        <p>No valid email addresses found.</p>
+        <a href={buildBackLink()} class="btn btn-secondary">Go Back</a>
       </div>
     )}
   </div>
 
-  <script>
-    document.getElementById('selectAll')?.addEventListener('click', () => {
-      document.querySelectorAll<HTMLInputElement>('input[name="member_ids"]').forEach(cb => cb.checked = true);
-    });
-    document.getElementById('selectNone')?.addEventListener('click', () => {
-      document.querySelectorAll<HTMLInputElement>('input[name="member_ids"]').forEach(cb => cb.checked = false);
+  <style>
+    .email-page {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+
+    .email-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+    }
+
+    .email-header h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #333;
+    }
+
+    .alert {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert-error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .alert-success {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+
+    .alert-warning {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+    }
+
+    .email-preview {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+
+    .email-preview-header {
+      background: #1e5631;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .club-name {
+      color: white;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .email-meta {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #e5e5e5;
+      background: #fafafa;
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .meta-row + .meta-row {
+      margin-top: 0.75rem;
+    }
+
+    .meta-row label {
+      font-weight: 500;
+      color: #666;
+      min-width: 60px;
+    }
+
+    .to-value {
+      color: #1e5631;
+      font-weight: 500;
+    }
+
+    .meta-row input {
+      flex: 1;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+
+    .meta-row input:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 2px rgba(30, 86, 49, 0.1);
+    }
+
+    .email-body {
+      padding: 1.5rem;
+      min-height: 250px;
+    }
+
+    .email-body textarea {
+      width: 100%;
+      min-height: 200px;
+      border: none;
+      resize: vertical;
+      font-family: inherit;
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #333;
+    }
+
+    .email-body textarea:focus {
+      outline: none;
+    }
+
+    .email-body textarea::placeholder {
+      color: #999;
+    }
+
+    .personalization-hint {
+      margin-top: 1rem;
+      padding: 0.5rem 0.75rem;
+      background: #f0f7f0;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      color: #1e5631;
+    }
+
+    .email-preview-footer {
+      background: #f8f9fa;
+      padding: 1.25rem 1.5rem;
+      border-top: 1px solid #e5e5e5;
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .email-preview-footer p {
+      margin: 0.25rem 0;
+    }
+
+    .email-preview-footer a {
+      color: #1e5631;
+    }
+
+    .email-actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      justify-content: center;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem;
+      background: #fff;
+      border-radius: 12px;
+      color: #666;
+    }
+
+    .empty-state .btn {
+      margin-top: 1rem;
+    }
+  </style>
+
+  <script is:inline>
+    document.getElementById('email-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const toText = document.querySelector('.to-value')?.textContent || '';
+      const isSingle = !toText.includes('recipients');
+      const count = isSingle ? 1 : parseInt(toText) || 1;
+
+      const confirmed = await m3Confirm(
+        `Send this email to ${count} recipient${count !== 1 ? 's' : ''}?`,
+        { title: 'Send Email', confirmText: 'Send', cancelText: 'Cancel' }
+      );
+
+      if (confirmed) form.submit();
     });
   </script>
 </AdminLayout>

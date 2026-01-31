@@ -5,313 +5,788 @@ import { formatDate, formatCurrency, getFullName, getFullAddress, isExpired, exp
 const { id } = Astro.params;
 const db = Astro.locals.runtime.env.DB;
 
-// Get member details
-const member = await db.prepare(
-  'SELECT * FROM members WHERE id = ?'
-).bind(id).first();
+const member = await db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first();
 
 if (!member) {
   return Astro.redirect('/members');
 }
 
-// Get payment history
 const payments = await db.prepare(
   `SELECT * FROM payments WHERE member_id = ? ORDER BY payment_date DESC LIMIT 20`
 ).bind(id).all();
 
-// Get subscription history
 const subscriptions = await db.prepare(
   `SELECT * FROM subscription_history WHERE member_id = ? ORDER BY start_date DESC`
 ).bind(id).all();
 
 const expired = isExpired(member.date_expires as string);
 const expiring = expiresSoon(member.date_expires as string);
+const statusText = expired ? 'Expired' : expiring ? 'Expiring Soon' : 'Active';
+const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : 'status-active';
 ---
 
 <AdminLayout title={`${member.first_name} ${member.surname}`}>
-  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <button type="button" onclick="history.back()" class="btn btn-secondary">&larr; Back</button>
-    <a href={`/members/${id}/edit`} class="btn btn-primary">Edit Member</a>
-    <a href={`/payments/new?member_id=${id}`} class="btn btn-secondary">Record Payment</a>
-  </div>
-
-  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
-    <!-- Main details -->
-    <div>
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Member Details</h3>
-          <span class={`badge ${expired ? 'badge-danger' : expiring ? 'badge-warning' : 'badge-success'}`}>
-            {expired ? 'Expired' : expiring ? 'Expiring Soon' : 'Active'}
-          </span>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Name</label>
-            <div>{getFullName(member as any)}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Gender</label>
-            <div>{member.gender === 'M' ? 'Male' : member.gender === 'F' ? 'Female' : '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Date of Birth</label>
-            <div>{formatDate(member.date_of_birth as string) || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Age Group</label>
-            <div>{member.age_group || '-'}</div>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Email</label>
-            <div>
-              {member.email ? (
-                <a href={`mailto:${member.email}`}>{member.email}</a>
-              ) : '-'}
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Phone</label>
-            <div>
-              {member.telephone_1 || member.telephone_2 || member.telephone_3 || '-'}
-              {member.telephone_2 && member.telephone_1 && <span style="color: #666;"> / {member.telephone_2}</span>}
-            </div>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Address</label>
-          <div>{getFullAddress(member as any) || '-'}</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Membership Information</h3>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Category</label>
-            <div>{member.category || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Subscription</label>
-            <div>{member.subscription_template || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Home/Away</label>
-            <div>
-              <span class={`badge ${member.home_away === 'H' ? 'badge-success' : 'badge-info'}`}>
-                {member.home_away === 'H' ? 'Home' : member.home_away === 'A' ? 'Away' : member.home_away || '-'}
-              </span>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Home Club</label>
-            <div>{member.home_club || '-'}</div>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Date Joined</label>
-            <div>{formatDate(member.date_joined as string) || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Date Renewed</label>
-            <div>{formatDate(member.date_renewed as string) || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Date Expires</label>
-            <div class={expired ? 'badge badge-danger' : expiring ? 'badge badge-warning' : ''}>
-              {formatDate(member.date_expires as string) || '-'}
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Subscription Paid</label>
-            <div>{formatDate(member.date_subscription_paid as string) || '-'}</div>
+  <div class="member-page">
+    <!-- Header -->
+    <div class="member-header">
+      <div class="header-left">
+        <button type="button" onclick="history.back()" class="back-btn">←</button>
+        <div class="header-info">
+          <h1>{member.first_name} {member.surname}</h1>
+          <div class="header-meta">
+            <span class={`status-badge ${statusClass}`}>{statusText}</span>
+            <span class="member-id">M{member.pin?.toString().padStart(4, '0')}</span>
+            {member.category && <span class="category-tag">{member.category}</span>}
           </div>
         </div>
       </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Golf Information</h3>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Handicap Index</label>
-            <div style="font-size: 1.5rem; font-weight: 600; color: #1e5631;">
-              {member.handicap_index ?? 'N/A'}
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">WHS National ID</label>
-            <div>{member.national_id || '-'}</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Country</label>
-            <div>{member.national_id_country || '-'}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Payment History -->
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Payment History</h3>
-          <a href={`/payments/new?member_id=${id}`} class="btn btn-secondary btn-sm">Record Payment</a>
-        </div>
-
-        <div class="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Method</th>
-                <th>Reference</th>
-                <th style="text-align: right;">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.results?.map((payment) => (
-                <tr>
-                  <td>{formatDate(payment.payment_date as string)}</td>
-                  <td>{payment.payment_type || '-'}</td>
-                  <td>{payment.payment_method || '-'}</td>
-                  <td>{payment.reference || '-'}</td>
-                  <td style="text-align: right; font-weight: 500;">
-                    {formatCurrency(payment.amount as number)}
-                  </td>
-                </tr>
-              ))}
-              {(!payments.results || payments.results.length === 0) && (
-                <tr>
-                  <td colspan="5" style="text-align: center; color: #666;">No payment records</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div class="header-actions">
+        <a href={`/members/email?member_id=${id}`} class="btn btn-secondary">Email</a>
+        <a href={`/members/${id}/edit`} class="btn btn-primary">Edit</a>
       </div>
     </div>
 
-    <!-- Sidebar -->
-    <div>
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Financial</h3>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Account Balance</label>
-          <div style={`font-size: 1.5rem; font-weight: 600; ${(member.account_balance as number) < 0 ? 'color: #dc3545' : 'color: #28a745'}`}>
-            {formatCurrency(member.account_balance as number)}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Competition Fee Purse</label>
-          <div style="font-size: 1.25rem;">
-            {formatCurrency(member.competition_fee_purse as number)}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Payment Method</label>
-          <div>{member.default_payment_method || '-'}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Invoice By</label>
-          <div>{member.send_invoice_by || 'Email'}</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Admin</h3>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">PIN</label>
-          <div>{member.pin || '-'}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Club Number</label>
-          <div>{member.club_number || '-'}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Locker</label>
-          <div>
-            {member.locker_number || '-'}
-            {member.additional_locker && <span> + {member.additional_locker}</span>}
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Officer Title</label>
-          <div>{member.officer_title || 'Not on Committee'}</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">GDPR/Consent</h3>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Electronic Communication</label>
-          <div>
-            <span class={`badge ${member.electronic_communication_consent === 'Yes' ? 'badge-success' : 'badge-warning'}`}>
-              {member.electronic_communication_consent || 'Unknown'}
-            </span>
-          </div>
-          {member.date_communication_consent_changed && (
-            <div style="font-size: 0.75rem; color: #666; margin-top: 0.25rem;">
-              Changed: {formatDate(member.date_communication_consent_changed as string)}
+    <div class="content-grid">
+      <!-- Left Column -->
+      <div class="main-column">
+        <!-- Contact Card -->
+        <div class="m3-card">
+          <div class="card-icon">👤</div>
+          <h2>Contact Details</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Name</span>
+              <span class="info-value">{getFullName(member as any)}</span>
             </div>
+            <div class="info-item">
+              <span class="info-label">Gender</span>
+              <span class="info-value">{member.gender === 'M' ? 'Male' : member.gender === 'F' ? 'Female' : '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Date of Birth</span>
+              <span class="info-value">{formatDate(member.date_of_birth as string) || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Age Group</span>
+              <span class="info-value">{member.age_group || '-'}</span>
+            </div>
+            <div class="info-item full-width">
+              <span class="info-label">Email</span>
+              <span class="info-value">
+                {member.email ? <a href={`mailto:${member.email}`} class="email-link">{member.email}</a> : '-'}
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Phone</span>
+              <span class="info-value">{member.telephone_1 || member.telephone_2 || '-'}</span>
+            </div>
+            <div class="info-item full-width">
+              <span class="info-label">Address</span>
+              <span class="info-value">{getFullAddress(member as any) || '-'}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Membership Card -->
+        <div class="m3-card">
+          <div class="card-icon">🏌️</div>
+          <h2>Membership</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Category</span>
+              <span class="info-value highlight">{member.category || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Home/Away</span>
+              <span class="info-value">
+                <span class={`mini-badge ${member.home_away === 'H' ? 'badge-home' : 'badge-away'}`}>
+                  {member.home_away === 'H' ? 'Home' : member.home_away === 'A' ? 'Away' : '-'}
+                </span>
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Home Club</span>
+              <span class="info-value">{member.home_club || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Subscription</span>
+              <span class="info-value">{member.subscription_template || '-'}</span>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="date-row">
+            <div class="date-item">
+              <span class="date-label">Joined</span>
+              <span class="date-value">{formatDate(member.date_joined as string) || '-'}</span>
+            </div>
+            <div class="date-item">
+              <span class="date-label">Renewed</span>
+              <span class="date-value">{formatDate(member.date_renewed as string) || '-'}</span>
+            </div>
+            <div class="date-item">
+              <span class="date-label">Expires</span>
+              <span class={`date-value ${expired ? 'text-danger' : expiring ? 'text-warning' : ''}`}>
+                {formatDate(member.date_expires as string) || '-'}
+              </span>
+            </div>
+            <div class="date-item">
+              <span class="date-label">Paid</span>
+              <span class="date-value">{formatDate(member.date_subscription_paid as string) || '-'}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Golf Card -->
+        <div class="m3-card">
+          <div class="card-icon">⛳</div>
+          <h2>Golf</h2>
+          <div class="golf-stats">
+            <div class="handicap-display">
+              <span class="handicap-label">Handicap Index</span>
+              <span class="handicap-value">{member.handicap_index ?? 'N/A'}</span>
+            </div>
+            <div class="golf-info">
+              <div class="info-item">
+                <span class="info-label">WHS National ID</span>
+                <span class="info-value">{member.national_id || '-'}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Country</span>
+                <span class="info-value">{member.national_id_country || '-'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payments Card -->
+        <div class="m3-card">
+          <div class="card-header-row">
+            <div>
+              <div class="card-icon inline">💳</div>
+              <h2 class="inline">Payment History</h2>
+            </div>
+            <a href={`/payments/new?member_id=${id}`} class="btn btn-sm btn-secondary">+ Record Payment</a>
+          </div>
+
+          {payments.results && payments.results.length > 0 ? (
+            <div class="payments-list">
+              {payments.results.map((payment) => (
+                <div class="payment-row">
+                  <div class="payment-info">
+                    <span class="payment-type">{payment.payment_type || 'Payment'}</span>
+                    <span class="payment-meta">{formatDate(payment.payment_date as string)} · {payment.payment_method || '-'}</span>
+                  </div>
+                  <span class="payment-amount">{formatCurrency(payment.amount as number)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div class="empty-state">No payment records</div>
           )}
         </div>
+      </div>
 
-        {member.parental_consent && (
-          <div class="form-group">
-            <label class="form-label">Parental Consent</label>
-            <div>{member.parental_consent}</div>
+      <!-- Right Column -->
+      <div class="side-column">
+        <!-- Financial Card -->
+        <div class="m3-card accent-card">
+          <h2>Financial</h2>
+          <div class="balance-display">
+            <span class="balance-label">Account Balance</span>
+            <span class={`balance-value ${(member.account_balance as number) < 0 ? 'negative' : 'positive'}`}>
+              {formatCurrency(member.account_balance as number)}
+            </span>
+          </div>
+          <div class="financial-details">
+            <div class="info-item">
+              <span class="info-label">Competition Purse</span>
+              <span class="info-value">{formatCurrency(member.competition_fee_purse as number)}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Payment Method</span>
+              <span class="info-value">{member.default_payment_method || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Invoice By</span>
+              <span class="info-value">{member.send_invoice_by || 'Email'}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Admin Card -->
+        <div class="m3-card">
+          <h2>Admin</h2>
+          <div class="info-list">
+            <div class="info-item">
+              <span class="info-label">PIN</span>
+              <span class="info-value mono">{member.pin || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Club Number</span>
+              <span class="info-value mono">{member.club_number || '-'}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Locker</span>
+              <span class="info-value">
+                {member.locker_number || '-'}
+                {member.additional_locker && <span class="secondary"> + {member.additional_locker}</span>}
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Committee</span>
+              <span class="info-value">{member.officer_title || 'No'}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Consent Card -->
+        <div class="m3-card">
+          <h2>GDPR / Consent</h2>
+          <div class="consent-item">
+            <span class="consent-label">Electronic Communication</span>
+            <span class={`consent-badge ${member.electronic_communication_consent === 'Yes' ? 'consent-yes' : 'consent-no'}`}>
+              {member.electronic_communication_consent || 'Unknown'}
+            </span>
+            {member.date_communication_consent_changed && (
+              <span class="consent-date">Changed: {formatDate(member.date_communication_consent_changed as string)}</span>
+            )}
+          </div>
+        </div>
+
+        <!-- Notes Card -->
+        {(member.account_notes || member.notes) && (
+          <div class="m3-card">
+            <h2>Notes</h2>
+            {member.account_notes && (
+              <div class="note-section">
+                <span class="note-label">Account</span>
+                <p class="note-text">{member.account_notes}</p>
+              </div>
+            )}
+            {member.notes && (
+              <div class="note-section">
+                <span class="note-label">General</span>
+                <p class="note-text">{member.notes}</p>
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {(member.account_notes || member.notes) && (
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Notes</h3>
-          </div>
-
-          {member.account_notes && (
-            <div class="form-group">
-              <label class="form-label">Account Notes</label>
-              <div style="white-space: pre-wrap; font-size: 0.875rem;">{member.account_notes}</div>
-            </div>
-          )}
-
-          {member.notes && (
-            <div class="form-group">
-              <label class="form-label">General Notes</label>
-              <div style="white-space: pre-wrap; font-size: 0.875rem;">{member.notes}</div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   </div>
+
+  <style>
+    .member-page {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .member-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .header-info h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .status-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .status-active {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-warning {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .status-expired {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .member-id {
+      font-size: 0.85rem;
+      color: #666;
+      font-family: monospace;
+    }
+
+    .category-tag {
+      padding: 0.2rem 0.6rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    /* Grid Layout */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 1100px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* M3 Cards */
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 1.25rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .card-icon.inline {
+      display: inline;
+      margin-right: 0.5rem;
+      vertical-align: middle;
+    }
+
+    h2.inline {
+      display: inline;
+      vertical-align: middle;
+    }
+
+    .card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: white;
+    }
+
+    .accent-card h2 {
+      color: white;
+    }
+
+    .accent-card .info-label {
+      color: rgba(255,255,255,0.7);
+    }
+
+    .accent-card .info-value {
+      color: white;
+    }
+
+    /* Info Grid */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .info-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .info-item.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .info-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      font-weight: 500;
+    }
+
+    .info-value {
+      font-size: 0.95rem;
+      color: #333;
+    }
+
+    .info-value.highlight {
+      color: #1e5631;
+      font-weight: 600;
+    }
+
+    .info-value.mono {
+      font-family: monospace;
+    }
+
+    .info-value .secondary {
+      color: #888;
+    }
+
+    .email-link {
+      color: #1e5631;
+      text-decoration: none;
+    }
+
+    .email-link:hover {
+      text-decoration: underline;
+    }
+
+    /* Mini Badges */
+    .mini-badge {
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .badge-home {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-away {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    /* Divider */
+    .divider {
+      height: 1px;
+      background: #e5e5e5;
+      margin: 1.25rem 0;
+    }
+
+    /* Date Row */
+    .date-row {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .date-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .date-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: #888;
+    }
+
+    .date-value {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    .text-danger {
+      color: #dc3545;
+    }
+
+    .text-warning {
+      color: #f59e0b;
+    }
+
+    /* Golf Stats */
+    .golf-stats {
+      display: flex;
+      gap: 2rem;
+      align-items: flex-start;
+    }
+
+    .handicap-display {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      background: #f0f7f0;
+      border-radius: 12px;
+    }
+
+    .handicap-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: #666;
+      margin-bottom: 0.25rem;
+    }
+
+    .handicap-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #1e5631;
+    }
+
+    .golf-info {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      flex: 1;
+    }
+
+    /* Financial */
+    .balance-display {
+      text-align: center;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .balance-label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.7);
+      margin-bottom: 0.5rem;
+    }
+
+    .balance-value {
+      font-size: 2.25rem;
+      font-weight: 700;
+    }
+
+    .balance-value.positive {
+      color: #a7f3d0;
+    }
+
+    .balance-value.negative {
+      color: #fca5a5;
+    }
+
+    .financial-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .financial-details .info-item {
+      flex-direction: row;
+      justify-content: space-between;
+    }
+
+    /* Info List (sidebar) */
+    .info-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .info-list .info-item {
+      flex-direction: row;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .info-list .info-item:last-child {
+      border-bottom: none;
+    }
+
+    /* Consent */
+    .consent-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .consent-label {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .consent-badge {
+      display: inline-block;
+      width: fit-content;
+      padding: 0.3rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .consent-yes {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .consent-no {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .consent-date {
+      font-size: 0.75rem;
+      color: #999;
+    }
+
+    /* Notes */
+    .note-section {
+      margin-bottom: 1rem;
+    }
+
+    .note-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .note-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: #888;
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+
+    .note-text {
+      margin: 0;
+      font-size: 0.9rem;
+      color: #333;
+      white-space: pre-wrap;
+      background: #f8f8f8;
+      padding: 0.75rem;
+      border-radius: 8px;
+    }
+
+    /* Payments */
+    .payments-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .payment-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .payment-row:last-child {
+      border-bottom: none;
+    }
+
+    .payment-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+
+    .payment-type {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .payment-meta {
+      font-size: 0.8rem;
+      color: #888;
+    }
+
+    .payment-amount {
+      font-weight: 600;
+      color: #1e5631;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: #999;
+      font-size: 0.9rem;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.6rem 1.25rem;
+      border-radius: 10px;
+      font-weight: 500;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #1e5631;
+      color: white;
+      border: none;
+    }
+
+    .btn-primary:hover {
+      background: #164424;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+      border: none;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    .btn-sm {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.85rem;
+    }
+  </style>
 </AdminLayout>
