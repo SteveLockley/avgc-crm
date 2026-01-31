@@ -1,5 +1,5 @@
 ---
-// CSV Export endpoint - respects active filters
+// CSV Export endpoint - exports in HandicapMaster compatible format
 import { calculateEguCategory, type Member } from '../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
@@ -72,92 +72,180 @@ if (!members.results || members.results.length === 0) {
   return new Response('No members to export', { status: 404 });
 }
 
-// Define CSV columns (matching original export format)
+// Define CSV columns - HandicapMaster compatible format
+// Only include fields that HandicapMaster supports
 const columns = [
-  'SURNAME', 'MIDDLE INITIALS', 'FIRST NAME', 'GENDER', 'AGE GROUP',
-  'HANDICAP INDEX', 'HOME/AWAY/VISITOR', 'HOME CLUB', 'PIN', 'TITLE',
-  'ADDRESS 1', 'ADDRESS 2', 'ADDRESS 3', 'ADDRESS 4', 'ADDRESS 5',
-  'TELEPHONE 1', 'TELEPHONE 2', 'TELEPHONE 3', 'E-MAIL ADDRESS',
-  'CLUB NUMBER', 'CATEGORY', 'OFFICER TITLE',
-  'DATE JOINED', 'DATE RENEWED', 'DATE EXPIRES', 'DATE SUBSCRIPTION PAID',
-  'NATIONAL ID COUNTRY', 'NATIONAL ID', 'CARD NUMBER', 'DATE OF BIRTH',
-  'LOCKER NUMBER', 'DEFAULT PAYMENT METHOD', 'SUBSCRIPTION TEMPLATE',
-  'ACCOUNT BALANCE', 'ACCOUNT NOTES', 'SEND INVOICE BY', 'COMPETITION FEE PURSE',
-  'NOTES', 'ELECTRONIC COMMUNICATION CONSENT', 'DATE COMMUNICATION CONSENT CHANGED',
-  'PARENTAL CONSENT', 'DATA PROTECTION NOTES', 'ADDITIONAL LOCKER',
-  'USER FIELD 2', 'USER FIELD 3', 'ACCOUNT ID'
+  'Surname',
+  'Middle Initials',
+  'First Name',
+  'Gender',
+  'Age Group',
+  'Handicap Index',
+  'Home/Away/Visitor',
+  'Home Club',
+  'PIN',
+  'Title',
+  'Address 1',
+  'Address 2',
+  'Address 3',
+  'Address 4',
+  'Address 5',
+  'Telephone 1',
+  'Telephone 2',
+  'Telephone 3',
+  'E-Mail Address',
+  'Club Number',
+  'Category',
+  'Officer Title',
+  'Date Joined',
+  'Date Renewed',
+  'Date Expires',
+  'Date Subscription Paid',
+  'National ID Country',
+  'National ID',
+  'Card Number',
+  'Date of Birth',
+  'Locker Number',
+  'Default Payment Method',
+  'Send Invoice By',
+  'Account Notes',
+  'DD Account Name',
+  'DD Account Number',
+  'DD Sort Code',
+  'DD Reference',
+  'DD New Instruction Set Up',
+  'Notes',
+  'Electronic Communication Consent',
+  'Date Communication Consent Changed',
+  'Parental Consent',
+  'Data Protection Notes',
+  'Account ID'
 ];
+
+// Format date from YYYY-MM-DD to DD/MM/YYYY (HandicapMaster format)
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  // Handle ISO date format YYYY-MM-DD
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const [, year, month, day] = match;
+    return `${day}/${month}/${year}`;
+  }
+  return dateStr;
+}
+
+// Format boolean to Yes/No
+function formatBoolean(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '';
+  if (value === 1 || value === '1' || value === true ||
+      String(value).toLowerCase() === 'yes' || String(value).toLowerCase() === 'y') {
+    return 'Yes';
+  }
+  if (value === 0 || value === '0' || value === false ||
+      String(value).toLowerCase() === 'no' || String(value).toLowerCase() === 'n') {
+    return 'No';
+  }
+  return String(value);
+}
+
+// Format Send Invoice By to Letter/Email
+function formatSendInvoiceBy(value: string | null): string {
+  if (!value) return '';
+  const lower = value.toLowerCase();
+  if (lower === 'email' || lower === 'e-mail' || lower === 'e' || lower === 'em') {
+    return 'Email';
+  }
+  if (lower === 'letter' || lower === 'l' || lower === 'post') {
+    return 'Letter';
+  }
+  return value;
+}
+
+// Sanitize text - remove newlines and carriage returns (HandicapMaster requirement)
+function sanitizeText(value: string | null): string {
+  if (!value) return '';
+  // Replace newlines with space, trim, and limit to 4096 chars for notes fields
+  return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+// Format account balance - HandicapMaster expects numeric format
+function formatCurrency(value: number | string | null): string {
+  if (value === null || value === undefined) return '0.00';
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  if (isNaN(num)) return '0.00';
+  return num.toFixed(2);
+}
 
 // Map database fields to CSV columns
 function mapMemberToRow(m: any): string[] {
   return [
-    m.surname || '',
-    m.middle_initials || '',
-    m.first_name || '',
+    sanitizeText(m.surname) || '',
+    sanitizeText(m.middle_initials) || '',
+    sanitizeText(m.first_name) || '',
     m.gender || '',
     m.age_group || '',
-    m.handicap_index?.toString() || '',
-    m.home_away || '',
-    m.home_club || '',
+    m.handicap_index !== null && m.handicap_index !== undefined ? m.handicap_index.toString() : '',
+    m.home_away || 'H',
+    sanitizeText(m.home_club) || 'Alnmouth Village',
     m.pin || '',
     m.title || '',
-    m.address_1 || '',
-    m.address_2 || '',
-    m.address_3 || '',
-    m.address_4 || '',
-    m.address_5 || '',
+    sanitizeText(m.address_1) || '',
+    sanitizeText(m.address_2) || '',
+    sanitizeText(m.address_3) || '',
+    sanitizeText(m.address_4) || '',
+    sanitizeText(m.address_5) || '',
     m.telephone_1 || '',
     m.telephone_2 || '',
     m.telephone_3 || '',
     m.email || '',
     m.club_number || '',
     m.category || '',
-    m.officer_title || '',
-    m.date_joined || '',
-    m.date_renewed || '',
-    m.date_expires || '',
-    m.date_subscription_paid || '',
+    m.officer_title || 'Not on Committee',
+    formatDate(m.date_joined),
+    formatDate(m.date_renewed),
+    formatDate(m.date_expires),
+    formatDate(m.date_subscription_paid),
     m.national_id_country || '',
     m.national_id || '',
     m.card_number || '',
-    m.date_of_birth || '',
+    formatDate(m.date_of_birth),
     m.locker_number || '',
     m.default_payment_method || '',
-    m.subscription_template || '',
-    m.account_balance?.toString() || '0',
-    m.account_notes || '',
-    m.send_invoice_by || '',
-    m.competition_fee_purse?.toString() || '0',
-    m.notes || '',
-    m.electronic_communication_consent || '',
-    m.date_communication_consent_changed || '',
-    m.parental_consent || '',
-    m.data_protection_notes || '',
-    m.additional_locker || '',
-    m.user_field_2 || '',
-    m.user_field_3 || '',
+    formatSendInvoiceBy(m.send_invoice_by),
+    sanitizeText(m.account_notes)?.substring(0, 4096) || '',
+    sanitizeText(m.dd_account_name)?.substring(0, 20) || '',
+    m.dd_account_number || '',
+    m.dd_sort_code || '',
+    sanitizeText(m.dd_reference)?.substring(0, 18) || '',
+    formatBoolean(m.dd_new_instruction_set_up),
+    sanitizeText(m.notes)?.substring(0, 4096) || '',
+    formatBoolean(m.electronic_communication_consent),
+    formatDate(m.date_communication_consent_changed),
+    formatBoolean(m.parental_consent),
+    sanitizeText(m.data_protection_notes)?.substring(0, 4096) || '',
     m.account_id || ''
   ];
 }
 
-// Escape CSV values
+// Escape CSV values - enclose in quotes if contains comma, quote, or special chars
 function escapeCSV(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+  // Always escape if contains comma, quote, or could cause issues
+  if (value.includes(',') || value.includes('"') || value.includes('\n') || value.includes('\r')) {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;
 }
 
-// Build CSV content
-let csv = columns.join(',') + '\n';
+// Build CSV content - ASCII text
+let csv = columns.join(',') + '\r\n';
 
 for (const member of members.results) {
   const row = mapMemberToRow(member).map(escapeCSV);
-  csv += row.join(',') + '\n';
+  csv += row.join(',') + '\r\n';
 }
 
 // Build filename with filter info
-let filenameParts = ['AVGC_Members'];
+let filenameParts = ['AVGC_Members_Export'];
 if (subscriptionType) filenameParts.push(subscriptionType.replace(/\s+/g, '_'));
 if (filter) filenameParts.push(filter);
 if (eguCategory) filenameParts.push('EGU');
@@ -166,7 +254,7 @@ const filename = filenameParts.join('_') + '.csv';
 
 return new Response(csv, {
   headers: {
-    'Content-Type': 'text/csv; charset=utf-8',
+    'Content-Type': 'text/csv; charset=ascii',
     'Content-Disposition': `attachment; filename="${filename}"`
   }
 });
