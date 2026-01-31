@@ -1,0 +1,452 @@
+Required format of the Export File
+
+The file must be a "Comma-Separated File" which is typically suffixed .CSV. This format can, for example, be saved from a spreadsheet in Microsoft Excel.
+
+ 
+
+· The file must be an ASCII text file, 
+
+ 
+
+· There must be one membership record per line in the file, records may NOT span multiple lines. 
+
+ 
+
+· There must be a special 'Header' record as the first record in the file (see below). 
+
+ 
+
+· Each field within each record must be separated by a comma. 
+
+ 
+
+· Unsupported fields will be ignored. 
+
+ 
+
+NOTES:
+
+· Some of the fields have different uses or may not be required depending on the handicapping system in use. 
+
+· Accounting fields may only be imported if the HandicapMaster Userid has update access to 'Accounting'.  
+
+· For Date fields such as Date of Birth: We recommend using a 4 digit year format as using a 2 digit year format can prevent dates being imported depending on your computer settings. If using spreadsheet software be aware that some products display a 2 digit year as a 4 digit year but retain the 2 digit format i the data. 
+
+The Header Record
+
+The first record in the file must be a Header record. This consists of the names of each of the columns (fields) within the file. Not all the columns are required. The minimum required are  ‘Surname’,  ‘First Name’ and 'Middle Initials', which must be unique.
+
+The fields supported are as follows:
+
+ 
+
+Surname
+
+Member's Surname
+
+This field is required
+
+ 
+
+Middle Initials
+
+Member's Middle Initials
+
+ 
+
+First Name (or Given Name)
+
+Member's Given Name
+
+This field is required
+
+ 
+
+Gender (or Sex)
+
+The gender of the member expressed as 'M' or 'Male'  for Male or 'F' or 'Female'  for Female. Alternatively, if this field is missing, the CATEGORY of the member must include the text "Gent" or "Lady". 
+
+Default: Male.
+
+ 
+
+Age Group
+This is the age group into which the member should be assigned. If this field is not set then the import facility will use the Date of Birth value for the member and assign an appropriate Age Group to the member.
+If this value is set it will override the value calculated from the Data of Birth field.
+Default: Adult.
+
+Possible values are:
+
+· For Juniors: ‘JUNIOR, ‘Junior’, ‘J’ or ‘j’ 
+
+· For Adults: ‘ADULT’, ‘Adult’, ‘A’ or ‘a’ 
+
+· For Seniors: ‘SENIOR’. ‘Senior’, ‘S’ or ‘s’ 
+
+· For User-defined Age Group 1: "OTHER1", "Other1", "1" or Age Group Description 
+
+· For User-defined Age Group 2: "OTHER2", "Other2", "2" or Age Group Description 
+
+ 
+
+Two of the Age Groups provided may be renamed using Options.
+ 
+
+Handicap Index 
+
+(Exact Handicap, Handicap,  or Current Exact Handicap are retained for backward compatibility)
+
+ 
+
+The current Handicap Index for the member.
+
+NOTE: Only available when Handicapping is being done locally.
+
+Default: No Handicap.
+
+Home/Away/Visitor
+
+Whether the member has this club as their Home Club ('H' or 'Home') or this is an Away club for them ('A' or 'Away'). If this player is a Visitor (I.e. a Non-member), use 'V' or 'Visitor' and see considerations below.
+
+Default: Home Club Member.
+
+ 
+
+Home Club
+
+The name of the players' Home Club. The club name must already be known to the HandicapMaster database. Note: This column is ignored if the membership 'HOME/AWAY/VISITOR' column is Home.
+
+ 
+
+Out of Region
+
+When connected to a central handicapping service, set to 'Y' or 'Yes' if the imported player's handicap is managed outside the handicapping service (e.g. another national system).
+
+ 
+
+PIN
+
+Player's PIN number, used for keypad only competition score entry.
+
+Default: Lowest value unused 3 to 6 digit number.
+
+Note: if Visitor PIN's are enabled then when importing you may be prompted that a value is not valid for the member or visitor being imported. You may then either continue the import or cancel it.
+
+ 
+
+Title
+
+The Title of the member, expressed as one of the recognised abbreviations accepted by HandicapMaster. These are "Mr", "Mrs", "Miss", "Master", "Ms", "Dr", "Sir", "Lady", "Lord", "Rt.Hon" or "H.R.H"
+
+Default: No title.
+
+ 
+
+Address Line 1 (or Address 1)
+
+The first line of the Member's address
+
+ 
+
+Address Line 2 (or Address 2)
+
+The second line of the Member's address
+
+ 
+
+Address Line 3 (or Address 3)
+
+The third line of the Member's address
+
+ 
+
+Address Line 4 (or Address 4)
+
+The fourth line of the Member's address
+
+ 
+
+Postcode (or  Post Code, or Address 5)
+
+The Post Code of the Member's address
+
+ 
+
+Home Phone (or Telephone 1)
+
+The Member's first telephone number
+
+ 
+
+Mobile Phone (or Telephone 2)
+
+The Member's second telephone number
+
+ 
+
+FAX (or Telephone 3)
+
+The Member's third telephone number
+
+ 
+
+E-Mail Address
+
+The Member's e-mail address
+
+Note if an e-mail address is supplied that is invalid an prompt to import this member without the e-mail address is displayed. Or the import may be cancelled.
+
+ 
+
+Membership No (or Club Number)
+
+The Membership number or code for this member
+
+Default: No Membership Number or Code.
+
+ 
+
+Category
+
+The Membership category to which the member belongs to.
+
+Default: Category of "Unknown".
+
+ 
+
+Officer Title
+
+The Position on the Committee held by this Member.
+
+Default: Not on Committee..
+
+ 
+
+Date Joined
+
+The date the Member joined
+
+ 
+
+Date Renewed
+
+The date the Member last renewed his or her membership. Not applicable if Subscriptions Option installed.
+
+ 
+
+Date Expires
+
+The date the Member's current membership expires. Not applicable if Subscriptions Option installed.
+
+ 
+
+Date Subscription Paid
+
+The date when the member paid their subscription s. Not applicable if Subscriptions Option installed.
+
+ 
+
+Method Of Subscription Payment
+
+A note of how the member paid their fees. Not applicable if Subscriptions Option installed.
+
+ 
+
+Amount Subscription Paid
+
+The amount of money paid when settling subscription fees. Not applicable if Subscriptions Option installed.
+
+
+Amount Locker Rent Paid
+
+The amount of money paid when settling Locker Rent fees. Not applicable if Subscriptions Option installed.
+
+ 
+
+Amount Other Paid
+
+The amount of money paid when settling other subscription fees. Not applicable if Subscriptions Option installed.
+
+ 
+
+National ID Country
+
+The Country where the player was allocated their National ID. Defaults to the same country as the organisation running HandicapMaster.
+
+ 
+
+National ID (or "National Number" or "Golfnet Number")
+
+The player's national ID if they are a member of a Golfing Union WHS service. 8 digits for player's in Ireland and 10 digits for players in England, Scotland or Wales. Some other regions may have alpha numeric ID's.
+
+ 
+
+Card Number
+
+The player's membership card number. This matches field 'Has Other Membership Card' in membership record.
+
+ 
+
+Date of Birth (or DOB)
+
+Member's Date of Birth. 
+
+ 
+
+Locker Number (or Locker No)
+
+The Member's Locker Number.
+
+ 
+
+Default Payment Method
+This defines the default method of payment that is used to record this member’s subscriptions. 
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: No Payment Method
+
+Send Invoice By
+This defines if Subscriptions should be sent by Letter or E-mail to this member. 
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+
+Possible values are:
+
+· For Letters: 'L' or 'LETTER' 
+
+· For E-mail: 'E', 'EM', 'EMAIL' or 'E-MAIL' 
+
+Default: Letter.
+
+Balance Adjustment
+This will allow an initial balance to be set of a new member, or record an adjustment to an existing member's account balance. E.g. If an existing member has an account balance of 100 then a balance adjustment of 50 will result in a balance of 150.
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: No balance adjustment
+
+Negative adjustments are possible.
+
+The value is the GROSS adjustment, and if the VAT rate is non-zero the Net and VAT amounts will be calculated.
+
+Purse2 (or Purse2 Adjustment)
+This will allow an initial competition fee purse balance to be set of a new member, or record an adjustment to an existing member's competition fee purse balance. E.g. If an existing member has a competition fee purse balance of 10 then a balance adjustment of 25 will result in a balance of 35.
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: No adjustment
+
+Negative adjustments are possible.
+
+The value is the GROSS adjustment.
+
+Account Notes
+The accounting notes (if any) associated with the member. 
+
+IMPORTANT the following limitations apply.
+
+· The maximum size of the account  notes text is limited to 4096 characters. 
+
+· The 'Account Notes' text must be a string of text without any linefeed's or new line characters. I.e. a string of text enclosed in double quotes and be part of the same line as the other fields. 
+
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+
+DD ACCOUNT NAME
+The name of the members bank account for direct debit payments.Maximumn of 20 characters
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: blank value
+
+DD ACCOUNT NUMBER
+The  number of the members bank account for direct debit payments. Maximumn of 8 digits.
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: 0
+
+DD SORT CODE
+The  sort code of the members bank account for direct debit payments. Format is either sequence of 6 digits or paris of digits separated with a dash e.g 11-22-33.
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: blank value
+
+DD REFERENCE
+The  member's direct debit reference  for direct debit payments. Maximumn of 18 characters..
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: blank value
+
+DD NEW INSTRUCTION SET UP
+Indicates that the member's direct debit has had an initial instruction set up confirmed by your bank. 
+Either Yes or No or Y or N
+
+Note this is only used if the HandicapMaster Subscriptions Option is installed.
+Default: No
+
+Electronic Communication Consent
+
+Indicates if member has consented to electronic communication.
+
+Either Yes or No or Y or N
+
+ 
+
+Date Communication Consent Changed
+
+Date of the most recent change of Electronic Communication Consent
+
+Parental Consent
+
+Indicates if Parental Consent was given (if required)
+
+Either Yes or No or Y or N
+
+ 
+
+Data Protection Notes
+
+Notes (if any) related to Data protection of the member.
+
+IMPORTANT the following limitations apply.
+
+· The maximum size of the notes text is limited to 4096 characters. 
+
+· The 'Notes' text must be a string of text without any linefeed's or new line characters. I.e. a string of text enclosed in double quotes and be part of the same line as the other fields. 
+
+Notes
+The membership notes (if any) associated with the member. 
+
+IMPORTANT the following limitations apply.
+
+· The maximum size of the notes text is limited to 4096 characters. 
+
+· The 'Notes' text must be a string of text without any linefeed's or new line characters. I.e. a string of text enclosed in double quotes and be part of the same line as the other fields. 
+
+User1, User2, User3
+Values for the three User-defined fields in the membership records. If the columns have been renamed through Global Options, then the names of the fields may also be used.
+
+ 
+Account ID ( or Contact ID)
+This is the unique identifier that links the membership details between the external system and HandicapMaster.
+Note: This field is only applicable when there is an external membership system.
+This field will only apply for Gold and is only imported when the import is run as an ADMIN user.
+Default value is “ “
+
+ 
+
+The fields in the header record must be spelt exactly as in the table above in order to be recognised.
+
+ 
+
+It is necessary for the GIVEN NAME and SURNAME fields to be included, as a minimum. The remainder of the fields are optional.
+
+The fields must follow the order of the header record, but items within the header record can be in any order.
+
+ 
+
+Including a Comma in the data to import
+
+If the data to be imported in to HandicapMaster includes a comma itself, the field should be enclosed in double quotes. For example, to import an address field with a comma, the field should be entered as 
+
+"1 High Street,"
+
+This is how Microsoft Excel will export any data containing a comma when a spreadsheet is saved in "Comma-separated File" format.
+
+To clear a date field in an existing Membership Record
+
+If you wish to clear a date field (such as Date Subscriptions Paid, etc.) use the word CLEAR in the date column in the import file. HandicapMaster will clear the date from the existing membership record.
+
+CLEAR may also be used to remove a previous Title field value from an existing member record or a National ID field value.
+
+CLEAR may also be used to remove a previous E-mail Address value from an existing member record..
+
+CLEAR may also be used to remove a previous Home Phone (or Telephone 1), Mobile Phone (or Telephone 2) or FAX (or Telephone 3) value from an existing member record.
