@@ -218,11 +218,11 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
     if (heroVideo) {
       // Set slower playback rate (0.7x speed)
       heroVideo.playbackRate = 0.7;
-      // Wait 3 seconds then fade in video
+      // Wait 2 seconds then fade in video
       setTimeout(() => {
         heroVideo.play();
         heroVideo.classList.add('visible');
-      }, 3000);
+      }, 2000);
     }
   </script>
 
