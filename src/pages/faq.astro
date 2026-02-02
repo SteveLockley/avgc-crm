@@ -1,0 +1,220 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+// Fetch FAQ entries grouped by category
+let faqByCategory: Record<string, any[]> = {};
+try {
+  if (db) {
+    const result = await db.prepare(
+      `SELECT id, category, question, answer
+       FROM website_faq
+       WHERE published = 1
+       ORDER BY category, sort_order, id`
+    ).all();
+
+    (result.results || []).forEach((faq: any) => {
+      if (!faqByCategory[faq.category]) {
+        faqByCategory[faq.category] = [];
+      }
+      faqByCategory[faq.category].push(faq);
+    });
+  }
+} catch (e) {
+  console.error('Error fetching FAQs:', e);
+}
+
+const categoryLabels: Record<string, string> = {
+  'visitors': 'Visitors',
+  'members': 'Members',
+  'general': 'General'
+};
+
+const categoryOrder = ['general', 'visitors', 'members'];
+const sortedCategories = Object.keys(faqByCategory).sort(
+  (a, b) => categoryOrder.indexOf(a) - categoryOrder.indexOf(b)
+);
+---
+
+<PublicLayout
+  title="FAQ"
+  description="Frequently asked questions about Alnmouth Village Golf Club - visitor information, membership, and more."
+  heroTitle="Frequently Asked Questions"
+  heroSubtitle="Find answers to common questions"
+>
+  <div class="content">
+    <section class="section">
+      {sortedCategories.length > 0 ? (
+        <div class="faq-container">
+          {sortedCategories.map((category) => (
+            <div class="faq-category">
+              <h2 class="category-title">{categoryLabels[category] || category}</h2>
+              <div class="faq-list">
+                {faqByCategory[category].map((faq: any) => (
+                  <details class="faq-item">
+                    <summary class="faq-question">
+                      {faq.question}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"/>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer" set:html={faq.answer} />
+                  </details>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <h2>No FAQs Available</h2>
+          <p>Check back soon or contact us directly with your questions.</p>
+        </div>
+      )}
+
+      <div class="contact-box">
+        <h3>Can't find what you're looking for?</h3>
+        <p>Contact us directly and we'll be happy to help.</p>
+        <div class="contact-actions">
+          <a href="/contact" class="btn btn-primary">Contact Us</a>
+          <a href="tel:01665830370" class="btn btn-secondary">Call 01665 830370</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    .faq-container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .faq-category {
+      margin-bottom: 2.5rem;
+    }
+
+    .category-title {
+      font-size: 1.25rem;
+      color: var(--primary);
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 2px solid var(--primary);
+    }
+
+    .faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .faq-item {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .faq-question {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.25rem;
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 1rem;
+      list-style: none;
+    }
+
+    .faq-question::-webkit-details-marker {
+      display: none;
+    }
+
+    .faq-question svg {
+      width: 20px;
+      height: 20px;
+      color: var(--text-light);
+      flex-shrink: 0;
+      transition: transform 0.2s;
+    }
+
+    .faq-item[open] .faq-question svg {
+      transform: rotate(180deg);
+    }
+
+    .faq-item[open] .faq-question {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .faq-answer {
+      padding: 1.25rem;
+      color: var(--text-light);
+      line-height: 1.6;
+      font-size: 0.95rem;
+      background: var(--surface);
+    }
+
+    .faq-answer :global(p) {
+      margin: 0;
+    }
+
+    .faq-answer :global(p + p) {
+      margin-top: 1rem;
+    }
+
+    .faq-answer :global(a) {
+      color: var(--primary);
+    }
+
+    .contact-box {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      margin-top: 3rem;
+    }
+
+    .contact-box h3 {
+      margin-bottom: 0.5rem;
+    }
+
+    .contact-box p {
+      color: var(--text-light);
+      margin-bottom: 1.5rem;
+    }
+
+    .contact-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--text-light);
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .empty-state h2 {
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .empty-state p {
+      margin: 0;
+    }
+  </style>
+</PublicLayout>

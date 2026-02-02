@@ -1,0 +1,725 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { getAllOpeningHours, formatWeeklyHours } from '../lib/opening-hours';
+
+const db = Astro.locals.runtime?.env?.DB;
+let weeklyHours: { day: string; dayShort: string; time: string; isClosed: boolean }[] = [];
+
+if (db) {
+  try {
+    const hours = await getAllOpeningHours(db, 'Clubhouse');
+    weeklyHours = formatWeeklyHours(hours);
+  } catch (e) {
+    console.error('Failed to fetch opening hours:', e);
+  }
+}
+
+// Images
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg';
+const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_9895.jpg';
+---
+
+<PublicLayout
+  title="Clubhouse"
+  description="Our welcoming clubhouse offers excellent facilities including bar, catering, and function rooms with panoramic views."
+  heroImage={heroImage}
+  heroTitle="The Clubhouse"
+  heroSubtitle="A warm welcome awaits"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <!-- Intro -->
+    <section class="section intro-section">
+      <div class="intro-grid">
+        <div class="intro-content">
+          <span class="intro-label">Welcome</span>
+          <h2 class="section-title">Your Home Away From Home</h2>
+          <p class="intro-text">
+            Our clubhouse provides the perfect setting to relax before or after your round.
+            With stunning views across the course to the sea, comfortable surroundings, and
+            friendly service, it's the ideal place to enjoy the company of fellow golfers.
+          </p>
+          <p class="intro-text">
+            Whether you're looking for a hearty breakfast to start the day, a light lunch
+            between rounds, or evening drinks with friends, our welcoming team is here to serve.
+          </p>
+        </div>
+        <div class="intro-image">
+          <img src={courseImage} alt="View from Alnmouth Village clubhouse" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Facilities -->
+    <section class="section facilities-section">
+      <div class="section-header">
+        <h2 class="section-title">Clubhouse Facilities</h2>
+        <p class="section-subtitle">Everything you need for a great day at the club</p>
+      </div>
+
+      <div class="facilities-grid">
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8h1a4 4 0 0 1 0 8h-1"/>
+              <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
+              <line x1="6" y1="1" x2="6" y2="4"/>
+              <line x1="10" y1="1" x2="10" y2="4"/>
+              <line x1="14" y1="1" x2="14" y2="4"/>
+            </svg>
+          </div>
+          <h3>Members' Bar</h3>
+          <p>A well-stocked bar serving beers, wines, spirits, and soft drinks in comfortable surroundings.</p>
+        </div>
+
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+          </div>
+          <h3>Catering</h3>
+          <p>Delicious food served throughout the day, from light snacks to full meals. Daily specials available.</p>
+        </div>
+
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+            </svg>
+          </div>
+          <h3>Locker Rooms</h3>
+          <p>Secure lockers for members, along with changing facilities and showers.</p>
+        </div>
+
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+          </div>
+          <h3>Panoramic Views</h3>
+          <p>Enjoy stunning views across the links to the Northumberland coast from our lounge.</p>
+        </div>
+
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <h3>TV & Sports</h3>
+          <p>Catch all the major golf tournaments and sporting events on our large screen TVs.</p>
+        </div>
+
+        <div class="facility-card">
+          <div class="facility-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </div>
+          <h3>Golf Shop</h3>
+          <p>Well-stocked golf shop with equipment, clothing, and accessories. Expert advice available.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Food & Drink -->
+    <section class="section food-section">
+      <div class="food-grid">
+        <div class="food-content">
+          <span class="food-label">Dine With Us</span>
+          <h2 class="section-title">Food & Drink</h2>
+          <p>
+            Our catering team provides excellent food and drink throughout the day.
+            Whether you're looking for a quick bite before your round or a full meal
+            after 18 holes, we have something to satisfy every appetite.
+          </p>
+          <h4>Sample Menu Highlights</h4>
+          <ul class="menu-highlights">
+            <li>Full English breakfast</li>
+            <li>Bacon and sausage rolls</li>
+            <li>Homemade soup of the day</li>
+            <li>Club sandwiches and paninis</li>
+            <li>Fish and chips</li>
+            <li>Steak pie with seasonal vegetables</li>
+            <li>Daily specials board</li>
+          </ul>
+          <p class="food-note">
+            Vegetarian and dietary options available. Please ask our staff for details.
+          </p>
+        </div>
+        <div class="food-image">
+          <img src={heroImage} alt="Alnmouth Village Golf Club clubhouse" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Functions -->
+    <section class="section functions-section">
+      <div class="section-header">
+        <h2 class="section-title">Functions & Events</h2>
+        <p class="section-subtitle">The perfect venue for your special occasion</p>
+      </div>
+
+      <div class="functions-grid">
+        <div class="function-card">
+          <div class="function-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="8" r="7"/>
+              <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
+            </svg>
+          </div>
+          <h3>Golf Days</h3>
+          <p>
+            Host your corporate golf day or society event at Alnmouth Village. We offer
+            complete packages including golf, catering, and prizes.
+          </p>
+        </div>
+
+        <div class="function-card">
+          <div class="function-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <h3>Private Functions</h3>
+          <p>
+            Our clubhouse can be hired for private events including birthday parties,
+            anniversaries, wakes, and celebrations of all kinds.
+          </p>
+        </div>
+
+        <div class="function-card">
+          <div class="function-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <h3>Meetings</h3>
+          <p>
+            A unique venue for business meetings and away days, combining work with
+            the opportunity for a round of golf.
+          </p>
+        </div>
+
+        <div class="function-card">
+          <div class="function-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+          </div>
+          <h3>Weddings</h3>
+          <p>
+            With stunning views and excellent catering, our clubhouse provides a
+            memorable setting for wedding receptions.
+          </p>
+        </div>
+      </div>
+
+      <div class="functions-cta">
+        <p>To discuss your event requirements, please contact us:</p>
+        <a href="/contact?enquiry=function" class="btn btn-primary btn-large">Enquire About Functions</a>
+      </div>
+    </section>
+
+    <!-- Opening Hours -->
+    <section class="section hours-section">
+      <div class="hours-box">
+        <h2 class="section-title">Opening Hours</h2>
+        <p class="hours-subtitle">Clubhouse hours may vary seasonally</p>
+
+        <div class="hours-table-wrapper">
+          <table class="hours-table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Hours</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeklyHours.length > 0 ? (
+                weeklyHours.map(h => (
+                  <tr class={h.isClosed ? 'closed' : ''}>
+                    <td>{h.day}</td>
+                    <td>{h.time}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td>Every day</td>
+                  <td>8:00 AM - Dusk</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <p class="hours-notice">
+          Hours may vary during special events and bank holidays. Please call ahead to confirm.
+        </p>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section cta-section">
+      <div class="cta-card">
+        <div class="cta-content">
+          <h2>Visit Us Today</h2>
+          <p>Experience our warm hospitality and excellent facilities</p>
+        </div>
+        <div class="cta-actions">
+          <a href="/contact" class="btn btn-primary btn-large">Get In Touch</a>
+          <a href="tel:01665830370" class="btn btn-outline-light btn-large">Call 01665 830370</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    /* Intro Section */
+    .intro-section {
+      padding-top: 4rem;
+    }
+
+    .intro-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .intro-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .intro-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .intro-content .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .intro-text {
+      color: var(--text-light);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      margin-bottom: 1rem;
+    }
+
+    .intro-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .intro-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Facilities Section */
+    .facilities-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .facilities-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 640px) {
+      .facilities-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .facilities-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .facility-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .facility-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.1);
+    }
+
+    .facility-icon {
+      width: 60px;
+      height: 60px;
+      background: var(--primary);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.25rem;
+    }
+
+    .facility-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--white);
+    }
+
+    .facility-card h3 {
+      font-family: var(--font-display);
+      margin-bottom: 0.75rem;
+      font-size: 1.1rem;
+    }
+
+    .facility-card p {
+      font-size: 0.95rem;
+      color: var(--text-light);
+      margin: 0;
+      line-height: 1.7;
+    }
+
+    /* Food Section */
+    .food-section {
+      padding: 5rem 0;
+    }
+
+    .food-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .food-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .food-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .food-content .section-title {
+      margin-bottom: 1rem;
+    }
+
+    .food-content p {
+      color: var(--text-light);
+      line-height: 1.8;
+      margin-bottom: 1.5rem;
+    }
+
+    .food-content h4 {
+      font-family: var(--font-display);
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .menu-highlights {
+      margin: 0 0 1.5rem;
+      padding-left: 1.25rem;
+      color: var(--text-light);
+    }
+
+    .menu-highlights li {
+      margin-bottom: 0.5rem;
+      line-height: 1.6;
+    }
+
+    .food-note {
+      font-size: 0.9rem;
+      font-style: italic;
+      margin: 0;
+    }
+
+    .food-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .food-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Functions Section */
+    .functions-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .functions-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 768px) {
+      .functions-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .function-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      display: flex;
+      gap: 1.25rem;
+      align-items: flex-start;
+    }
+
+    .function-icon {
+      width: 56px;
+      height: 56px;
+      background: var(--primary);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .function-icon svg {
+      width: 26px;
+      height: 26px;
+      color: var(--white);
+    }
+
+    .function-card h3 {
+      font-family: var(--font-display);
+      color: var(--primary);
+      margin-bottom: 0.5rem;
+      font-size: 1.1rem;
+    }
+
+    .function-card p {
+      color: var(--text-light);
+      font-size: 0.9rem;
+      margin: 0;
+      line-height: 1.7;
+    }
+
+    .functions-cta {
+      text-align: center;
+      margin-top: 2.5rem;
+      padding: 2rem;
+      background: var(--white);
+      border-radius: 16px;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .functions-cta p {
+      margin-bottom: 1.25rem;
+      color: var(--text-light);
+    }
+
+    /* Hours Section */
+    .hours-section {
+      padding: 5rem 0;
+    }
+
+    .hours-box {
+      max-width: 500px;
+      margin: 0 auto;
+      text-align: center;
+    }
+
+    .hours-box .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .hours-subtitle {
+      color: var(--text-light);
+      margin-bottom: 2rem;
+    }
+
+    .hours-table-wrapper {
+      background: var(--white);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .hours-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .hours-table th,
+    .hours-table td {
+      padding: 1rem 1.5rem;
+      text-align: left;
+    }
+
+    .hours-table th {
+      background: var(--primary);
+      color: var(--white);
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .hours-table th:last-child {
+      text-align: right;
+    }
+
+    .hours-table td {
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .hours-table td:last-child {
+      text-align: right;
+      font-weight: 500;
+    }
+
+    .hours-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .hours-table tr.closed td {
+      color: var(--text-light);
+    }
+
+    .hours-table tr.closed td:last-child {
+      color: #991b1b;
+    }
+
+    .hours-notice {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      margin-top: 1.5rem;
+      font-style: italic;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      padding-bottom: 5rem;
+    }
+
+    .cta-card {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      border-radius: 24px;
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--white);
+    }
+
+    @media (min-width: 768px) {
+      .cta-card {
+        padding: 4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .cta-content h2 {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .cta-content p {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .cta-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .cta-actions {
+        margin-top: 0;
+      }
+    }
+
+    .cta-card .btn-primary {
+      background: var(--white);
+      color: var(--primary);
+      border-color: var(--white);
+    }
+
+    .cta-card .btn-primary:hover {
+      background: var(--secondary);
+    }
+
+    .btn-outline-light {
+      background: transparent;
+      color: var(--white);
+      border: 2px solid rgba(255,255,255,0.5);
+    }
+
+    .btn-outline-light:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--white);
+    }
+  </style>
+</PublicLayout>

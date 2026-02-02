@@ -1,0 +1,382 @@
+---
+import MemberLayout from '../../layouts/MemberLayout.astro';
+
+const member = Astro.locals.member;
+const db = Astro.locals.runtime?.env?.DB;
+
+// Fetch full member details from database
+let memberDetails: any = null;
+if (db && member?.id) {
+  try {
+    memberDetails = await db.prepare(
+      `SELECT m.*,
+              mc.name as category_name,
+              mc.description as category_description
+       FROM members m
+       LEFT JOIN membership_categories mc ON m.category_id = mc.id
+       WHERE m.id = ?`
+    ).bind(member.id).first();
+  } catch (e) {
+    console.error('Error fetching member details:', e);
+  }
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return 'Not set';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+function getMembershipStatus(member: any): { label: string; color: string } {
+  if (!member) return { label: 'Unknown', color: 'gray' };
+
+  const status = member.status?.toLowerCase();
+  const statuses: Record<string, { label: string; color: string }> = {
+    'active': { label: 'Active', color: 'green' },
+    'pending': { label: 'Pending', color: 'yellow' },
+    'lapsed': { label: 'Lapsed', color: 'red' },
+    'resigned': { label: 'Resigned', color: 'gray' },
+    'suspended': { label: 'Suspended', color: 'red' },
+  };
+
+  return statuses[status] || { label: member.status || 'Unknown', color: 'gray' };
+}
+
+const status = getMembershipStatus(memberDetails);
+---
+
+<MemberLayout title="My Account">
+  <div class="account-page">
+    {memberDetails ? (
+      <>
+        <div class="account-header">
+          <div class="account-avatar">
+            {memberDetails.first_name?.charAt(0) || 'M'}
+          </div>
+          <div class="account-title">
+            <h2>{memberDetails.first_name} {memberDetails.surname}</h2>
+            <span class={`status-badge status-${status.color}`}>{status.label}</span>
+          </div>
+        </div>
+
+        <div class="account-sections">
+          <section class="account-section">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+              Personal Details
+            </h3>
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="detail-label">Full Name</span>
+                <span class="detail-value">{memberDetails.first_name} {memberDetails.surname}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Email</span>
+                <span class="detail-value">{memberDetails.email || 'Not provided'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Phone</span>
+                <span class="detail-value">{memberDetails.phone || 'Not provided'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Mobile</span>
+                <span class="detail-value">{memberDetails.mobile || 'Not provided'}</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="account-section">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+              Address
+            </h3>
+            <div class="detail-grid single">
+              <div class="detail-item">
+                <span class="detail-label">Address</span>
+                <span class="detail-value">
+                  {memberDetails.address1 || ''}
+                  {memberDetails.address2 && <><br/>{memberDetails.address2}</>}
+                  {memberDetails.town && <><br/>{memberDetails.town}</>}
+                  {memberDetails.county && <><br/>{memberDetails.county}</>}
+                  {memberDetails.postcode && <><br/>{memberDetails.postcode}</>}
+                  {!memberDetails.address1 && 'Not provided'}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="account-section">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+              Membership Details
+            </h3>
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span class="detail-label">Member Number</span>
+                <span class="detail-value">{memberDetails.id}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Category</span>
+                <span class="detail-value">{memberDetails.category_name || 'Not assigned'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Join Date</span>
+                <span class="detail-value">{formatDate(memberDetails.join_date)}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Status</span>
+                <span class="detail-value">
+                  <span class={`status-badge status-${status.color}`}>{status.label}</span>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {memberDetails.handicap && (
+            <section class="account-section">
+              <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="20" x2="12" y2="10"/>
+                  <line x1="18" y1="20" x2="18" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="16"/>
+                </svg>
+                Golf Details
+              </h3>
+              <div class="detail-grid">
+                <div class="detail-item">
+                  <span class="detail-label">Handicap Index</span>
+                  <span class="detail-value">{memberDetails.handicap}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label">CDH Number</span>
+                  <span class="detail-value">{memberDetails.cdh_number || 'Not provided'}</span>
+                </div>
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div class="account-footer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <div>
+            <h4>Need to Update Your Details?</h4>
+            <p>Please contact the club office to update your personal information or membership details.</p>
+            <a href="mailto:Manager@AlnmouthVillage.Golf">Manager@AlnmouthVillage.Golf</a> or call <a href="tel:01665830370">01665 830370</a>
+          </div>
+        </div>
+      </>
+    ) : (
+      <div class="error-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <h2>Unable to Load Details</h2>
+        <p>We couldn't load your membership details. Please try again later or contact the club office.</p>
+      </div>
+    )}
+  </div>
+
+  <style>
+    .account-page {
+      max-width: 800px;
+    }
+
+    .account-header {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .account-avatar {
+      width: 80px;
+      height: 80px;
+      background: var(--primary);
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 2rem;
+      flex-shrink: 0;
+    }
+
+    .account-title h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.5rem;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .status-green {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-yellow {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .status-red {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status-gray {
+      background: #f3f4f6;
+      color: #4b5563;
+    }
+
+    .account-sections {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .account-section {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .account-section h3 {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 0;
+      padding: 1.25rem 1.5rem;
+      font-size: 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      color: var(--primary);
+    }
+
+    .account-section h3 svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      padding: 1.5rem;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 500px) {
+      .detail-grid:not(.single) {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .detail-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .detail-label {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      font-weight: 500;
+    }
+
+    .detail-value {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+
+    .account-footer {
+      display: flex;
+      gap: 1rem;
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .account-footer > svg {
+      width: 24px;
+      height: 24px;
+      color: var(--primary);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .account-footer h4 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+    }
+
+    .account-footer p {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.95rem;
+      color: var(--text-light);
+    }
+
+    .account-footer a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .account-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .error-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .error-state svg {
+      width: 64px;
+      height: 64px;
+      color: #dc2626;
+      margin-bottom: 1rem;
+    }
+
+    .error-state h2 {
+      margin: 0 0 0.5rem 0;
+      color: #dc2626;
+    }
+
+    .error-state p {
+      margin: 0;
+      color: var(--text-light);
+    }
+  </style>
+</MemberLayout>

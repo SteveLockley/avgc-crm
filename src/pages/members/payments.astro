@@ -1,0 +1,703 @@
+---
+import MemberLayout from '../../layouts/MemberLayout.astro';
+
+const member = Astro.locals.member;
+const db = Astro.locals.runtime?.env?.DB;
+
+// Check for payment status from redirect
+const paymentStatus = Astro.url.searchParams.get('status');
+
+// Fetch any outstanding invoices for this member
+let outstandingInvoices: any[] = [];
+if (db && member?.id) {
+  try {
+    const result = await db.prepare(
+      `SELECT i.*,
+              (SELECT SUM(amount) FROM invoice_items WHERE invoice_id = i.id) as total_amount
+       FROM invoices i
+       WHERE i.member_id = ? AND i.status IN ('pending', 'sent', 'overdue')
+       ORDER BY i.created_at DESC`
+    ).bind(member.id).all();
+    outstandingInvoices = result.results || [];
+  } catch (e) {
+    console.error('Error fetching invoices:', e);
+  }
+}
+
+function formatCurrency(amount: number | null): string {
+  if (amount === null || amount === undefined) return '£0.00';
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP'
+  }).format(amount / 100);
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+
+const memberId = member?.id;
+const memberName = `${member?.firstName} ${member?.surname}`;
+---
+
+<MemberLayout title="Make a Payment">
+  <div class="payments-page">
+    {paymentStatus === 'complete' && (
+      <div class="alert alert-success">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <div>
+          <strong>Payment Submitted</strong>
+          <p>Thank you! Your payment has been submitted for processing. You will receive a confirmation email shortly.</p>
+        </div>
+      </div>
+    )}
+
+    <div class="payments-intro">
+      <p>Make secure online payments for your membership subscriptions and other club fees using our DOJO payment system.</p>
+    </div>
+
+    {outstandingInvoices.length > 0 && (
+      <div class="outstanding-section">
+        <h2>Outstanding Invoices</h2>
+        <div class="invoice-list">
+          {outstandingInvoices.map(invoice => (
+            <div class="invoice-card">
+              <div class="invoice-info">
+                <span class="invoice-number">Invoice #{invoice.invoice_number || invoice.id}</span>
+                <span class="invoice-period">{invoice.period}</span>
+                {invoice.due_date && (
+                  <span class="invoice-due">Due: {formatDate(invoice.due_date)}</span>
+                )}
+              </div>
+              <div class="invoice-actions">
+                <span class="amount">{formatCurrency(invoice.total_amount)}</span>
+                <button
+                  type="button"
+                  class="btn btn-pay"
+                  data-amount={invoice.total_amount}
+                  data-reference={`INV-${invoice.invoice_number || invoice.id}`}
+                  data-description={`Invoice ${invoice.invoice_number || invoice.id} - ${invoice.period || 'Payment'}`}
+                  onclick="payInvoice(this)"
+                >
+                  Pay Now
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div class="payment-options">
+      <div class="payment-card primary">
+        <div class="payment-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+            <line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+        </div>
+        <h2>Pay Online with DOJO</h2>
+        <p>Make a secure payment online using your debit or credit card. All major cards accepted.</p>
+
+        <div class="custom-payment">
+          <label for="custom-amount">Enter amount to pay:</label>
+          <div class="amount-input-group">
+            <span class="currency-symbol">£</span>
+            <input
+              type="number"
+              id="custom-amount"
+              min="1"
+              step="0.01"
+              placeholder="0.00"
+              class="amount-input"
+            />
+          </div>
+          <button
+            type="button"
+            id="pay-custom-btn"
+            class="btn btn-primary"
+            onclick="payCustomAmount()"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+              <line x1="1" y1="10" x2="23" y2="10"/>
+            </svg>
+            Pay with DOJO
+          </button>
+        </div>
+
+        <div class="payment-features">
+          <span class="feature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            Visa & Mastercard
+          </span>
+          <span class="feature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            Secure & Encrypted
+          </span>
+          <span class="feature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            Instant Confirmation
+          </span>
+        </div>
+      </div>
+
+      <div class="payment-card">
+        <div class="payment-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 4H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+            <path d="M7 15h4"/>
+            <path d="M15 15h2"/>
+            <path d="M7 11h10"/>
+          </svg>
+        </div>
+        <h2>Bank Transfer</h2>
+        <p>Pay directly via bank transfer using the details below. Please use your membership number as the reference.</p>
+        <div class="bank-details">
+          <div class="detail-row">
+            <span class="label">Bank:</span>
+            <span class="value">HSBC UK Bank Plc</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Account Name:</span>
+            <span class="value">Alnmouth Village Golf Club Ltd</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Sort Code:</span>
+            <span class="value">40-34-18</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Account Number:</span>
+            <span class="value">94323203</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Reference:</span>
+            <span class="value">Member #{memberId}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="payment-card">
+        <div class="payment-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+        <h2>Pay at the Clubhouse</h2>
+        <p>Visit the clubhouse to make a payment in person. We accept cash, card, and cheque payments.</p>
+        <div class="clubhouse-info">
+          <p><strong>Opening Hours:</strong></p>
+          <p>Daily: 8am - Dusk</p>
+          <p class="note">Card payments available during staffed hours</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="payment-help">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <div>
+        <h4>Need Help with Payments?</h4>
+        <p>If you have questions about your invoice or need assistance with payments, please contact the club office.</p>
+        <div class="contact-options">
+          <a href="mailto:Manager@AlnmouthVillage.Golf">Manager@AlnmouthVillage.Golf</a>
+          <span>|</span>
+          <a href="tel:01665830370">01665 830370</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="payment-loading" class="loading-overlay" style="display: none;">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Preparing your payment...</p>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ memberId, memberName }}>
+    async function initiatePayment(amount, reference, description) {
+      const loadingEl = document.getElementById('payment-loading');
+      loadingEl.style.display = 'flex';
+
+      try {
+        const response = await fetch('/api/dojo-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: amount,
+            reference: reference || `AVGC-${memberId}-${Date.now()}`,
+            description: description || `Payment from ${memberName}`
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to create payment');
+        }
+
+        // Redirect to DOJO checkout
+        window.location.href = data.checkoutUrl;
+      } catch (error) {
+        loadingEl.style.display = 'none';
+        alert('Unable to process payment: ' + error.message);
+      }
+    }
+
+    function payInvoice(button) {
+      const amount = parseInt(button.dataset.amount, 10);
+      const reference = button.dataset.reference;
+      const description = button.dataset.description;
+      initiatePayment(amount, reference, description);
+    }
+
+    function payCustomAmount() {
+      const input = document.getElementById('custom-amount');
+      const pounds = parseFloat(input.value);
+
+      if (!pounds || pounds < 1) {
+        alert('Please enter an amount of at least £1.00');
+        input.focus();
+        return;
+      }
+
+      const pence = Math.round(pounds * 100);
+      initiatePayment(pence, null, `Custom payment - £${pounds.toFixed(2)}`);
+    }
+  </script>
+
+  <style>
+    .payments-page {
+      max-width: 900px;
+    }
+
+    .alert {
+      display: flex;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert svg {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .alert strong {
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+
+    .alert p {
+      margin: 0;
+      font-size: 0.9rem;
+    }
+
+    .alert-success {
+      background: #d1fae5;
+      border: 1px solid #10b981;
+      color: #065f46;
+    }
+
+    .alert-success svg {
+      color: #10b981;
+    }
+
+    .payments-intro {
+      margin-bottom: 2rem;
+    }
+
+    .payments-intro p {
+      font-size: 1.1rem;
+      color: var(--text-light);
+      margin: 0;
+    }
+
+    .outstanding-section {
+      margin-bottom: 2rem;
+    }
+
+    .outstanding-section h2 {
+      font-size: 1.1rem;
+      margin: 0 0 1rem 0;
+      color: var(--primary);
+    }
+
+    .invoice-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .invoice-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      background: #fef3c7;
+      border: 1px solid #f59e0b;
+      border-radius: 10px;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .invoice-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .invoice-number {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .invoice-period,
+    .invoice-due {
+      font-size: 0.85rem;
+      color: #92400e;
+    }
+
+    .invoice-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .amount {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #92400e;
+    }
+
+    .btn-pay {
+      background: #1e5631;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    .btn-pay:hover {
+      background: #164024;
+    }
+
+    .payment-options {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .payment-options {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .payment-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .payment-card.primary {
+      background: var(--primary-light);
+      border-color: var(--primary);
+    }
+
+    .payment-icon {
+      width: 56px;
+      height: 56px;
+      background: var(--surface);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .payment-card.primary .payment-icon {
+      background: var(--primary);
+    }
+
+    .payment-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--primary);
+    }
+
+    .payment-card.primary .payment-icon svg {
+      color: white;
+    }
+
+    .payment-card h2 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1.1rem;
+    }
+
+    .payment-card > p {
+      margin: 0 0 1.25rem 0;
+      font-size: 0.9rem;
+      color: var(--text-light);
+      line-height: 1.5;
+    }
+
+    .custom-payment {
+      margin-bottom: 1.25rem;
+    }
+
+    .custom-payment label {
+      display: block;
+      font-size: 0.9rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+
+    .amount-input-group {
+      display: flex;
+      align-items: center;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+    }
+
+    .currency-symbol {
+      padding: 0.75rem;
+      background: var(--surface);
+      color: var(--text-light);
+      font-weight: 500;
+    }
+
+    .amount-input {
+      flex: 1;
+      border: none;
+      padding: 0.75rem;
+      font-size: 1rem;
+      outline: none;
+    }
+
+    .amount-input:focus {
+      box-shadow: none;
+    }
+
+    .payment-features {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .feature {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+
+    .feature svg {
+      width: 16px;
+      height: 16px;
+      color: var(--primary);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.875rem 1.5rem;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      width: 100%;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+    }
+
+    .bank-details {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .detail-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .detail-row:first-child {
+      padding-top: 0;
+    }
+
+    .detail-row .label {
+      color: var(--text-light);
+    }
+
+    .detail-row .value {
+      font-weight: 500;
+    }
+
+    .clubhouse-info {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .clubhouse-info p {
+      margin: 0 0 0.5rem 0;
+    }
+
+    .clubhouse-info .note {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin: 0;
+    }
+
+    .payment-help {
+      display: flex;
+      gap: 1rem;
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
+
+    .payment-help > svg {
+      width: 24px;
+      height: 24px;
+      color: var(--primary);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .payment-help h4 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+    }
+
+    .payment-help p {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.9rem;
+      color: var(--text-light);
+    }
+
+    .contact-options {
+      display: flex;
+      gap: 0.75rem;
+      font-size: 0.9rem;
+    }
+
+    .contact-options a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .contact-options a:hover {
+      text-decoration: underline;
+    }
+
+    .contact-options span {
+      color: var(--text-light);
+    }
+
+    /* Loading overlay */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .loading-content {
+      background: white;
+      padding: 2rem;
+      border-radius: 16px;
+      text-align: center;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid var(--surface);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-content p {
+      margin: 0;
+      color: var(--text);
+      font-weight: 500;
+    }
+  </style>
+</MemberLayout>

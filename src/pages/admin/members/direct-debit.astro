@@ -1,0 +1,608 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatDate, type Member } from '../../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+interface ConsolidationResult {
+  matched: Array<{
+    ddMemberNo: string;
+    ddName: string;
+    crmId: number;
+    crmName: string;
+    crmPaymentMethod: string | null;
+    paymentMethodCorrect: boolean;
+  }>;
+  ddNotInCrm: Array<{
+    ddMemberNo: string;
+    ddName: string;
+    ddStatus: string;
+    ddMembershipType: string;
+  }>;
+  crmNotInDd: Array<{
+    crmId: number;
+    crmName: string;
+    crmPaymentMethod: string | null;
+    crmDdMemberId: string | null;
+  }>;
+  updated: number;
+  errors: string[];
+}
+
+let result: ConsolidationResult | null = null;
+let error = '';
+let lastImported: { imported_at: string; imported_by: string | null } | null = null;
+
+// Parse CSV line handling quoted fields
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim());
+  return values;
+}
+
+// Normalize name for matching
+function normalizeName(name: string | null): string {
+  if (!name) return '';
+  return name.toLowerCase().trim().replace(/[^a-z]/g, '');
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const file = formData.get('ddfile') as File;
+  const mode = formData.get('mode') as string; // 'preview' or 'apply'
+
+  if (!file || file.size === 0) {
+    error = 'Please select a Direct Debit CSV file';
+  } else {
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(line => line.trim());
+
+      if (lines.length < 2) {
+        error = 'CSV file appears to be empty or has no data rows';
+      } else {
+        const header = parseCSVLine(lines[0]);
+
+        // Find column indices
+        const memberNoIdx = header.findIndex(h => h.toLowerCase().includes('member number'));
+        const firstNameIdx = header.findIndex(h => h.toLowerCase().includes('first name'));
+        const surnameIdx = header.findIndex(h => h.toLowerCase().includes('surname'));
+        const statusIdx = header.findIndex(h => h.toLowerCase() === 'status');
+        const membershipTypeIdx = header.findIndex(h => h.toLowerCase().includes('membership type'));
+
+        if (memberNoIdx === -1 || firstNameIdx === -1 || surnameIdx === -1) {
+          error = 'CSV file must contain "Member number", "First name", and "Surname" columns';
+        } else {
+          // Parse DD records
+          const ddRecords: Array<{
+            memberNo: string;
+            firstName: string;
+            surname: string;
+            status: string;
+            membershipType: string;
+            normalizedKey: string;
+          }> = [];
+
+          for (let i = 1; i < lines.length; i++) {
+            const values = parseCSVLine(lines[i]);
+            if (values.length > Math.max(memberNoIdx, firstNameIdx, surnameIdx)) {
+              const memberNo = values[memberNoIdx]?.trim();
+              const firstName = values[firstNameIdx]?.trim();
+              const surname = values[surnameIdx]?.trim();
+              const status = statusIdx >= 0 ? values[statusIdx]?.trim() || '' : '';
+              const membershipType = membershipTypeIdx >= 0 ? values[membershipTypeIdx]?.trim() || '' : '';
+
+              if (memberNo && surname) {
+                ddRecords.push({
+                  memberNo,
+                  firstName: firstName || '',
+                  surname,
+                  status,
+                  membershipType,
+                  normalizedKey: normalizeName(surname) + '|' + normalizeName(firstName)
+                });
+              }
+            }
+          }
+
+          // Get all CRM members
+          const crmMembersResult = await db.prepare(
+            `SELECT id, first_name, surname, default_payment_method, direct_debit_member_id
+             FROM members
+             ORDER BY surname, first_name`
+          ).all();
+          const crmMembers = (crmMembersResult.results || []) as Array<{
+            id: number;
+            first_name: string;
+            surname: string;
+            default_payment_method: string | null;
+            direct_debit_member_id: string | null;
+          }>;
+
+          // Create lookup map for CRM members by normalized name
+          const crmByName = new Map<string, typeof crmMembers[0][]>();
+          for (const member of crmMembers) {
+            const key = normalizeName(member.surname) + '|' + normalizeName(member.first_name);
+            if (!crmByName.has(key)) {
+              crmByName.set(key, []);
+            }
+            crmByName.get(key)!.push(member);
+          }
+
+          // Track which CRM members are matched
+          const matchedCrmIds = new Set<number>();
+
+          // Build results
+          result = {
+            matched: [],
+            ddNotInCrm: [],
+            crmNotInDd: [],
+            updated: 0,
+            errors: []
+          };
+
+          // Process DD records
+          for (const dd of ddRecords) {
+            const crmMatches = crmByName.get(dd.normalizedKey);
+
+            if (crmMatches && crmMatches.length > 0) {
+              // Take first match (could be improved for duplicates)
+              const crm = crmMatches[0];
+              matchedCrmIds.add(crm.id);
+
+              const isClubwise = crm.default_payment_method === 'Clubwise Direct Debit';
+
+              result.matched.push({
+                ddMemberNo: dd.memberNo,
+                ddName: `${dd.firstName} ${dd.surname}`,
+                crmId: crm.id,
+                crmName: `${crm.first_name} ${crm.surname}`,
+                crmPaymentMethod: crm.default_payment_method,
+                paymentMethodCorrect: isClubwise
+              });
+
+              // Update CRM if applying
+              if (mode === 'apply' && crm.direct_debit_member_id !== dd.memberNo) {
+                try {
+                  await db.prepare(
+                    `UPDATE members SET direct_debit_member_id = ?, updated_at = datetime('now') WHERE id = ?`
+                  ).bind(dd.memberNo, crm.id).run();
+                  result.updated++;
+                } catch (e: any) {
+                  result.errors.push(`Failed to update ${crm.first_name} ${crm.surname}: ${e.message}`);
+                }
+              }
+            } else {
+              result.ddNotInCrm.push({
+                ddMemberNo: dd.memberNo,
+                ddName: `${dd.firstName} ${dd.surname}`,
+                ddStatus: dd.status,
+                ddMembershipType: dd.membershipType
+              });
+            }
+          }
+
+          // Find CRM members with Clubwise DD payment type not in DD file
+          for (const crm of crmMembers) {
+            if (crm.default_payment_method === 'Clubwise Direct Debit' && !matchedCrmIds.has(crm.id)) {
+              result.crmNotInDd.push({
+                crmId: crm.id,
+                crmName: `${crm.first_name} ${crm.surname}`,
+                crmPaymentMethod: crm.default_payment_method,
+                crmDdMemberId: crm.direct_debit_member_id
+              });
+            }
+          }
+
+          // Log the consolidation
+          if (mode === 'apply') {
+            await db.prepare(
+              `INSERT INTO audit_log (user_email, action, entity_type, details)
+               VALUES (?, 'dd_consolidation', 'member', ?)`
+            ).bind(
+              Astro.locals.user?.email || 'system',
+              JSON.stringify({
+                matched: result.matched.length,
+                updated: result.updated,
+                ddNotInCrm: result.ddNotInCrm.length,
+                crmNotInDd: result.crmNotInDd.length,
+                file: file.name
+              })
+            ).run();
+          }
+
+          // Save consolidation results to database
+          await db.prepare(
+            `INSERT INTO dd_consolidation (imported_by, matched_count, dd_not_in_crm_count, crm_not_in_dd_count,
+             matched_json, dd_not_in_crm_json, crm_not_in_dd_json, errors_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            Astro.locals.user?.email || 'system',
+            result.matched.length,
+            result.ddNotInCrm.length,
+            result.crmNotInDd.length,
+            JSON.stringify(result.matched),
+            JSON.stringify(result.ddNotInCrm),
+            JSON.stringify(result.crmNotInDd),
+            JSON.stringify(result.errors)
+          ).run();
+        }
+      }
+    } catch (e: any) {
+      error = `Failed to process file: ${e.message}`;
+    }
+  }
+}
+
+// Load previous consolidation results if no new data
+if (!result && !error) {
+  const savedResult = await db.prepare(
+    `SELECT * FROM dd_consolidation ORDER BY imported_at DESC LIMIT 1`
+  ).first<{
+    imported_at: string;
+    imported_by: string | null;
+    matched_count: number;
+    dd_not_in_crm_count: number;
+    crm_not_in_dd_count: number;
+    matched_json: string | null;
+    dd_not_in_crm_json: string | null;
+    crm_not_in_dd_json: string | null;
+    errors_json: string | null;
+  }>();
+
+  if (savedResult) {
+    lastImported = { imported_at: savedResult.imported_at, imported_by: savedResult.imported_by };
+    result = {
+      matched: savedResult.matched_json ? JSON.parse(savedResult.matched_json) : [],
+      ddNotInCrm: savedResult.dd_not_in_crm_json ? JSON.parse(savedResult.dd_not_in_crm_json) : [],
+      crmNotInDd: savedResult.crm_not_in_dd_json ? JSON.parse(savedResult.crm_not_in_dd_json) : [],
+      updated: 0,
+      errors: savedResult.errors_json ? JSON.parse(savedResult.errors_json) : []
+    };
+  }
+}
+
+// Get current stats
+const ddMemberCount = await db.prepare(
+  `SELECT COUNT(*) as count FROM members WHERE direct_debit_member_id IS NOT NULL AND direct_debit_member_id != ''`
+).first<{ count: number }>();
+
+const clubwiseCount = await db.prepare(
+  `SELECT COUNT(*) as count FROM members WHERE default_payment_method = 'Clubwise Direct Debit'`
+).first<{ count: number }>();
+
+// Calculate if there are discrepancies (only relevant after preview)
+const hasDiscrepancies = result ? (
+  result.ddNotInCrm.length > 0 ||
+  result.crmNotInDd.length > 0 ||
+  result.matched.filter(m => !m.paymentMethodCorrect).length > 0
+) : false;
+
+const discrepancyReasons: string[] = [];
+if (result) {
+  if (result.ddNotInCrm.length > 0) {
+    discrepancyReasons.push(`${result.ddNotInCrm.length} DD members not found in CRM`);
+  }
+  if (result.crmNotInDd.length > 0) {
+    discrepancyReasons.push(`${result.crmNotInDd.length} CRM Clubwise DD members not in DD file`);
+  }
+  const incorrectPaymentCount = result.matched.filter(m => !m.paymentMethodCorrect).length;
+  if (incorrectPaymentCount > 0) {
+    discrepancyReasons.push(`${incorrectPaymentCount} matched members have incorrect payment method`);
+  }
+}
+---
+
+<AdminLayout title="Direct Debit Consolidation">
+  <style>
+    .stats-row {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-box {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      flex: 1;
+    }
+    .stat-box h4 {
+      font-size: 0.875rem;
+      color: #666;
+      margin: 0 0 0.5rem 0;
+    }
+    .stat-box .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #1e5631;
+    }
+    .result-section {
+      margin-top: 1.5rem;
+    }
+    .result-section h3 {
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .result-section .count {
+      background: #e0e0e0;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .result-section.success h3 .count { background: #d4edda; color: #155724; }
+    .result-section.warning h3 .count { background: #fff3cd; color: #856404; }
+    .result-section.danger h3 .count { background: #f8d7da; color: #721c24; }
+    .result-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    .result-table th, .result-table td {
+      padding: 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    .result-table th {
+      background: #f4f4f4;
+      font-weight: 600;
+    }
+    .badge-correct { background: #d4edda; color: #155724; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .badge-incorrect { background: #f8d7da; color: #721c24; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+    .max-height-table {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  </style>
+
+  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+    <a href="/admin/members" class="btn btn-secondary">&larr; Back to Members</a>
+  </div>
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  <div class="stats-row">
+    <div class="stat-box">
+      <h4>Members with DD ID</h4>
+      <div class="value">{ddMemberCount?.count || 0}</div>
+    </div>
+    <div class="stat-box">
+      <h4>Clubwise DD Payment Type</h4>
+      <div class="value">{clubwiseCount?.count || 0}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Import Direct Debit File</h3>
+    </div>
+
+    <p style="margin-bottom: 1rem; color: #666;">
+      Upload the Clubwise Direct Debit member list CSV file to consolidate with the CRM.
+      Members are matched by <strong>surname and first name</strong>.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data">
+      <div class="form-group">
+        <label class="form-label" for="ddfile">Direct Debit CSV File</label>
+        <input type="file" name="ddfile" id="ddfile" accept=".csv" class="form-input" required />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="mode">Mode</label>
+        <select name="mode" id="mode" class="form-input">
+          <option value="preview">Preview Only (don't update CRM)</option>
+          <option value="apply" disabled={hasDiscrepancies}>Apply Updates (save DD Member IDs to CRM)</option>
+        </select>
+      </div>
+
+      {hasDiscrepancies && (
+        <div class="alert alert-warning" style="margin-bottom: 1rem;">
+          <strong>Apply mode is disabled</strong> - resolve these discrepancies first:
+          <ul style="margin: 0.5rem 0 0 1rem;">
+            {discrepancyReasons.map(reason => <li>{reason}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {result && !hasDiscrepancies && (
+        <div class="alert alert-success" style="margin-bottom: 1rem;">
+          <strong>No discrepancies found.</strong> You can now select "Apply Updates" and re-run to save the DD Member IDs to the CRM.
+        </div>
+      )}
+
+      <button type="submit" class="btn btn-primary">Run Consolidation</button>
+    </form>
+  </div>
+
+  {result && (
+    <div class="card" style="margin-top: 1.5rem;">
+      <div class="card-header">
+        <h3 class="card-title">Consolidation Results</h3>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+          {lastImported && (
+            <span style="font-size: 0.875rem; color: #666;">
+              Last imported: {formatDate(lastImported.imported_at)}
+              {lastImported.imported_by && ` by ${lastImported.imported_by}`}
+            </span>
+          )}
+          {result.updated > 0 && (
+            <span class="badge badge-success">{result.updated} members updated</span>
+          )}
+        </div>
+      </div>
+
+      {result.errors.length > 0 && (
+        <div class="alert alert-error" style="margin-bottom: 1rem;">
+          <strong>Errors:</strong>
+          <ul style="margin: 0.5rem 0 0 1rem;">
+            {result.errors.map(err => <li>{err}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <!-- Matched Members -->
+      <div class="result-section success">
+        <h3>
+          Matched Members
+          <span class="count">{result.matched.length}</span>
+        </h3>
+        {result.matched.length > 0 && (
+          <div class="max-height-table">
+            <table class="result-table">
+              <thead>
+                <tr>
+                  <th>DD Member No</th>
+                  <th>DD Name</th>
+                  <th>CRM Name</th>
+                  <th>Payment Method</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.matched.map(m => (
+                  <tr>
+                    <td><code>{m.ddMemberNo}</code></td>
+                    <td>{m.ddName}</td>
+                    <td>
+                      <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                    </td>
+                    <td>
+                      {m.paymentMethodCorrect ? (
+                        <span class="badge-correct">Clubwise DD</span>
+                      ) : (
+                        <span class="badge-incorrect">{m.crmPaymentMethod || 'Not set'}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {result.matched.filter(m => !m.paymentMethodCorrect).length > 0 && (
+          <p style="margin-top: 0.5rem; color: #856404; font-size: 0.875rem;">
+            ⚠️ {result.matched.filter(m => !m.paymentMethodCorrect).length} matched members don't have "Clubwise Direct Debit" as their payment method.
+          </p>
+        )}
+      </div>
+
+      <!-- DD Not in CRM -->
+      <div class="result-section warning">
+        <h3>
+          DD Members Not Found in CRM
+          <span class="count">{result.ddNotInCrm.length}</span>
+        </h3>
+        {result.ddNotInCrm.length > 0 ? (
+          <div class="max-height-table">
+            <table class="result-table">
+              <thead>
+                <tr>
+                  <th>DD Member No</th>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Membership Type</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.ddNotInCrm.map(m => (
+                  <tr>
+                    <td><code>{m.ddMemberNo}</code></td>
+                    <td>{m.ddName}</td>
+                    <td>{m.ddStatus}</td>
+                    <td>{m.ddMembershipType}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p style="color: #666;">All DD members were matched in the CRM.</p>
+        )}
+      </div>
+
+      <!-- CRM Clubwise Not in DD -->
+      <div class="result-section danger">
+        <h3>
+          CRM Members with Clubwise DD Not in DD File
+          <span class="count">{result.crmNotInDd.length}</span>
+        </h3>
+        {result.crmNotInDd.length > 0 ? (
+          <>
+            <p style="color: #721c24; font-size: 0.875rem; margin-bottom: 0.5rem;">
+              These members have "Clubwise Direct Debit" as their payment method but were not found in the DD file.
+              They may need to be reviewed.
+            </p>
+            <div class="max-height-table">
+              <table class="result-table">
+                <thead>
+                  <tr>
+                    <th>CRM ID</th>
+                    <th>Name</th>
+                    <th>DD Member ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.crmNotInDd.map(m => (
+                    <tr>
+                      <td>{m.crmId}</td>
+                      <td>
+                        <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                      </td>
+                      <td>{m.crmDdMemberId || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p style="color: #666;">All CRM members with Clubwise DD payment type were found in the DD file.</p>
+        )}
+      </div>
+
+      <!-- Summary -->
+      <div style="margin-top: 1.5rem; padding: 1rem; background: #f4f4f4; border-radius: 4px;">
+        <h4 style="margin: 0 0 0.5rem 0;">Summary</h4>
+        <ul style="margin: 0; padding-left: 1.5rem;">
+          <li><strong>{result.matched.length}</strong> DD members matched with CRM</li>
+          <li><strong>{result.ddNotInCrm.length}</strong> DD members not found in CRM</li>
+          <li><strong>{result.crmNotInDd.length}</strong> CRM Clubwise DD members not in DD file</li>
+          {result.updated > 0 && <li><strong>{result.updated}</strong> CRM records updated with DD Member ID</li>}
+        </ul>
+      </div>
+    </div>
+  )}
+
+  <div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+      <h3 class="card-title">Expected CSV Format</h3>
+    </div>
+    <p style="font-size: 0.875rem; color: #666;">
+      The Direct Debit CSV file should contain at least these columns:
+    </p>
+    <ul style="font-size: 0.875rem; color: #666; margin: 0.5rem 0 0 1.5rem;">
+      <li><strong>Member number</strong> - The DD system member ID (e.g., EAV10007)</li>
+      <li><strong>First name</strong> - Member's first name</li>
+      <li><strong>Surname</strong> - Member's surname</li>
+      <li><strong>Status</strong> (optional) - Member status in DD system</li>
+      <li><strong>Membership Type</strong> (optional) - Type of membership</li>
+    </ul>
+  </div>
+</AdminLayout>

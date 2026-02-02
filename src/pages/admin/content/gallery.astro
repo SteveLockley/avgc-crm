@@ -1,0 +1,616 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let images: any[] = [];
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+const categories = [
+  { value: 'course', label: 'Course' },
+  { value: 'clubhouse', label: 'Clubhouse' },
+  { value: 'events', label: 'Events' },
+  { value: 'general', label: 'General' }
+];
+
+// Handle form submission
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const formAction = formData.get('_action');
+
+  try {
+    if (formAction === 'create') {
+      const imageUrl = formData.get('image_url')?.toString().trim();
+      const title = formData.get('title')?.toString().trim() || null;
+      const description = formData.get('description')?.toString().trim() || null;
+      const category = formData.get('category')?.toString() || 'general';
+      const sortOrder = parseInt(formData.get('sort_order')?.toString() || '0');
+
+      if (!imageUrl) {
+        message = 'Image URL is required.';
+        messageType = 'error';
+      } else {
+        await db.prepare(
+          `INSERT INTO website_gallery (image_url, title, description, category, sort_order, published)
+           VALUES (?, ?, ?, ?, ?, 1)`
+        ).bind(imageUrl, title, description, category, sortOrder).run();
+        message = 'Image added successfully.';
+        messageType = 'success';
+      }
+    } else if (formAction === 'update') {
+      const id = formData.get('id');
+      const imageUrl = formData.get('image_url')?.toString().trim();
+      const title = formData.get('title')?.toString().trim() || null;
+      const description = formData.get('description')?.toString().trim() || null;
+      const category = formData.get('category')?.toString() || 'general';
+      const sortOrder = parseInt(formData.get('sort_order')?.toString() || '0');
+      const published = formData.get('published') === 'on' ? 1 : 0;
+
+      await db.prepare(
+        `UPDATE website_gallery
+         SET image_url = ?, title = ?, description = ?, category = ?, sort_order = ?, published = ?
+         WHERE id = ?`
+      ).bind(imageUrl, title, description, category, sortOrder, published, id).run();
+      message = 'Image updated successfully.';
+      messageType = 'success';
+    } else if (formAction === 'delete') {
+      const id = formData.get('id');
+      await db.prepare('DELETE FROM website_gallery WHERE id = ?').bind(id).run();
+      message = 'Image deleted successfully.';
+      messageType = 'success';
+    }
+  } catch (e: any) {
+    message = e.message || 'An error occurred.';
+    messageType = 'error';
+  }
+}
+
+// Fetch images
+if (db) {
+  try {
+    const result = await db.prepare(
+      'SELECT * FROM website_gallery ORDER BY category, sort_order, id'
+    ).all();
+    images = result.results || [];
+  } catch (e) {
+    console.error('Error fetching gallery:', e);
+  }
+}
+
+// Group images by category
+const imagesByCategory = images.reduce((acc: Record<string, any[]>, img) => {
+  const cat = img.category || 'general';
+  if (!acc[cat]) acc[cat] = [];
+  acc[cat].push(img);
+  return acc;
+}, {});
+---
+
+<AdminLayout title="Image Gallery">
+  <div class="gallery-admin">
+    {message && (
+      <div class={`alert alert-${messageType}`}>
+        {message}
+      </div>
+    )}
+
+    <div class="gallery-header">
+      <p>{images.length} image{images.length !== 1 ? 's' : ''} in gallery</p>
+      <button type="button" class="btn btn-primary" onclick="document.getElementById('add-modal').showModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Add Image
+      </button>
+    </div>
+
+    {images.length > 0 ? (
+      <div class="gallery-categories">
+        {categories.map(cat => imagesByCategory[cat.value]?.length > 0 && (
+          <div class="gallery-category">
+            <h3 class="category-title">{cat.label}</h3>
+            <div class="image-grid">
+              {imagesByCategory[cat.value].map((img: any) => (
+                <div class="image-card">
+                  <div class="image-preview">
+                    <img src={img.image_url} alt={img.title || 'Gallery image'} loading="lazy" />
+                    {!img.published && <span class="draft-badge">Draft</span>}
+                  </div>
+                  <div class="image-info">
+                    <span class="image-title">{img.title || 'Untitled'}</span>
+                    <div class="image-actions">
+                      <button
+                        type="button"
+                        class="action-btn"
+                        title="Edit"
+                        onclick={`openEditModal(${JSON.stringify(img)})`}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+                      <form method="POST" class="delete-form" onsubmit="return confirm('Delete this image?')">
+                        <input type="hidden" name="_action" value="delete" />
+                        <input type="hidden" name="id" value={img.id} />
+                        <button type="submit" class="action-btn delete" title="Delete">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                          </svg>
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <h3>No Images Yet</h3>
+        <p>Add images to your gallery to showcase the club.</p>
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('add-modal').showModal()">
+          Add First Image
+        </button>
+      </div>
+    )}
+
+    <!-- Add Image Modal -->
+    <dialog id="add-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Add Image</h2>
+          <button type="button" class="close-btn" onclick="document.getElementById('add-modal').close()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <form method="POST">
+          <input type="hidden" name="_action" value="create" />
+
+          <div class="form-group">
+            <label for="add-image-url">Image URL *</label>
+            <input type="url" id="add-image-url" name="image_url" required placeholder="https://..." />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="add-title">Title</label>
+              <input type="text" id="add-title" name="title" placeholder="Image title..." />
+            </div>
+            <div class="form-group">
+              <label for="add-category">Category</label>
+              <select id="add-category" name="category">
+                {categories.map(cat => (
+                  <option value={cat.value}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="add-description">Description</label>
+            <textarea id="add-description" name="description" rows="2" placeholder="Optional description..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="add-sort-order">Sort Order</label>
+            <input type="number" id="add-sort-order" name="sort_order" value="0" min="0" />
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-modal').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Add Image</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- Edit Image Modal -->
+    <dialog id="edit-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Edit Image</h2>
+          <button type="button" class="close-btn" onclick="document.getElementById('edit-modal').close()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <form method="POST">
+          <input type="hidden" name="_action" value="update" />
+          <input type="hidden" id="edit-id" name="id" />
+
+          <div class="form-group">
+            <label for="edit-image-url">Image URL *</label>
+            <input type="url" id="edit-image-url" name="image_url" required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="edit-title">Title</label>
+              <input type="text" id="edit-title" name="title" />
+            </div>
+            <div class="form-group">
+              <label for="edit-category">Category</label>
+              <select id="edit-category" name="category">
+                {categories.map(cat => (
+                  <option value={cat.value}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="edit-description">Description</label>
+            <textarea id="edit-description" name="description" rows="2"></textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="edit-sort-order">Sort Order</label>
+              <input type="number" id="edit-sort-order" name="sort_order" min="0" />
+            </div>
+            <div class="form-group checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="edit-published" name="published" />
+                <span>Published</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('edit-modal').close()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+  </div>
+
+  <script is:inline>
+    function openEditModal(img) {
+      document.getElementById('edit-id').value = img.id;
+      document.getElementById('edit-image-url').value = img.image_url || '';
+      document.getElementById('edit-title').value = img.title || '';
+      document.getElementById('edit-description').value = img.description || '';
+      document.getElementById('edit-category').value = img.category || 'general';
+      document.getElementById('edit-sort-order').value = img.sort_order || 0;
+      document.getElementById('edit-published').checked = img.published === 1;
+      document.getElementById('edit-modal').showModal();
+    }
+  </script>
+</AdminLayout>
+
+<style>
+  .gallery-admin {
+    max-width: 1200px;
+  }
+
+  .alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+
+  .alert-success {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .gallery-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .gallery-header p {
+    margin: 0;
+    color: var(--text-light);
+  }
+
+  .gallery-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .category-title {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    color: var(--primary);
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--primary);
+  }
+
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .image-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .image-preview {
+    position: relative;
+    aspect-ratio: 4/3;
+    background: var(--surface);
+  }
+
+  .image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .draft-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .image-info {
+    padding: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .image-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .image-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card-bg);
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .action-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .action-btn.delete:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: #fee2e2;
+  }
+
+  .action-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .delete-form {
+    display: contents;
+  }
+
+  /* Modal */
+  .modal {
+    padding: 0;
+    border: none;
+    border-radius: 16px;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  }
+
+  .modal::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .modal-content {
+    padding: 1.5rem;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .modal-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .close-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    color: var(--text-light);
+    cursor: pointer;
+    border-radius: 6px;
+  }
+
+  .close-btn:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .close-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .form-group input,
+  .form-group textarea,
+  .form-group select {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+  }
+
+  .checkbox-group {
+    display: flex;
+    align-items: flex-end;
+    padding-bottom: 0.5rem;
+  }
+
+  .checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .checkbox-label input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+
+  .btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--border);
+  }
+
+  /* Empty State */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .empty-state svg {
+    width: 64px;
+    height: 64px;
+    color: var(--text-light);
+    opacity: 0.5;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state h3 {
+    margin: 0 0 0.5rem 0;
+  }
+
+  .empty-state p {
+    margin: 0 0 1.5rem 0;
+    color: var(--text-light);
+  }
+</style>

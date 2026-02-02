@@ -1,0 +1,429 @@
+---
+// FAQ Bot component - simple keyword-matching bot
+---
+
+<div id="faq-bot" class="faq-bot">
+  <!-- Toggle Button -->
+  <button id="faq-bot-toggle" class="faq-bot-toggle" aria-label="Open help chat">
+    <svg class="icon-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+    <svg class="icon-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+    </svg>
+    <span class="toggle-label">Help</span>
+  </button>
+
+  <!-- Chat Panel -->
+  <div id="faq-bot-panel" class="faq-bot-panel">
+    <div class="panel-header">
+      <div class="header-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <span>Quick Help</span>
+      </div>
+      <button id="faq-bot-close" class="close-btn" aria-label="Close chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="faq-bot-messages" class="panel-messages">
+      <div class="message bot">
+        <p>Hello! I can help answer common questions about Alnmouth Village Golf Club.</p>
+        <p>Try asking about:</p>
+        <ul>
+          <li>Green fees & visitor booking</li>
+          <li>Membership information</li>
+          <li>Course & facilities</li>
+          <li>Opening hours & contact</li>
+        </ul>
+      </div>
+    </div>
+
+    <form id="faq-bot-form" class="panel-input">
+      <input
+        type="text"
+        id="faq-bot-query"
+        placeholder="Ask a question..."
+        autocomplete="off"
+      />
+      <button type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const bot = document.getElementById('faq-bot');
+    const toggle = document.getElementById('faq-bot-toggle');
+    const closeBtn = document.getElementById('faq-bot-close');
+    const panel = document.getElementById('faq-bot-panel');
+    const form = document.getElementById('faq-bot-form');
+    const input = document.getElementById('faq-bot-query') as HTMLInputElement;
+    const messages = document.getElementById('faq-bot-messages');
+
+    if (!bot || !toggle || !panel || !form || !input || !messages) return;
+
+    // Toggle panel
+    toggle.addEventListener('click', () => {
+      bot.classList.toggle('open');
+      if (bot.classList.contains('open')) {
+        input.focus();
+      }
+    });
+
+    closeBtn?.addEventListener('click', () => {
+      bot.classList.remove('open');
+    });
+
+    // Handle form submission
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+
+      // Add user message
+      addMessage(query, 'user');
+      input.value = '';
+
+      // Show loading
+      const loadingId = addMessage('Searching...', 'bot loading');
+
+      try {
+        const response = await fetch('/api/faq-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query })
+        });
+
+        const data = await response.json();
+
+        // Remove loading message
+        removeMessage(loadingId);
+
+        if (data.success && data.matches.length > 0) {
+          // Show matching answers
+          data.matches.forEach((match: any, index: number) => {
+            const content = `
+              <strong>${match.question}</strong>
+              <div class="answer">${match.answer}</div>
+            `;
+            addMessage(content, 'bot', true);
+          });
+
+          if (data.hasMore) {
+            addMessage('There may be more relevant answers. <a href="/faq">View all FAQs</a>', 'bot', true);
+          }
+        } else {
+          // No matches found
+          addMessage(`
+            I couldn't find a specific answer to that question. You can:
+            <ul>
+              <li><a href="/faq">Browse all FAQs</a></li>
+              <li><a href="/contact">Contact us directly</a></li>
+              <li>Call us: <a href="tel:01665830370">01665 830370</a></li>
+            </ul>
+          `, 'bot', true);
+        }
+      } catch (error) {
+        removeMessage(loadingId);
+        addMessage('Sorry, something went wrong. Please try again or <a href="/contact">contact us directly</a>.', 'bot', true);
+      }
+    });
+
+    let messageCounter = 0;
+
+    function addMessage(content: string, type: string, isHtml = false): string {
+      const id = `msg-${++messageCounter}`;
+      const div = document.createElement('div');
+      div.id = id;
+      div.className = `message ${type}`;
+
+      if (isHtml) {
+        div.innerHTML = content;
+      } else {
+        div.innerHTML = `<p>${content}</p>`;
+      }
+
+      messages?.appendChild(div);
+      messages?.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' });
+
+      return id;
+    }
+
+    function removeMessage(id: string): void {
+      const msg = document.getElementById(id);
+      if (msg) msg.remove();
+    }
+  });
+</script>
+
+<style>
+  .faq-bot {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 1000;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  .faq-bot-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.25rem;
+    background: #1e5631;
+    color: white;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s;
+  }
+
+  .faq-bot-toggle:hover {
+    background: #164024;
+    transform: scale(1.02);
+  }
+
+  .faq-bot-toggle svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .faq-bot-toggle .icon-close {
+    display: none;
+  }
+
+  .faq-bot.open .faq-bot-toggle .icon-chat {
+    display: none;
+  }
+
+  .faq-bot.open .faq-bot-toggle .icon-close {
+    display: block;
+  }
+
+  .faq-bot.open .faq-bot-toggle .toggle-label {
+    display: none;
+  }
+
+  .faq-bot.open .faq-bot-toggle {
+    padding: 0.75rem;
+    border-radius: 50%;
+  }
+
+  .faq-bot-panel {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    width: 380px;
+    max-width: calc(100vw - 2rem);
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    margin-bottom: 1rem;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .faq-bot.open .faq-bot-panel {
+    display: flex;
+    animation: slideUp 0.2s ease;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    background: #1e5631;
+    color: white;
+  }
+
+  .header-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+  }
+
+  .header-info svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: white;
+    padding: 0.25rem;
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0.8;
+  }
+
+  .close-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .close-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .panel-messages {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+    max-height: 350px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .message {
+    padding: 0.875rem 1rem;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    max-width: 90%;
+  }
+
+  .message.bot {
+    background: #f5f5f5;
+    align-self: flex-start;
+  }
+
+  .message.user {
+    background: #1e5631;
+    color: white;
+    align-self: flex-end;
+  }
+
+  .message.loading {
+    opacity: 0.7;
+  }
+
+  .message p {
+    margin: 0 0 0.5rem 0;
+  }
+
+  .message p:last-child {
+    margin-bottom: 0;
+  }
+
+  .message ul {
+    margin: 0.5rem 0 0 0;
+    padding-left: 1.25rem;
+  }
+
+  .message li {
+    margin-bottom: 0.25rem;
+  }
+
+  .message strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #1e5631;
+  }
+
+  .message .answer {
+    color: #444;
+  }
+
+  .message a {
+    color: #1e5631;
+    font-weight: 500;
+  }
+
+  .message.user a {
+    color: white;
+    text-decoration: underline;
+  }
+
+  .panel-input {
+    display: flex;
+    gap: 0.5rem;
+    padding: 1rem;
+    border-top: 1px solid #e0e0e0;
+  }
+
+  .panel-input input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 24px;
+    font-size: 0.9rem;
+    outline: none;
+  }
+
+  .panel-input input:focus {
+    border-color: #1e5631;
+    box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+  }
+
+  .panel-input button {
+    width: 44px;
+    height: 44px;
+    background: #1e5631;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+
+  .panel-input button:hover {
+    background: #164024;
+  }
+
+  .panel-input button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  @media (max-width: 480px) {
+    .faq-bot {
+      bottom: 1rem;
+      right: 1rem;
+    }
+
+    .faq-bot-panel {
+      width: calc(100vw - 2rem);
+      max-height: 70vh;
+    }
+
+    .panel-messages {
+      max-height: 300px;
+    }
+  }
+</style>

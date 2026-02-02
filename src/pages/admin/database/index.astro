@@ -1,0 +1,1060 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+const userEmail = Astro.locals.user?.email?.toLowerCase() || '';
+const BACKUP_ADMINS = ['admin@alnmouthvillage.golf', 'steve.lockley@alnmouthvillage.golf'];
+const canBackup = BACKUP_ADMINS.includes(userEmail);
+
+// Get all tables (excluding internal SQLite tables and FTS shadow tables)
+const tablesResult = await db.prepare(
+  `SELECT name FROM sqlite_master
+   WHERE type='table'
+   AND name NOT LIKE 'sqlite_%'
+   AND name NOT LIKE '_cf_%'
+   AND name NOT LIKE '%_fts_%'
+   AND name NOT LIKE '%_content'
+   AND name NOT LIKE '%_docsize'
+   AND name NOT LIKE '%_data'
+   AND name NOT LIKE '%_idx'
+   AND name NOT LIKE '%_config'
+   ORDER BY name`
+).all();
+
+const tables = tablesResult.results || [];
+
+// Check for error message
+const errorParam = Astro.url.searchParams.get('error');
+
+// Get table info for each table
+const tableInfo: Record<string, any> = {};
+for (const table of tables) {
+  const countResult = await db.prepare(`SELECT COUNT(*) as count FROM "${table.name}"`).first<{ count: number }>();
+  const columnsResult = await db.prepare(`PRAGMA table_info("${table.name}")`).all();
+  const indexesResult = await db.prepare(`PRAGMA index_list("${table.name}")`).all();
+
+  tableInfo[table.name as string] = {
+    count: countResult?.count || 0,
+    columns: columnsResult.results || [],
+    indexes: indexesResult.results || []
+  };
+}
+
+// Calculate totals
+const totalRows = Object.values(tableInfo).reduce((sum: number, t: any) => sum + t.count, 0);
+const totalIndexes = Object.values(tableInfo).reduce((sum: number, t: any) => sum + t.indexes.length, 0);
+---
+
+<AdminLayout title="Database Explorer">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Database Explorer</h1>
+      <p class="subtitle">Browse and manage your D1 SQLite database</p>
+    </div>
+    <div class="header-actions">
+      {canBackup && (
+        <>
+          <button type="button" id="restore-btn" class="btn btn-secondary" onclick="showRestoreDialog()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+            </svg>
+            Restore
+          </button>
+          <button type="button" id="backup-btn" class="btn btn-secondary" onclick="runBackup()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Backup
+          </button>
+        </>
+      )}
+      <a href="/admin/database/query" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 18 22 12 16 6"/>
+          <polyline points="8 6 2 12 8 18"/>
+        </svg>
+        SQL Query
+      </a>
+    </div>
+  </div>
+
+  <!-- Backup Result Banner -->
+  <div id="backup-result" class="alert" style="display: none;"></div>
+
+  {errorParam === 'fts' && (
+    <div class="alert alert-warning">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      FTS (Full-Text Search) shadow tables cannot be browsed directly. They are internal SQLite structures.
+    </div>
+  )}
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{tables.length}</span>
+        <span class="stat-label">Tables</span>
+      </div>
+    </div>
+
+    <div class="stat-card stat-success">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{totalRows.toLocaleString()}</span>
+        <span class="stat-label">Total Rows</span>
+      </div>
+    </div>
+
+    <div class="stat-card stat-info">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{totalIndexes}</span>
+        <span class="stat-label">Indexes</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tables Card -->
+  <div class="m3-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <line x1="3" y1="9" x2="21" y2="9"/>
+          <line x1="9" y1="21" x2="9" y2="9"/>
+        </svg>
+        <span>Database Tables</span>
+      </div>
+      <span class="card-badge">{tables.length} tables</span>
+    </div>
+    <div class="card-content">
+      <div class="table-container">
+        <table class="m3-table">
+          <thead>
+            <tr>
+              <th>Table Name</th>
+              <th class="text-right">Rows</th>
+              <th class="text-right">Columns</th>
+              <th class="text-right">Indexes</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tables.map((table) => (
+              <tr>
+                <td>
+                  <a href={`/database/table/${table.name}`} class="table-link">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                      <line x1="3" y1="9" x2="21" y2="9"/>
+                      <line x1="9" y1="21" x2="9" y2="9"/>
+                    </svg>
+                    {table.name}
+                  </a>
+                </td>
+                <td class="text-right">
+                  <span class="row-count">{tableInfo[table.name as string].count.toLocaleString()}</span>
+                </td>
+                <td class="text-right">{tableInfo[table.name as string].columns.length}</td>
+                <td class="text-right">{tableInfo[table.name as string].indexes.length}</td>
+                <td class="actions-col">
+                  <div class="action-buttons">
+                    <a href={`/database/table/${table.name}`} class="action-btn" title="Browse Data">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </a>
+                    <a href={`/database/table/${table.name}/structure`} class="action-btn" title="View Structure">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                      </svg>
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {tables.length === 0 && (
+              <tr>
+                <td colspan="5" class="empty-row">
+                  <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                    </svg>
+                    <p>No tables found</p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="m3-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        <span>Quick Actions</span>
+      </div>
+    </div>
+    <div class="card-content">
+      <div class="quick-actions">
+        <a href="/admin/database/query" class="action-link primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="16 18 22 12 16 6"/>
+            <polyline points="8 6 2 12 8 18"/>
+          </svg>
+          Run SQL Query
+        </a>
+        <a href="/admin/database/table/members" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          Browse Members
+        </a>
+        <a href="/admin/database/table/invoices" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          Browse Invoices
+        </a>
+        <a href="/admin/database/table/payments" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+            <line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+          Browse Payments
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    /* Page Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .header-content h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      color: #666;
+      font-size: 0.95rem;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .header-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .header-actions .btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Alert */
+    .alert {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .alert-warning {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeeba;
+    }
+
+    .alert-success {
+      background: #e8f5e9;
+      color: #1e5631;
+      border: 1px solid #c8e6c9;
+    }
+
+    .alert-error {
+      background: #ffebee;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+    }
+
+    /* Stats Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .stat-icon svg {
+      width: 24px;
+      height: 24px;
+      color: #fff;
+    }
+
+    .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+    .stat-info .stat-icon { background: linear-gradient(135deg, #0d6efd 0%, #3d8bfd 100%); }
+
+    .stat-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #1a1a1a;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    /* M3 Card */
+    .m3-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-badge {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.625rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .card-content {
+      padding: 0;
+    }
+
+    /* Table */
+    .table-container {
+      overflow-x: auto;
+    }
+
+    .m3-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .m3-table th {
+      text-align: left;
+      padding: 1rem 1.25rem;
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fafafa;
+      border-bottom: 2px solid #e8e8e8;
+      white-space: nowrap;
+    }
+
+    .m3-table td {
+      padding: 0.875rem 1.25rem;
+      font-size: 0.9rem;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+
+    .m3-table tbody tr:hover {
+      background: #f8faf8;
+    }
+
+    .m3-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .text-right {
+      text-align: right;
+    }
+
+    .table-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .table-link:hover {
+      text-decoration: underline;
+    }
+
+    .table-link svg {
+      width: 16px;
+      height: 16px;
+      color: #888;
+    }
+
+    .row-count {
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    /* Actions */
+    .actions-col {
+      width: 100px;
+      text-align: right;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 0.375rem;
+      justify-content: flex-end;
+    }
+
+    .action-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: #f4f4f4;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      color: #555;
+    }
+
+    .action-btn:hover {
+      background: #e8e8e8;
+      color: #1e5631;
+    }
+
+    .action-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Empty State */
+    .empty-row {
+      padding: 3rem !important;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      color: #888;
+    }
+
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      opacity: 0.5;
+    }
+
+    .empty-state p {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      padding: 1.25rem;
+    }
+
+    .action-link {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
+      background: #f8f9fa;
+      border-radius: 10px;
+      color: #333;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+
+    .action-link:hover {
+      background: #f0f0f0;
+    }
+
+    .action-link.primary {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: #fff;
+    }
+
+    .action-link.primary:hover {
+      background: linear-gradient(135deg, #164024 0%, #246339 100%);
+    }
+
+    .action-link svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      width: 90%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #666;
+      padding: 0;
+      line-height: 1;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .modal-close:hover {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding: 1rem 1.5rem;
+      border-top: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .backup-item {
+      padding: 1rem;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: #fff;
+    }
+
+    .backup-item:hover {
+      background: #f8faf8;
+      border-color: #1e5631;
+    }
+
+    .backup-item .filename {
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .backup-item .meta {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    .preview-warning {
+      background: #fff3cd;
+      color: #856404;
+      padding: 1rem;
+      border-radius: 10px;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .preview-tables {
+      max-height: 200px;
+      overflow-y: auto;
+      background: #f8f9fa;
+      padding: 0.75rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .preview-table-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.375rem 0;
+      border-bottom: 1px solid #e8e8e8;
+    }
+
+    .preview-table-row:last-child {
+      border-bottom: none;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .quick-actions {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+
+      .quick-actions {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .header-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
+  </style>
+
+  {canBackup && (
+    <!-- Restore Dialog -->
+    <div id="restore-dialog" class="modal-overlay" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Restore from SharePoint</h3>
+          <button type="button" class="modal-close" onclick="hideRestoreDialog()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="restore-loading" style="text-align: center; padding: 2rem; color: #666;">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+              <line x1="12" y1="2" x2="12" y2="6"/>
+              <line x1="12" y1="18" x2="12" y2="22"/>
+              <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/>
+              <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
+              <line x1="2" y1="12" x2="6" y2="12"/>
+              <line x1="18" y1="12" x2="22" y2="12"/>
+              <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/>
+              <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
+            </svg>
+            <p style="margin-top: 1rem;">Loading backups...</p>
+          </div>
+          <div id="restore-error" class="alert alert-error" style="display: none;"></div>
+          <div id="backup-list" style="display: none;">
+            <p style="color: #666; margin-bottom: 1rem;">Select a backup to restore:</p>
+            <div id="backup-items"></div>
+          </div>
+          <div id="restore-preview" style="display: none;">
+            <div class="preview-warning">
+              <strong>Warning:</strong> This will replace ALL data in the database with the backup data. This action cannot be undone.
+            </div>
+            <p><strong>Backup:</strong> <span id="preview-filename"></span></p>
+            <p><strong>Created:</strong> <span id="preview-date"></span></p>
+            <p style="margin-bottom: 0.5rem;"><strong>Tables to restore:</strong></p>
+            <div id="preview-tables" class="preview-tables"></div>
+            <p><strong>Total rows:</strong> <span id="preview-total"></span></p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="hideRestoreDialog()">Cancel</button>
+          <button type="button" id="restore-back-btn" class="btn btn-secondary" style="display: none;" onclick="backToList()">
+            Back
+          </button>
+          <button type="button" id="restore-confirm-btn" class="btn btn-danger" style="display: none;" onclick="confirmRestore()">
+            Restore Database
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    </style>
+
+    <script is:inline>
+      let selectedBackup = null;
+
+      async function showRestoreDialog() {
+        document.getElementById('restore-dialog').style.display = 'flex';
+        document.getElementById('restore-loading').style.display = 'block';
+        document.getElementById('backup-list').style.display = 'none';
+        document.getElementById('restore-preview').style.display = 'none';
+        document.getElementById('restore-error').style.display = 'none';
+        document.getElementById('restore-confirm-btn').style.display = 'none';
+        document.getElementById('restore-back-btn').style.display = 'none';
+
+        try {
+          const response = await fetch('/api/restore');
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('backup-list').style.display = 'block';
+
+          const itemsContainer = document.getElementById('backup-items');
+          if (data.backups.length === 0) {
+            itemsContainer.innerHTML = '<p style="color: #666; text-align: center; padding: 2rem;">No backups found</p>';
+          } else {
+            itemsContainer.innerHTML = data.backups.map(b => `
+              <div class="backup-item" onclick="selectBackup('${b.name}')">
+                <div class="filename">${b.name}</div>
+                <div class="meta">${(b.size / 1024).toFixed(1)} KB &bull; ${new Date(b.modified).toLocaleString()}</div>
+              </div>
+            `).join('');
+          }
+        } catch (error) {
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-error').style.display = 'flex';
+          document.getElementById('restore-error').textContent = 'Failed to load backups: ' + error.message;
+        }
+      }
+
+      function hideRestoreDialog() {
+        document.getElementById('restore-dialog').style.display = 'none';
+        selectedBackup = null;
+      }
+
+      async function selectBackup(filename) {
+        selectedBackup = filename;
+        document.getElementById('backup-list').style.display = 'none';
+        document.getElementById('restore-loading').style.display = 'block';
+
+        try {
+          const response = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, confirm: false })
+          });
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-preview').style.display = 'block';
+          document.getElementById('restore-confirm-btn').style.display = 'inline-block';
+          document.getElementById('restore-back-btn').style.display = 'inline-block';
+
+          document.getElementById('preview-filename').textContent = data.filename;
+          document.getElementById('preview-date').textContent = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'Unknown';
+          document.getElementById('preview-total').textContent = data.totalRows.toLocaleString() + ' rows';
+
+          const tablesHtml = Object.entries(data.tables)
+            .map(([table, count]) => `<div class="preview-table-row"><span>${table}</span><span>${count.toLocaleString()} rows</span></div>`)
+            .join('');
+          document.getElementById('preview-tables').innerHTML = tablesHtml;
+        } catch (error) {
+          document.getElementById('restore-loading').style.display = 'none';
+          document.getElementById('restore-error').style.display = 'flex';
+          document.getElementById('restore-error').textContent = 'Failed to load backup: ' + error.message;
+          document.getElementById('restore-back-btn').style.display = 'inline-block';
+        }
+      }
+
+      function backToList() {
+        selectedBackup = null;
+        document.getElementById('restore-preview').style.display = 'none';
+        document.getElementById('restore-error').style.display = 'none';
+        document.getElementById('restore-confirm-btn').style.display = 'none';
+        document.getElementById('restore-back-btn').style.display = 'none';
+        document.getElementById('backup-list').style.display = 'block';
+      }
+
+      async function confirmRestore() {
+        if (!selectedBackup) return;
+
+        const btn = document.getElementById('restore-confirm-btn');
+        btn.disabled = true;
+        btn.textContent = 'Restoring...';
+
+        try {
+          const response = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: selectedBackup, confirm: true })
+          });
+          const data = await response.json();
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          hideRestoreDialog();
+          const resultDiv = document.getElementById('backup-result');
+          resultDiv.style.display = 'flex';
+          resultDiv.className = 'alert alert-success';
+          resultDiv.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <div>
+              <strong>Restore successful!</strong><br>
+              File: ${data.filename}<br>
+              Restored: ${data.totalRestored.toLocaleString()} rows<br>
+              <a href="javascript:location.reload()" style="color: inherit; font-weight: 600;">Refresh page to see updated data</a>
+            </div>
+          `;
+        } catch (error) {
+          document.getElementById('restore-error').style.display = 'flex';
+          document.getElementById('restore-error').textContent = 'Restore failed: ' + error.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Restore Database';
+        }
+      }
+
+      async function runBackup() {
+        const btn = document.getElementById('backup-btn');
+        const resultDiv = document.getElementById('backup-result');
+
+        btn.disabled = true;
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
+            <line x1="12" y1="2" x2="12" y2="6"/>
+            <line x1="12" y1="18" x2="12" y2="22"/>
+            <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/>
+            <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/>
+            <line x1="2" y1="12" x2="6" y2="12"/>
+            <line x1="18" y1="12" x2="22" y2="12"/>
+            <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/>
+            <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>
+          </svg>
+          Backing up...
+        `;
+        resultDiv.style.display = 'flex';
+        resultDiv.className = 'alert';
+        resultDiv.style.background = '#e7f3ff';
+        resultDiv.style.color = '#0066cc';
+        resultDiv.style.border = '1px solid #b8daff';
+        resultDiv.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Starting backup to SharePoint...
+        `;
+
+        try {
+          const response = await fetch('/api/backup', { method: 'POST' });
+          const data = await response.json();
+
+          if (data.success) {
+            resultDiv.className = 'alert alert-success';
+            resultDiv.style.background = '';
+            resultDiv.style.border = '';
+            resultDiv.innerHTML = `
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              <div>
+                <strong>Backup successful!</strong><br>
+                File: ${data.filename}<br>
+                Size: ${(data.size / 1024).toFixed(1)} KB<br>
+                Time: ${new Date(data.timestamp).toLocaleString()}
+              </div>
+            `;
+          } else {
+            throw new Error(data.error || 'Backup failed');
+          }
+        } catch (error) {
+          resultDiv.className = 'alert alert-error';
+          resultDiv.style.background = '';
+          resultDiv.style.border = '';
+          resultDiv.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="15" y1="9" x2="9" y2="15"/>
+              <line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            Backup failed: ${error.message}
+          `;
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Backup
+          `;
+        }
+      }
+    </script>
+  )}
+</AdminLayout>

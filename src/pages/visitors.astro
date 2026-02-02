@@ -1,0 +1,937 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+// Fetch green fees from database
+interface GreenFee {
+  id: number;
+  category: string;
+  label: string;
+  badge: string;
+  price_18_holes: number | null;
+  price_day_ticket: number | null;
+  price_weekday: number | null;
+  price_weekend: number | null;
+  is_featured: number;
+  year: number;
+}
+
+interface AdditionalFee {
+  id: number;
+  name: string;
+  description: string | null;
+  price: number;
+}
+
+let greenFees: GreenFee[] = [];
+let additionalFees: AdditionalFee[] = [];
+let currentYear = new Date().getFullYear();
+
+if (db) {
+  try {
+    const feesResult = await db.prepare(
+      `SELECT * FROM green_fees WHERE year = ? ORDER BY sort_order`
+    ).bind(currentYear).all<GreenFee>();
+    greenFees = feesResult.results || [];
+
+    const additionalResult = await db.prepare(
+      `SELECT * FROM additional_fees WHERE is_active = 1 ORDER BY sort_order`
+    ).all<AdditionalFee>();
+    additionalFees = additionalResult.results || [];
+  } catch (e) {
+    console.error('Error fetching green fees:', e);
+  }
+}
+
+// Helper to format price from pence to pounds
+function formatPrice(pence: number | null): string {
+  if (pence === null) return '';
+  return `£${(pence / 100).toFixed(0)}`;
+}
+
+// Course images
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_9895.jpg';
+const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_0584.jpg';
+---
+
+<PublicLayout
+  title="Visitors"
+  description="Plan your visit to Alnmouth Village Golf Club. View green fees, booking information, and everything you need for a great round."
+  heroImage={heroImage}
+  heroTitle="Visitor Information"
+  heroSubtitle="Plan your round at Alnmouth Village"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <!-- Prominent Booking CTA -->
+    <section class="booking-banner">
+      <div class="booking-banner-content">
+        <div class="booking-banner-text">
+          <h2>Book Your Tee Time</h2>
+          <p>Secure your preferred tee time instantly through our online booking system</p>
+        </div>
+        <div class="booking-banner-actions">
+          <a href="https://www.brsgolf.com/alnmouthvillage/visitor_menu.php" target="_blank" rel="noopener noreferrer" class="btn btn-cta btn-large">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            Book Online Now
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" class="arrow-icon">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </a>
+          <div class="booking-phone">
+            <span>or call</span>
+            <a href="tel:01665830370">01665 830370</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Welcome -->
+    <section class="section intro-section">
+      <div class="intro-grid">
+        <div class="intro-content">
+          <span class="intro-label">Welcome</span>
+          <h2 class="section-title">A Warm Welcome Awaits</h2>
+          <p class="intro-text">
+            We extend a warm welcome to visiting golfers. Our stunning links course offers a
+            memorable experience for players of all abilities. Whether you're looking for a
+            quick round or a full day's golf, we'd love to have you.
+          </p>
+          <p class="intro-text">
+            With panoramic views of the Northumberland coast and Cheviot Hills, challenging
+            yet fair holes, and excellent clubhouse facilities, you're guaranteed a day to remember.
+          </p>
+        </div>
+        <div class="intro-image">
+          <img src={courseImage} alt="The course at Alnmouth Village" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Green Fees -->
+    <section class="section fees-section">
+      <div class="section-header">
+        <h2 class="section-title">Green Fees {currentYear}</h2>
+        <p class="section-subtitle">All prices include VAT</p>
+      </div>
+
+      <div class="fees-grid">
+        {greenFees.length > 0 ? (
+          greenFees.map(fee => (
+            <div class={`fee-card ${fee.is_featured ? 'featured' : ''}`}>
+              <div class="fee-header">
+                <h3>{fee.label}</h3>
+                {fee.badge && <span class="fee-badge">{fee.badge}</span>}
+              </div>
+              <div class="fee-prices">
+                {fee.category === 'twilight' ? (
+                  <>
+                    <div class="fee-row">
+                      <span>Weekday</span>
+                      <span class="price">{formatPrice(fee.price_weekday)}</span>
+                    </div>
+                    <div class="fee-row">
+                      <span>Weekend</span>
+                      <span class="price">{formatPrice(fee.price_weekend)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div class="fee-row">
+                      <span>18 Holes</span>
+                      <span class="price">{formatPrice(fee.price_18_holes)}</span>
+                    </div>
+                    <div class="fee-row">
+                      <span>Day Ticket</span>
+                      <span class="price">{formatPrice(fee.price_day_ticket)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        ) : (
+          <>
+            <div class="fee-card">
+              <div class="fee-header">
+                <h3>Weekday</h3>
+                <span class="fee-badge">Mon - Fri</span>
+              </div>
+              <div class="fee-prices">
+                <div class="fee-row">
+                  <span>18 Holes</span>
+                  <span class="price">&pound;45</span>
+                </div>
+                <div class="fee-row">
+                  <span>Day Ticket</span>
+                  <span class="price">&pound;55</span>
+                </div>
+              </div>
+            </div>
+            <div class="fee-card featured">
+              <div class="fee-header">
+                <h3>Weekend</h3>
+                <span class="fee-badge">Sat - Sun</span>
+              </div>
+              <div class="fee-prices">
+                <div class="fee-row">
+                  <span>18 Holes</span>
+                  <span class="price">&pound;55</span>
+                </div>
+                <div class="fee-row">
+                  <span>Day Ticket</span>
+                  <span class="price">&pound;70</span>
+                </div>
+              </div>
+            </div>
+            <div class="fee-card">
+              <div class="fee-header">
+                <h3>Twilight</h3>
+                <span class="fee-badge">After 3pm</span>
+              </div>
+              <div class="fee-prices">
+                <div class="fee-row">
+                  <span>Weekday</span>
+                  <span class="price">&pound;30</span>
+                </div>
+                <div class="fee-row">
+                  <span>Weekend</span>
+                  <span class="price">&pound;35</span>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div class="fee-notes">
+        <h4>Please Note</h4>
+        <ul>
+          <li>Juniors (under 18) play at half price when accompanied by a paying adult</li>
+          <li>Society and group rates available on request</li>
+          {additionalFees.length > 0 ? (
+            additionalFees.map(fee => (
+              <li>{fee.name}{fee.description ? ` - ${fee.description}` : ''} - {formatPrice(fee.price)}</li>
+            ))
+          ) : (
+            <>
+              <li>Buggies available for hire - &pound;25 per round</li>
+              <li>Trolley hire - &pound;5</li>
+              <li>Club hire - &pound;15</li>
+            </>
+          )}
+        </ul>
+      </div>
+    </section>
+
+    <!-- What to Expect -->
+    <section class="section expect-section">
+      <div class="section-header">
+        <h2 class="section-title">What to Expect</h2>
+        <p class="section-subtitle">Everything you need to know for your visit</p>
+      </div>
+
+      <div class="expect-grid">
+        <div class="expect-card">
+          <div class="expect-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </div>
+          <h3>Arrival</h3>
+          <p>Please arrive at least 20 minutes before your tee time to register in the clubhouse and warm up on the practice area.</p>
+        </div>
+
+        <div class="expect-card">
+          <div class="expect-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/>
+              <line x1="16" y1="8" x2="2" y2="22"/>
+              <line x1="17.5" y1="15" x2="9" y2="15"/>
+            </svg>
+          </div>
+          <h3>Dress Code</h3>
+          <p>Smart casual golf attire is required. No denim, tracksuits, or collarless shirts on the course please.</p>
+        </div>
+
+        <div class="expect-card">
+          <div class="expect-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <h3>Pace of Play</h3>
+          <p>Please keep up with the group in front. We encourage ready golf and aim for a 4-hour round.</p>
+        </div>
+
+        <div class="expect-card">
+          <div class="expect-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8h1a4 4 0 0 1 0 8h-1"/>
+              <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
+              <line x1="6" y1="1" x2="6" y2="4"/>
+              <line x1="10" y1="1" x2="10" y2="4"/>
+              <line x1="14" y1="1" x2="14" y2="4"/>
+            </svg>
+          </div>
+          <h3>Clubhouse</h3>
+          <p>Our friendly clubhouse offers excellent food and drink throughout the day. Perfect for a post-round meal.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Societies -->
+    <section class="section societies-section">
+      <div class="societies-grid">
+        <div class="societies-content">
+          <span class="societies-label">Groups Welcome</span>
+          <h2 class="section-title">Golf Societies</h2>
+          <p>
+            We welcome golf societies and groups of all sizes. Our excellent facilities and
+            friendly staff will ensure your society day is a memorable one.
+          </p>
+          <h4>Society Packages Include:</h4>
+          <ul class="societies-list">
+            <li>Coffee and bacon roll on arrival</li>
+            <li>18 or 36 holes of golf</li>
+            <li>Two-course meal after your round</li>
+            <li>On-course refreshments available</li>
+            <li>Nearest the pin prizes</li>
+          </ul>
+          <div class="societies-cta">
+            <p>For society enquiries and group bookings:</p>
+            <a href="/contact?enquiry=society" class="btn btn-primary">Enquire Now</a>
+          </div>
+        </div>
+        <div class="societies-image">
+          <img src={heroImage} alt="Golf society day at Alnmouth Village" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Directions -->
+    <section class="section directions-section">
+      <div class="section-header">
+        <h2 class="section-title">Getting Here</h2>
+        <p class="section-subtitle">Easily accessible from the A1</p>
+      </div>
+
+      <div class="directions-grid">
+        <div class="directions-text">
+          <div class="direction-item">
+            <h3>By Car</h3>
+            <p>
+              From the A1, take the Alnmouth turn-off and follow signs to Alnmouth Village.
+              The golf club is located on Marine Road, approximately 4 miles from Alnwick.
+              Free parking is available for visitors.
+            </p>
+          </div>
+
+          <div class="direction-item">
+            <h3>By Train</h3>
+            <p>
+              Alnmouth station is on the East Coast Main Line with regular services from
+              Edinburgh (1 hour) and Newcastle (30 minutes). The club is a 10-minute taxi ride
+              from the station.
+            </p>
+          </div>
+
+          <div class="direction-item">
+            <h3>Address</h3>
+            <address>
+              Alnmouth Village Golf Club<br>
+              Marine Road<br>
+              Alnmouth<br>
+              Northumberland<br>
+              NE66 2RZ
+            </address>
+          </div>
+        </div>
+
+        <div class="directions-map">
+          <iframe
+            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2288.5!2d-1.6!3d55.38!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zNTXCsDIyJzQ4LjAiTiAxwrAzNicwMC4wIlc!5e0!3m2!1sen!2suk!4v1"
+            width="100%"
+            height="350"
+            style="border:0; border-radius: 16px;"
+            allowfullscreen=""
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade">
+          </iframe>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="section cta-section">
+      <div class="cta-card">
+        <div class="cta-content">
+          <h2>Ready to Play?</h2>
+          <p>Book your round online or give us a call</p>
+        </div>
+        <div class="cta-actions">
+          <a href="https://www.brsgolf.com/alnmouthvillage/visitor_menu.php" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-large">
+            Book Online
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          </a>
+          <a href="tel:01665830370" class="btn btn-outline-light btn-large">
+            Call 01665 830370
+          </a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    /* Booking Banner */
+    .booking-banner {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      margin: -3rem -2rem 0;
+      padding: 2rem;
+      color: var(--white);
+    }
+
+    @media (min-width: 768px) {
+      .booking-banner {
+        padding: 2.5rem 3rem;
+      }
+    }
+
+    .booking-banner-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 900px) {
+      .booking-banner-content {
+        flex-direction: row;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .booking-banner-text h2 {
+      font-family: var(--font-display);
+      font-size: 1.75rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .booking-banner-text p {
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .booking-banner-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    @media (min-width: 500px) {
+      .booking-banner-actions {
+        flex-direction: row;
+        gap: 1.5rem;
+      }
+    }
+
+    .btn-cta {
+      background: #fbbf24;
+      color: #1a1a1a;
+      font-size: 1rem;
+      font-weight: 700;
+      padding: 1rem 1.75rem;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.625rem;
+      text-decoration: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-cta:hover {
+      background: #f59e0b;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    }
+
+    .btn-cta .arrow-icon {
+      animation: pulse-right 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-right {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(4px); }
+    }
+
+    .booking-phone {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    .booking-phone span {
+      opacity: 0.8;
+    }
+
+    .booking-phone a {
+      color: var(--white);
+      font-weight: 600;
+      text-decoration: underline;
+    }
+
+    /* Intro Section */
+    .intro-section {
+      padding-top: 4rem;
+    }
+
+    .intro-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .intro-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .intro-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .intro-content .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .intro-text {
+      color: var(--text-light);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      margin-bottom: 1rem;
+    }
+
+    .intro-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .intro-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Fees Section */
+    .fees-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .fees-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 768px) {
+      .fees-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .fee-card {
+      background: var(--white);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .fee-card.featured {
+      box-shadow: 0 8px 30px rgba(30, 86, 49, 0.2);
+      transform: scale(1.02);
+    }
+
+    .fee-header {
+      background: var(--primary);
+      color: var(--white);
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .fee-card.featured .fee-header {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+    }
+
+    .fee-header h3 {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .fee-badge {
+      font-size: 0.85rem;
+      opacity: 0.9;
+    }
+
+    .fee-prices {
+      padding: 1.5rem;
+    }
+
+    .fee-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.875rem 0;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .fee-row:last-child {
+      border-bottom: none;
+    }
+
+    .price {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .fee-notes {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      margin-top: 2.5rem;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .fee-notes h4 {
+      font-family: var(--font-display);
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .fee-notes ul {
+      margin: 0;
+      padding-left: 1.25rem;
+      color: var(--text-light);
+    }
+
+    .fee-notes li {
+      margin-bottom: 0.5rem;
+      line-height: 1.6;
+    }
+
+    /* Expect Section */
+    .expect-section {
+      padding: 5rem 0;
+    }
+
+    .expect-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 640px) {
+      .expect-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .expect-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .expect-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem 1.5rem;
+      text-align: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .expect-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+    }
+
+    .expect-icon {
+      width: 60px;
+      height: 60px;
+      background: var(--primary);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.25rem;
+    }
+
+    .expect-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--white);
+    }
+
+    .expect-card h3 {
+      font-family: var(--font-display);
+      margin-bottom: 0.75rem;
+      font-size: 1.1rem;
+    }
+
+    .expect-card p {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      margin: 0;
+      line-height: 1.7;
+    }
+
+    /* Societies Section */
+    .societies-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .societies-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .societies-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .societies-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .societies-content .section-title {
+      margin-bottom: 1rem;
+    }
+
+    .societies-content p {
+      color: var(--text-light);
+      line-height: 1.8;
+      margin-bottom: 1.5rem;
+    }
+
+    .societies-content h4 {
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .societies-list {
+      margin: 0 0 2rem;
+      padding-left: 1.25rem;
+      color: var(--text-light);
+    }
+
+    .societies-list li {
+      margin-bottom: 0.5rem;
+      line-height: 1.6;
+    }
+
+    .societies-cta {
+      background: var(--white);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .societies-cta p {
+      margin: 0;
+      flex: 1;
+    }
+
+    .societies-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .societies-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Directions Section */
+    .directions-section {
+      padding: 5rem 0;
+    }
+
+    .directions-grid {
+      display: grid;
+      gap: 3rem;
+    }
+
+    @media (min-width: 900px) {
+      .directions-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .direction-item {
+      margin-bottom: 2rem;
+    }
+
+    .direction-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .direction-item h3 {
+      font-family: var(--font-display);
+      color: var(--primary);
+      font-size: 1.1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .direction-item p {
+      color: var(--text-light);
+      line-height: 1.7;
+      margin: 0;
+    }
+
+    .direction-item address {
+      font-style: normal;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    /* CTA Section */
+    .cta-section {
+      padding-bottom: 5rem;
+    }
+
+    .cta-card {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      border-radius: 24px;
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--white);
+    }
+
+    @media (min-width: 768px) {
+      .cta-card {
+        padding: 4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .cta-content h2 {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .cta-content p {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .cta-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .cta-actions {
+        margin-top: 0;
+      }
+    }
+
+    .cta-card .btn-primary {
+      background: var(--white);
+      color: var(--primary);
+      border-color: var(--white);
+    }
+
+    .cta-card .btn-primary:hover {
+      background: var(--secondary);
+    }
+
+    .btn-outline-light {
+      background: transparent;
+      color: var(--white);
+      border: 2px solid rgba(255,255,255,0.5);
+    }
+
+    .btn-outline-light:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--white);
+    }
+  </style>
+</PublicLayout>

@@ -1,0 +1,811 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatCurrency, formatDate, calculateEguCategory, type Member } from '../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get member statistics
+const totalMembers = await db.prepare(
+  'SELECT COUNT(*) as count FROM members'
+).first<{ count: number }>();
+
+const activeMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires >= date('now') OR date_expires IS NULL`
+).first<{ count: number }>();
+
+const expiringMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires BETWEEN date('now') AND date('now', '+30 days')`
+).first<{ count: number }>();
+
+const expiredMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE date_expires < date('now')`
+).first<{ count: number }>();
+
+// Get subscription type breakdown with fees from payment_items (category holds subscription type)
+const subscriptionBreakdown = await db.prepare(
+  `SELECT m.category, COUNT(*) as count, pi.fee
+   FROM members m
+   LEFT JOIN payment_items pi ON pi.name = m.category AND pi.category = 'Subscription' AND pi.active = 1
+   WHERE m.category IS NOT NULL AND m.category != ''
+   GROUP BY m.category
+   ORDER BY count DESC`
+).all<{ category: string; count: number; fee: number | null }>();
+
+// Calculate subscription values
+const subscriptionWithValues = (subscriptionBreakdown.results || []).map(sub => ({
+  ...sub,
+  value: sub.fee ? sub.fee * sub.count : 0
+}));
+const totalSubscriptionValue = subscriptionWithValues.reduce((sum, sub) => sum + sub.value, 0);
+const totalSubscriptionCount = subscriptionWithValues.reduce((sum, sub) => sum + sub.count, 0);
+
+// Excluded categories for EGU calculation
+const excludedCategories = ['Social', 'Gratis', 'Retention', 'Resigned'];
+
+// Get all members for EGU category calculation
+// Only include members with CDH number (national_id) and exclude certain categories
+const allMembersForEgu = await db.prepare(
+  `SELECT gender, date_of_birth, home_away, home_club
+   FROM members
+   WHERE category IS NOT NULL
+   AND category != ''
+   AND national_id IS NOT NULL
+   AND national_id != ''
+   AND category NOT IN ('Social', 'Gratis', 'Retention', 'Resigned')`
+).all();
+const membersData = (allMembersForEgu.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
+
+// Calculate EGU category counts
+const eguCategoryCounts: Record<string, number> = {};
+membersData.forEach(member => {
+  const eguCat = calculateEguCategory(member);
+  if (eguCat) {
+    eguCategoryCounts[eguCat] = (eguCategoryCounts[eguCat] || 0) + 1;
+  }
+});
+const eguCategoryBreakdown = Object.entries(eguCategoryCounts)
+  .map(([category, count]) => ({ category, count }))
+  .sort((a, b) => b.count - a.count);
+
+// Get recent payments with invoice info
+const recentPayments = await db.prepare(
+  `SELECT p.*, m.first_name, m.surname, i.invoice_number
+   FROM payments p
+   JOIN members m ON p.member_id = m.id
+   LEFT JOIN invoices i ON p.invoice_id = i.id
+   ORDER BY p.payment_date DESC
+   LIMIT 5`
+).all();
+
+// Get total outstanding balance
+const outstandingBalance = await db.prepare(
+  `SELECT SUM(account_balance) as total FROM members WHERE account_balance < 0`
+).first<{ total: number }>();
+
+// Get EGU and County fee values from payment items
+const englandGolfFee = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'England Golf' AND active = 1`
+).first<{ fee: number }>();
+
+const northumberlandFee = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'Northumberland County' AND active = 1`
+).first<{ fee: number }>();
+
+const eguFee = englandGolfFee?.fee || 12;
+const countyFee = northumberlandFee?.fee || 6.5;
+
+// Calculate EGU fees for each category
+function calculateEguFees(category: string, count: number): number {
+  if (category.includes('home club')) {
+    // Home club: EGU Fee + Northumberland County
+    return (eguFee + countyFee) * count;
+  } else if (category.includes('away club within Northumberland')) {
+    // Away within Northumberland: just County fee
+    return countyFee * count;
+  }
+  // Away outside Northumberland: no fees
+  return 0;
+}
+
+// Add fees to EGU breakdown
+const eguCategoryWithFees = eguCategoryBreakdown.map(cat => ({
+  ...cat,
+  fees: calculateEguFees(cat.category, cat.count)
+}));
+
+// Calculate total EGU fees
+const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0);
+
+---
+
+<AdminLayout title="Dashboard">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Dashboard</h1>
+      <p class="subtitle">Club membership overview</p>
+    </div>
+  </div>
+
+  <!-- Stats Cards Row -->
+  <div class="stats-row">
+    <a href="/admin/members" class="stat-card">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{totalMembers?.count || 0}</span>
+        <span class="stat-label">Total Members</span>
+      </div>
+    </a>
+
+    <a href="/admin/members?filter=active" class="stat-card stat-success">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{activeMembers?.count || 0}</span>
+        <span class="stat-label">Active</span>
+      </div>
+    </a>
+
+    <a href="/admin/members?filter=expiring" class="stat-card stat-warning">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{expiringMembers?.count || 0}</span>
+        <span class="stat-label">Expiring Soon</span>
+      </div>
+    </a>
+
+    <a href="/admin/members?filter=expired" class="stat-card stat-danger">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{expiredMembers?.count || 0}</span>
+        <span class="stat-label">Expired</span>
+      </div>
+    </a>
+  </div>
+
+  <!-- Main Content Grid -->
+  <div class="dashboard-grid">
+    <!-- Left Column -->
+    <div class="dashboard-main">
+      <!-- Subscriptions Card -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span>Subscriptions</span>
+          </div>
+          <span class="card-badge">{totalSubscriptionCount} members</span>
+        </div>
+        <div class="card-content">
+          <table class="m3-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th class="text-right">Count</th>
+                <th class="text-right">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subscriptionWithValues.map((sub) => (
+                <tr>
+                  <td>
+                    <a href={`/admin/members?subscription_type=${encodeURIComponent(sub.category)}`} class="table-link">
+                      {sub.category}
+                    </a>
+                  </td>
+                  <td class="text-right">{sub.count}</td>
+                  <td class="text-right">{sub.value > 0 ? formatCurrency(sub.value) : '-'}</td>
+                </tr>
+              ))}
+              {subscriptionWithValues.length === 0 && (
+                <tr>
+                  <td colspan="3" class="empty-row">No subscription data</td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Total</strong></td>
+                <td class="text-right"><strong>{totalSubscriptionCount}</strong></td>
+                <td class="text-right"><strong>{formatCurrency(totalSubscriptionValue)}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- EGU Categories Card -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+            <span>EGU Categories</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <p class="table-note">Members with CDH number. Excludes Social, Gratis, Retention, Resigned.</p>
+          <table class="m3-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th class="text-right">Count</th>
+                <th class="text-right">EGU Fees</th>
+              </tr>
+            </thead>
+            <tbody>
+              {eguCategoryWithFees.map((cat) => (
+                <tr>
+                  <td>
+                    <a href={`/admin/members?egu_category=${encodeURIComponent(cat.category)}`} class="table-link">
+                      {cat.category}
+                    </a>
+                  </td>
+                  <td class="text-right">{cat.count}</td>
+                  <td class="text-right">{formatCurrency(cat.fees)}</td>
+                </tr>
+              ))}
+              {eguCategoryWithFees.length === 0 && (
+                <tr>
+                  <td colspan="3" class="empty-row">No EGU data</td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Total</strong></td>
+                <td class="text-right"><strong>{eguCategoryWithFees.reduce((sum, cat) => sum + cat.count, 0)}</strong></td>
+                <td class="text-right"><strong>{formatCurrency(totalEguFees)}</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column -->
+    <div class="dashboard-sidebar">
+      <!-- Financial Summary Card -->
+      <div class="m3-card accent-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="1" x2="12" y2="23"/>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+            </svg>
+            <span>Financial Summary</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <div class="financial-grid">
+            <div class="financial-item">
+              <span class="financial-label">Subscription Value</span>
+              <span class="financial-value">{formatCurrency(totalSubscriptionValue)}</span>
+            </div>
+            <div class="financial-item">
+              <span class="financial-label">EGU Fees Due</span>
+              <span class="financial-value">{formatCurrency(totalEguFees)}</span>
+            </div>
+            {outstandingBalance?.total && outstandingBalance.total < 0 && (
+              <div class="financial-item warning">
+                <span class="financial-label">Outstanding Credits</span>
+                <span class="financial-value">{formatCurrency(Math.abs(outstandingBalance.total))}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Payments Card -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+              <line x1="1" y1="10" x2="23" y2="10"/>
+            </svg>
+            <span>Recent Payments</span>
+          </div>
+          <a href="/admin/payments" class="card-action">View All</a>
+        </div>
+        <div class="card-content">
+          <div class="payment-list">
+            {recentPayments.results?.map((payment) => (
+              <div class="payment-item">
+                <div class="payment-info">
+                  <a href={`/admin/members/${payment.member_id}`} class="payment-name">
+                    {payment.first_name} {payment.surname}
+                  </a>
+                  <span class="payment-date">{formatDate(payment.payment_date as string)}</span>
+                </div>
+                <div class="payment-amount">
+                  {formatCurrency(payment.amount as number)}
+                </div>
+              </div>
+            ))}
+            {(!recentPayments.results || recentPayments.results.length === 0) && (
+              <div class="empty-state">No recent payments</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Actions Card -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span>Quick Actions</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <div class="quick-actions">
+            <a href="/admin/members/new" class="action-btn primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="8.5" cy="7" r="4"/>
+                <line x1="20" y1="8" x2="20" y2="14"/>
+                <line x1="23" y1="11" x2="17" y2="11"/>
+              </svg>
+              Add Member
+            </a>
+            <a href="/admin/members/import" class="action-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              Import Members
+            </a>
+            <a href="/admin/invoices/generate" class="action-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              Generate Invoices
+            </a>
+            <a href="/admin/reports" class="action-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="20" x2="18" y2="10"/>
+                <line x1="12" y1="20" x2="12" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="14"/>
+              </svg>
+              View Reports
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .page-header {
+      margin-bottom: 2rem;
+    }
+
+    .header-content h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      color: #666;
+      font-size: 0.95rem;
+    }
+
+    /* Stats Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      text-decoration: none;
+      transition: all 0.2s ease;
+      border: 1px solid #e8e8e8;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .stat-icon svg {
+      width: 24px;
+      height: 24px;
+      color: #fff;
+    }
+
+    .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+    .stat-warning .stat-icon { background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); }
+    .stat-danger .stat-icon { background: linear-gradient(135deg, #dc3545 0%, #ef4444 100%); }
+
+    .stat-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #1a1a1a;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    /* Dashboard Grid */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 1.5rem;
+    }
+
+    .dashboard-main {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .dashboard-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* M3 Card Styles */
+    .m3-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-badge {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.625rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .card-action {
+      font-size: 0.85rem;
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .card-action:hover {
+      text-decoration: underline;
+    }
+
+    .card-content {
+      padding: 1.25rem;
+    }
+
+    /* Accent Card */
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      border: none;
+    }
+
+    .accent-card .card-header {
+      background: transparent;
+      border-bottom-color: rgba(255,255,255,0.15);
+    }
+
+    .accent-card .card-title {
+      color: #fff;
+    }
+
+    .accent-card .card-title svg {
+      color: rgba(255,255,255,0.9);
+    }
+
+    /* Financial Grid */
+    .financial-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .financial-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      background: rgba(255,255,255,0.15);
+      border-radius: 10px;
+    }
+
+    .financial-item.warning {
+      background: rgba(245,158,11,0.2);
+    }
+
+    .financial-label {
+      color: rgba(255,255,255,0.85);
+      font-size: 0.9rem;
+    }
+
+    .financial-value {
+      color: #fff;
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+
+    /* M3 Table */
+    .m3-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .m3-table th {
+      text-align: left;
+      padding: 0.75rem;
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid #e8e8e8;
+    }
+
+    .m3-table td {
+      padding: 0.75rem;
+      font-size: 0.9rem;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .m3-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .m3-table tfoot td {
+      padding: 0.875rem 0.75rem;
+      background: #f8f9fa;
+      border-top: 2px solid #e8e8e8;
+    }
+
+    .text-right {
+      text-align: right;
+    }
+
+    .table-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .table-link:hover {
+      text-decoration: underline;
+    }
+
+    .table-note {
+      font-size: 0.8rem;
+      color: #666;
+      margin: 0 0 1rem 0;
+      padding: 0.5rem 0.75rem;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+
+    .empty-row {
+      text-align: center;
+      color: #999;
+      padding: 2rem !important;
+    }
+
+    /* Payment List */
+    .payment-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .payment-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.875rem 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .payment-item:last-child {
+      border-bottom: none;
+    }
+
+    .payment-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+
+    .payment-name {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    .payment-name:hover {
+      text-decoration: underline;
+    }
+
+    .payment-date {
+      font-size: 0.8rem;
+      color: #888;
+    }
+
+    .payment-amount {
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: #999;
+      padding: 2rem;
+      font-size: 0.9rem;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.625rem;
+    }
+
+    .action-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
+      background: #f8f9fa;
+      border-radius: 10px;
+      color: #333;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+
+    .action-btn:hover {
+      background: #f0f0f0;
+    }
+
+    .action-btn.primary {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: #fff;
+    }
+
+    .action-btn.primary:hover {
+      background: linear-gradient(135deg, #164024 0%, #246339 100%);
+    }
+
+    .action-btn svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .dashboard-sidebar {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .stats-row {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .dashboard-sidebar {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</AdminLayout>

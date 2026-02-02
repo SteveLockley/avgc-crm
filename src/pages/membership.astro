@@ -1,0 +1,921 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+// Course images
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2019/08/DSC_0178.jpg';
+const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_0584.jpg';
+const clubhouseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg';
+---
+
+<PublicLayout
+  title="Membership"
+  description="Join Alnmouth Village Golf Club. Explore our membership options, benefits, and become part of our welcoming golfing community."
+  heroImage={heroImage}
+  heroTitle="Membership"
+  heroSubtitle="Join our welcoming golfing community"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <!-- Intro -->
+    <section class="section intro-section">
+      <div class="intro-grid">
+        <div class="intro-content">
+          <span class="intro-label">Join Us</span>
+          <h2 class="section-title">Become a Member</h2>
+          <p class="intro-text">
+            Joining Alnmouth Village Golf Club means becoming part of a friendly, welcoming community
+            of golfers. Our members enjoy unlimited access to one of Northumberland's finest links courses,
+            a warm clubhouse atmosphere, and a full calendar of competitions and social events.
+          </p>
+          <p class="intro-text">
+            Whether you're a seasoned golfer or just starting out, we have membership options to suit
+            your lifestyle and budget.
+          </p>
+          <a href="/contact?enquiry=membership" class="btn btn-primary btn-large">Enquire Now</a>
+        </div>
+        <div class="intro-image">
+          <img src={clubhouseImage} alt="Alnmouth Village Golf Club clubhouse" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Membership Categories -->
+    <section class="section categories-section">
+      <div class="section-header">
+        <h2 class="section-title">Membership Categories</h2>
+        <p class="section-subtitle">Find the membership that's right for you</p>
+      </div>
+
+      <div class="membership-grid">
+        <div class="membership-card featured">
+          <div class="membership-header">
+            <h3>Full Member</h3>
+            <div class="membership-price">
+              <span class="price">&pound;432</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Full voting rights</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+              <li>Reciprocal arrangements</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-primary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Under 30</h3>
+            <span class="age-note">Ages 18-29</span>
+            <div class="membership-price">
+              <span class="price">&pound;327.50</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Full voting rights</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Senior Loyalty</h3>
+            <span class="age-note">25+ years membership</span>
+            <div class="membership-price">
+              <span class="price">&pound;321</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Full voting rights</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Out Of County</h3>
+            <span class="age-note">Less than 100 miles</span>
+            <div class="membership-price">
+              <span class="price">&pound;301.50</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Winter</h3>
+            <div class="membership-price">
+              <span class="price">&pound;240.50</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Golf October - March</li>
+              <li>WHS handicap</li>
+              <li>Winter competitions</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Out Of County</h3>
+            <span class="age-note">100+ miles away</span>
+            <div class="membership-price">
+              <span class="price">&pound;224.50</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Twilight</h3>
+            <div class="membership-price">
+              <span class="price">&pound;210</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Afternoon/evening golf</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+            <p class="benefit-note">*Tee time restrictions apply</p>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Over 80</h3>
+            <span class="age-note">Age 80+</span>
+            <div class="membership-price">
+              <span class="price">&pound;186</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Full voting rights</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Intermediate</h3>
+            <span class="age-note">Ages 18-21</span>
+            <div class="membership-price">
+              <span class="price">&pound;139</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf</li>
+              <li>Competition eligibility</li>
+              <li>WHS handicap</li>
+              <li>Member tee time booking</li>
+              <li>Clubhouse privileges</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Junior</h3>
+            <span class="age-note">Under 18</span>
+            <div class="membership-price">
+              <span class="price">&pound;70</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Unlimited golf*</li>
+              <li>Junior competitions</li>
+              <li>WHS handicap</li>
+              <li>Coaching opportunities</li>
+              <li>Junior social events</li>
+            </ul>
+            <p class="benefit-note">*Some time restrictions may apply</p>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Social</h3>
+            <div class="membership-price">
+              <span class="price">&pound;50</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Clubhouse access</li>
+              <li>Social events</li>
+              <li>Bar and catering</li>
+              <li>Support the club</li>
+              <li>Golf at visitor rates</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+
+        <div class="membership-card">
+          <div class="membership-header">
+            <h3>Junior Academy</h3>
+            <span class="age-note">Beginners under 18</span>
+            <div class="membership-price">
+              <span class="price">&pound;40</span>
+              <span class="period">per year</span>
+            </div>
+          </div>
+          <div class="membership-body">
+            <ul class="membership-benefits">
+              <li>Coaching sessions</li>
+              <li>Practice facilities</li>
+              <li>Introduction to golf</li>
+              <li>Junior social events</li>
+              <li>Pathway to Junior membership</li>
+            </ul>
+          </div>
+          <div class="membership-footer">
+            <a href="/contact?enquiry=membership" class="btn btn-secondary">Enquire Now</a>
+          </div>
+        </div>
+      </div>
+
+      <p class="pricing-note">
+        All membership fees are subject to an additional England Golf affiliation fee (&pound;12)
+        and Northumberland County fee (&pound;6.50). Locker rental is &pound;10 per year.
+        Prices shown are for 2025 and may be subject to change.
+      </p>
+    </section>
+
+    <!-- Benefits -->
+    <section class="section benefits-section">
+      <div class="section-header">
+        <h2 class="section-title">Member Benefits</h2>
+        <p class="section-subtitle">Why join Alnmouth Village?</p>
+      </div>
+
+      <div class="benefits-grid">
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+          </div>
+          <h3>Unlimited Golf</h3>
+          <p>Play as much as you like on our beautiful links course with no green fees.</p>
+        </div>
+
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h3>Competitions</h3>
+          <p>A full calendar of club competitions, opens, and friendly matches throughout the year.</p>
+        </div>
+
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <h3>Social Events</h3>
+          <p>Regular social gatherings, quiz nights, dinners, and celebrations.</p>
+        </div>
+
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </div>
+          <h3>Priority Booking</h3>
+          <p>Members enjoy priority access to tee times through our online booking system.</p>
+        </div>
+
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          </div>
+          <h3>WHS Handicap</h3>
+          <p>Official World Handicap System index maintained through England Golf.</p>
+        </div>
+
+        <div class="benefit-card">
+          <div class="benefit-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </div>
+          <h3>Clubhouse</h3>
+          <p>Full use of our clubhouse facilities, bar, and catering services.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- How to Join -->
+    <section class="section join-section">
+      <div class="join-grid">
+        <div class="join-content">
+          <span class="join-label">Getting Started</span>
+          <h2 class="section-title">How to Join</h2>
+          <div class="join-steps">
+            <div class="join-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h3>Get in Touch</h3>
+                <p>Contact us to discuss membership options and arrange a visit to the club.</p>
+              </div>
+            </div>
+            <div class="join-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h3>Visit the Club</h3>
+                <p>Come and see the course and clubhouse. We'll be happy to show you around.</p>
+              </div>
+            </div>
+            <div class="join-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h3>Complete Application</h3>
+                <p>Fill in a membership application form with your details and proposer/seconder.</p>
+              </div>
+            </div>
+            <div class="join-step">
+              <div class="step-number">4</div>
+              <div class="step-content">
+                <h3>Welcome to the Club!</h3>
+                <p>Once approved, you'll receive your membership card and can start playing.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="join-image">
+          <img src={courseImage} alt="The course at Alnmouth Village" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section cta-section">
+      <div class="cta-card">
+        <div class="cta-content">
+          <h2>Ready to Join?</h2>
+          <p>Contact us today to start your membership journey</p>
+        </div>
+        <div class="cta-actions">
+          <a href="/contact?enquiry=membership" class="btn btn-primary btn-large">Contact Us</a>
+          <a href="tel:01665830370" class="btn btn-outline-light btn-large">Call 01665 830370</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    /* Intro Section */
+    .intro-section {
+      padding-top: 4rem;
+    }
+
+    .intro-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .intro-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .intro-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .intro-content .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .intro-text {
+      color: var(--text-light);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      margin-bottom: 1rem;
+    }
+
+    .intro-content .btn {
+      margin-top: 1rem;
+    }
+
+    .intro-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .intro-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Categories Section */
+    .categories-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .membership-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 640px) {
+      .membership-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 900px) {
+      .membership-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (min-width: 1200px) {
+      .membership-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .membership-card {
+      background: var(--white);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .membership-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+    }
+
+    .membership-card.featured {
+      box-shadow: 0 8px 30px rgba(30, 86, 49, 0.2);
+    }
+
+    .membership-header {
+      background: var(--surface);
+      padding: 1.5rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .membership-card.featured .membership-header {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      color: var(--white);
+      border-bottom: none;
+    }
+
+    .membership-header h3 {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      margin: 0 0 0.25rem 0;
+    }
+
+    .age-note {
+      font-size: 0.8rem;
+      opacity: 0.8;
+    }
+
+    .membership-price {
+      margin-top: 0.75rem;
+    }
+
+    .membership-price .price {
+      font-family: var(--font-display);
+      font-size: 1.75rem;
+      font-weight: 600;
+    }
+
+    .membership-card.featured .price {
+      color: var(--white);
+    }
+
+    .membership-price .period {
+      font-size: 0.85rem;
+      opacity: 0.8;
+    }
+
+    .membership-body {
+      flex: 1;
+      padding: 1.5rem;
+    }
+
+    .membership-benefits {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .membership-benefits li {
+      padding: 0.4rem 0;
+      padding-left: 1.5rem;
+      position: relative;
+      color: var(--text-light);
+      font-size: 0.9rem;
+    }
+
+    .membership-benefits li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      color: var(--primary);
+      font-weight: bold;
+    }
+
+    .benefit-note {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+      font-style: italic;
+    }
+
+    .membership-footer {
+      padding: 1.5rem;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .membership-footer .btn {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .pricing-note {
+      text-align: center;
+      font-size: 0.9rem;
+      color: var(--text-light);
+      margin-top: 2.5rem;
+      padding: 1.5rem;
+      background: var(--white);
+      border-radius: 12px;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.7;
+    }
+
+    /* Benefits Section */
+    .benefits-section {
+      padding: 5rem 0;
+    }
+
+    .benefits-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 640px) {
+      .benefits-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .benefits-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .benefit-card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .benefit-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.08);
+    }
+
+    .benefit-icon {
+      width: 60px;
+      height: 60px;
+      background: var(--primary);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.25rem;
+    }
+
+    .benefit-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--white);
+    }
+
+    .benefit-card h3 {
+      font-family: var(--font-display);
+      margin-bottom: 0.75rem;
+      font-size: 1.1rem;
+    }
+
+    .benefit-card p {
+      font-size: 0.95rem;
+      color: var(--text-light);
+      margin: 0;
+      line-height: 1.7;
+    }
+
+    /* Join Section */
+    .join-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .join-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 900px) {
+      .join-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .join-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .join-content .section-title {
+      margin-bottom: 2rem;
+    }
+
+    .join-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .join-step {
+      display: flex;
+      gap: 1.25rem;
+      align-items: flex-start;
+    }
+
+    .step-number {
+      width: 48px;
+      height: 48px;
+      background: var(--primary);
+      color: var(--white);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .step-content h3 {
+      font-family: var(--font-display);
+      margin: 0 0 0.25rem 0;
+      font-size: 1.05rem;
+    }
+
+    .step-content p {
+      margin: 0;
+      color: var(--text-light);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    .join-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .join-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      padding: 5rem 0;
+    }
+
+    .cta-card {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      border-radius: 24px;
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--white);
+    }
+
+    @media (min-width: 768px) {
+      .cta-card {
+        padding: 4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .cta-content h2 {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .cta-content p {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .cta-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .cta-actions {
+        margin-top: 0;
+      }
+    }
+
+    .cta-card .btn-primary {
+      background: var(--white);
+      color: var(--primary);
+      border-color: var(--white);
+    }
+
+    .cta-card .btn-primary:hover {
+      background: var(--secondary);
+    }
+
+    .btn-outline-light {
+      background: transparent;
+      color: var(--white);
+      border: 2px solid rgba(255,255,255,0.5);
+    }
+
+    .btn-outline-light:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--white);
+    }
+  </style>
+</PublicLayout>

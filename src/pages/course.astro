@@ -1,0 +1,739 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+// Course images
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2019/08/DSC_0178.jpg';
+const courseImage1 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_0584.jpg';
+const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_9895.jpg';
+---
+
+<PublicLayout
+  title="The Course"
+  description="Discover our stunning 18-hole links course at Alnmouth Village Golf Club with breathtaking views of the Northumberland coast."
+  heroImage={heroImage}
+  heroTitle="The Course"
+  heroSubtitle="18 holes of classic links golf on the Northumberland coast"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <!-- Course Overview -->
+    <section class="section intro-section">
+      <div class="intro-grid">
+        <div class="intro-content">
+          <span class="intro-label">Since 1869</span>
+          <h2 class="section-title">A True Links Experience</h2>
+          <p class="intro-text">
+            Alnmouth Village Golf Club offers one of the finest links experiences in Northumberland.
+            Our 18-hole course provides a challenging yet fair test of golf for players of all abilities,
+            with stunning views of the coast and the Cheviot Hills.
+          </p>
+          <p class="intro-text">
+            The course measures 6,088 yards from the white tees (par 69) and features the
+            traditional links characteristics of firm, fast-running fairways, subtle undulations,
+            and well-protected greens. The prevailing coastal winds add an extra dimension to
+            every round.
+          </p>
+        </div>
+        <div class="intro-image">
+          <img src={courseImage1} alt="Links fairway at Alnmouth Village" loading="lazy" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Course Stats -->
+    <section class="section stats-section">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-number">18</span>
+          <span class="stat-label">Holes</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-number">69</span>
+          <span class="stat-label">Par</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-number">6,088</span>
+          <span class="stat-label">Yards</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-number">1869</span>
+          <span class="stat-label">Established</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Course Features -->
+    <section class="section features-section">
+      <div class="features-image">
+        <img src={courseImage2} alt="Alnmouth Village Golf Club course" loading="lazy" />
+        <div class="features-overlay"></div>
+      </div>
+      <div class="features-content">
+        <span class="features-label">What Makes Us Special</span>
+        <h2>Course Features</h2>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Traditional Links</h3>
+              <p>Firm, fast-running fairways and classic links terrain provide an authentic golfing experience.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Coastal Views</h3>
+              <p>Breathtaking panoramas of the Northumberland coast and Cheviot Hills accompany every round.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Well-Maintained</h3>
+              <p>Our dedicated greenkeeping team ensures excellent course conditions throughout the year.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Scorecard -->
+    <section class="section scorecard-section">
+      <div class="section-header">
+        <h2 class="section-title">Course Card</h2>
+        <p class="section-subtitle">Hole-by-hole details from the white tees</p>
+      </div>
+
+      <div class="scorecard-wrapper">
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>1</th>
+              <th>2</th>
+              <th>3</th>
+              <th>4</th>
+              <th>5</th>
+              <th>6</th>
+              <th>7</th>
+              <th>8</th>
+              <th>9</th>
+              <th class="total">Out</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Yards</td>
+              <td>342</td>
+              <td>378</td>
+              <td>162</td>
+              <td>390</td>
+              <td>457</td>
+              <td>154</td>
+              <td>372</td>
+              <td>303</td>
+              <td>380</td>
+              <td class="total">2938</td>
+            </tr>
+            <tr>
+              <td class="label">Par</td>
+              <td>4</td>
+              <td>4</td>
+              <td>3</td>
+              <td>4</td>
+              <td>5</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td class="total">35</td>
+            </tr>
+            <tr>
+              <td class="label">S.I.</td>
+              <td>11</td>
+              <td>5</td>
+              <td>15</td>
+              <td>3</td>
+              <td>7</td>
+              <td>17</td>
+              <td>1</td>
+              <td>13</td>
+              <td>9</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>10</th>
+              <th>11</th>
+              <th>12</th>
+              <th>13</th>
+              <th>14</th>
+              <th>15</th>
+              <th>16</th>
+              <th>17</th>
+              <th>18</th>
+              <th class="total">In</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Yards</td>
+              <td>390</td>
+              <td>145</td>
+              <td>328</td>
+              <td>425</td>
+              <td>320</td>
+              <td>175</td>
+              <td>397</td>
+              <td>448</td>
+              <td>522</td>
+              <td class="total">3150</td>
+            </tr>
+            <tr>
+              <td class="label">Par</td>
+              <td>4</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>5</td>
+              <td class="total">35</td>
+            </tr>
+            <tr>
+              <td class="label">S.I.</td>
+              <td>4</td>
+              <td>18</td>
+              <td>12</td>
+              <td>2</td>
+              <td>14</td>
+              <td>16</td>
+              <td>6</td>
+              <td>8</td>
+              <td>10</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="scorecard-totals">
+          <div class="total-item">
+            <span class="total-label">Total</span>
+            <span class="total-value">6,088 yards</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">Par</span>
+            <span class="total-value">69</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">SSS</span>
+            <span class="total-value">69</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Signature Holes -->
+    <section class="section signature-section">
+      <div class="section-header">
+        <h2 class="section-title">Signature Holes</h2>
+        <p class="section-subtitle">Two holes that define the Alnmouth experience</p>
+      </div>
+
+      <div class="holes-grid">
+        <div class="hole-card">
+          <div class="hole-badge">Hole 7</div>
+          <div class="hole-content">
+            <h3>372 yards · Par 4 · S.I. 1</h3>
+            <p>
+              Stroke index 1 for good reason. This demanding par 4 requires accuracy off the tee
+              to avoid the out of bounds on the left. The approach to an elevated green,
+              protected by bunkers, is one of the most challenging on the course.
+            </p>
+          </div>
+        </div>
+
+        <div class="hole-card">
+          <div class="hole-badge">Hole 18</div>
+          <div class="hole-content">
+            <h3>522 yards · Par 5 · S.I. 10</h3>
+            <p>
+              A fitting finale to your round. This par 5 offers a risk-reward opportunity
+              for longer hitters, while the wise player will lay up short of the bunkers
+              before attacking the well-protected green.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="section cta-section">
+      <div class="cta-card">
+        <div class="cta-content">
+          <h2>Ready to Play?</h2>
+          <p>Book your round and experience Alnmouth Village for yourself</p>
+        </div>
+        <div class="cta-actions">
+          <a href="/visitors" class="btn btn-primary btn-large">View Green Fees</a>
+          <a href="https://www.brsgolf.com/alnmouthvillage/visitor_menu.php" target="_blank" rel="noopener noreferrer" class="btn btn-outline-light btn-large">
+            Book Online
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    /* Intro Section */
+    .intro-section {
+      padding-top: 4rem;
+    }
+
+    .intro-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: center;
+    }
+
+    @media (min-width: 900px) {
+      .intro-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 4rem;
+      }
+    }
+
+    .intro-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .intro-content .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .intro-text {
+      color: var(--text-light);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      margin-bottom: 1rem;
+    }
+
+    .intro-image {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+
+    .intro-image img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Stats Section */
+    .stats-section {
+      padding: 3rem 0;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+    }
+
+    @media (min-width: 768px) {
+      .stats-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1.5rem;
+      }
+    }
+
+    .stat-card {
+      background: var(--primary);
+      color: var(--white);
+      padding: 2rem 1.5rem;
+      border-radius: 16px;
+      text-align: center;
+    }
+
+    .stat-number {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 2.5rem;
+      font-weight: 600;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-label {
+      font-size: 0.9rem;
+      opacity: 0.9;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* Features Section */
+    .features-section {
+      position: relative;
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 0;
+      display: grid;
+      min-height: 550px;
+    }
+
+    @media (min-width: 900px) {
+      .features-section {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .features-image {
+      position: relative;
+      min-height: 350px;
+    }
+
+    .features-image img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .features-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to right, rgba(26,77,46,0.95), rgba(26,77,46,0.7));
+    }
+
+    @media (min-width: 900px) {
+      .features-overlay {
+        background: linear-gradient(to right, transparent, rgba(26,77,46,0.98));
+      }
+    }
+
+    .features-content {
+      background: var(--primary);
+      color: var(--white);
+      padding: 3rem 2rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    @media (min-width: 900px) {
+      .features-content {
+        padding: 4rem;
+      }
+    }
+
+    .features-label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      opacity: 0.8;
+      margin-bottom: 0.75rem;
+    }
+
+    .features-content h2 {
+      font-family: var(--font-display);
+      font-size: 2.25rem;
+      font-weight: 600;
+      margin-bottom: 2rem;
+    }
+
+    .features-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .feature-item {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .feature-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .feature-item h3 {
+      font-size: 1.1rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .feature-item p {
+      font-size: 0.9rem;
+      opacity: 0.85;
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    /* Scorecard Section */
+    .scorecard-section {
+      padding: 5rem 0;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .scorecard-wrapper {
+      overflow-x: auto;
+      background: var(--white);
+      border-radius: 16px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .scorecard {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .scorecard th,
+    .scorecard td {
+      padding: 0.875rem 0.625rem;
+      text-align: center;
+      border: 1px solid var(--border-light);
+    }
+
+    .scorecard th {
+      background: var(--primary);
+      color: var(--white);
+      font-weight: 600;
+    }
+
+    .scorecard td.label {
+      background: var(--surface);
+      font-weight: 600;
+      text-align: left;
+      padding-left: 1rem;
+    }
+
+    .scorecard th.total,
+    .scorecard td.total {
+      background: var(--primary-dark);
+      color: var(--white);
+      font-weight: 700;
+    }
+
+    .scorecard-totals {
+      display: flex;
+      gap: 3rem;
+      justify-content: center;
+      padding: 1.5rem;
+      background: var(--surface);
+      border-radius: 12px;
+      margin-top: 1rem;
+    }
+
+    .total-item {
+      text-align: center;
+    }
+
+    .total-label {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .total-value {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    /* Signature Holes */
+    .signature-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .holes-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 768px) {
+      .holes-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .hole-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      display: flex;
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+
+    .hole-badge {
+      width: 70px;
+      height: 70px;
+      background: var(--primary);
+      color: var(--white);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-display);
+      font-size: 0.9rem;
+      font-weight: 600;
+      flex-shrink: 0;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .hole-content h3 {
+      font-size: 1rem;
+      color: var(--primary);
+      margin-bottom: 0.75rem;
+    }
+
+    .hole-content p {
+      font-size: 0.95rem;
+      color: var(--text-light);
+      line-height: 1.7;
+      margin: 0;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      padding: 5rem 0;
+    }
+
+    .cta-card {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+      border-radius: 24px;
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--white);
+    }
+
+    @media (min-width: 768px) {
+      .cta-card {
+        padding: 4rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    .cta-content h2 {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .cta-content p {
+      font-size: 1.1rem;
+      opacity: 0.9;
+      margin: 0;
+    }
+
+    .cta-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .cta-actions {
+        margin-top: 0;
+      }
+    }
+
+    .cta-card .btn-primary {
+      background: var(--white);
+      color: var(--primary);
+      border-color: var(--white);
+    }
+
+    .cta-card .btn-primary:hover {
+      background: var(--secondary);
+    }
+
+    .btn-outline-light {
+      background: transparent;
+      color: var(--white);
+      border: 2px solid rgba(255,255,255,0.5);
+    }
+
+    .btn-outline-light:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--white);
+    }
+  </style>
+</PublicLayout>

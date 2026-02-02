@@ -1,0 +1,137 @@
+---
+import PublicLayout from '../../layouts/PublicLayout.astro';
+
+const { slug } = Astro.params;
+const db = Astro.locals.runtime?.env?.DB;
+
+// Fetch the article
+let article: any = null;
+try {
+  if (db) {
+    article = await db.prepare(
+      `SELECT *
+       FROM website_news
+       WHERE slug = ? AND published = 1`
+    ).bind(slug).first();
+  }
+} catch (e) {
+  console.error('Error fetching article:', e);
+}
+
+if (!article) {
+  return Astro.redirect('/news');
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+---
+
+<PublicLayout
+  title={article.title}
+  description={article.excerpt || article.title}
+  heroImage={article.image}
+  heroTitle={article.title}
+  heroSubtitle={formatDate(article.publish_date)}
+>
+  <div class="content">
+    <section class="section">
+      <article class="article">
+        <div class="article-content" set:html={article.content} />
+
+        <div class="article-footer">
+          <a href="/news" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5"/>
+              <polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to News
+          </a>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <style>
+    .article {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .article-content {
+      font-size: 1.05rem;
+      line-height: 1.8;
+      color: var(--text);
+    }
+
+    .article-content :global(h2) {
+      font-size: 1.5rem;
+      margin: 2rem 0 1rem;
+      color: var(--primary);
+    }
+
+    .article-content :global(h3) {
+      font-size: 1.25rem;
+      margin: 1.5rem 0 1rem;
+    }
+
+    .article-content :global(p) {
+      margin-bottom: 1.5rem;
+    }
+
+    .article-content :global(img) {
+      max-width: 100%;
+      height: auto;
+      border-radius: 12px;
+      margin: 2rem 0;
+    }
+
+    .article-content :global(ul),
+    .article-content :global(ol) {
+      margin-bottom: 1.5rem;
+      padding-left: 1.5rem;
+    }
+
+    .article-content :global(li) {
+      margin-bottom: 0.5rem;
+    }
+
+    .article-content :global(blockquote) {
+      border-left: 4px solid var(--primary);
+      padding-left: 1.5rem;
+      margin: 2rem 0;
+      font-style: italic;
+      color: var(--text-light);
+    }
+
+    .article-footer {
+      margin-top: 3rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .back-link svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .back-link:hover {
+      text-decoration: underline;
+    }
+  </style>
+</PublicLayout>

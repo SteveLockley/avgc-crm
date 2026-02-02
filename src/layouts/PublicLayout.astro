@@ -1,0 +1,903 @@
+---
+import FAQBot from '../components/public/FAQBot.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  heroImage?: string;
+  heroVideo?: string;
+  heroTitle?: string;
+  heroSubtitle?: string;
+  heroSize?: 'standard' | 'large' | 'fullscreen';
+  heroOverlay?: 'light' | 'medium' | 'dark';
+}
+
+const {
+  title,
+  description,
+  heroImage,
+  heroVideo,
+  heroTitle,
+  heroSubtitle,
+  heroSize = 'standard',
+  heroOverlay = 'medium'
+} = Astro.props;
+const currentPath = Astro.url.pathname;
+
+const navItems = [
+  { href: '/', label: 'Home' },
+  { href: '/course', label: 'The Course' },
+  { href: '/visitors', label: 'Visitors' },
+  { href: '/membership', label: 'Membership' },
+  { href: '/clubhouse', label: 'Clubhouse' },
+  { href: '/contact', label: 'Contact' },
+];
+
+const isActive = (href: string) => {
+  if (href === '/') return currentPath === '/';
+  return currentPath.startsWith(href);
+};
+
+const hasHero = heroImage || heroVideo || heroTitle;
+const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title} | Alnmouth Village Golf Club</title>
+  <meta name="description" content={description || 'Welcome to Alnmouth Village Golf Club - a stunning links course on the Northumberland coast, established 1869.'}>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class={isLargeHero ? 'has-large-hero' : ''}>
+  <!-- Header -->
+  <header class={`header ${isLargeHero ? 'header-transparent' : ''}`} id="header">
+    <div class="header-container">
+      <a href="/" class="logo">
+        <div class="logo-text">
+          <span class="logo-name">Alnmouth Village</span>
+          <span class="logo-subtitle">Golf Club · Est. 1869</span>
+        </div>
+      </a>
+
+      <nav class="nav">
+        {navItems.map(item => (
+          <a href={item.href} class={`nav-link ${isActive(item.href) ? 'active' : ''}`}>
+            {item.label}
+          </a>
+        ))}
+        <a href="/members/login" class="nav-link nav-cta">Members</a>
+      </nav>
+
+      <button class="menu-btn" id="menu-btn" aria-label="Toggle menu">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Mobile Navigation -->
+  <nav class="mobile-nav" id="mobile-nav">
+    {navItems.map(item => (
+      <a href={item.href} class={`mobile-nav-link ${isActive(item.href) ? 'active' : ''}`}>
+        {item.label}
+      </a>
+    ))}
+    <a href="/members/login" class="mobile-nav-link mobile-nav-cta">Members Area</a>
+  </nav>
+
+  <!-- Hero Section -->
+  {hasHero && (
+    <section class={`hero hero-${heroSize} overlay-${heroOverlay}`}>
+      {heroVideo ? (
+        <video class="hero-media" autoplay muted loop playsinline poster={heroImage}>
+          <source src={heroVideo} type="video/mp4" />
+        </video>
+      ) : heroImage ? (
+        <img src={heroImage} alt="" class="hero-media" />
+      ) : null}
+      <div class="hero-overlay"></div>
+      <div class="hero-content">
+        {heroSize === 'fullscreen' && (
+          <div class="hero-badge">Welcome to</div>
+        )}
+        <h1 class="hero-title">{heroTitle || title}</h1>
+        {heroSubtitle && <p class="hero-subtitle">{heroSubtitle}</p>}
+        {heroSize === 'fullscreen' && (
+          <div class="hero-actions">
+            <a href="/visitors" class="btn btn-primary btn-large">Plan Your Visit</a>
+            <a href="/course" class="btn btn-outline btn-large">Explore the Course</a>
+          </div>
+        )}
+      </div>
+      {heroSize === 'fullscreen' && (
+        <div class="hero-scroll">
+          <span>Scroll to explore</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </div>
+      )}
+    </section>
+  )}
+
+  <!-- Main Content -->
+  <main class={`main ${hasHero ? 'has-hero' : ''}`}>
+    <slot />
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-grid">
+        <div class="footer-section footer-about">
+          <h3>Alnmouth Village Golf Club</h3>
+          <p>A stunning links course on the beautiful Northumberland coast, offering challenging golf with spectacular sea views since 1869.</p>
+          <div class="footer-social">
+            <a href="https://www.facebook.com/p/Alnmouth-Village-Golf-Club-100063579043415/" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
+              <svg fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            </a>
+            <a href="https://www.instagram.com/alnmouthvillagegolf/" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+              <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12.315 2c2.43 0 2.784.013 3.808.06 1.064.049 1.791.218 2.427.465a4.902 4.902 0 011.772 1.153 4.902 4.902 0 011.153 1.772c.247.636.416 1.363.465 2.427.048 1.067.06 1.407.06 4.123v.08c0 2.643-.012 2.987-.06 4.043-.049 1.064-.218 1.791-.465 2.427a4.902 4.902 0 01-1.153 1.772 4.902 4.902 0 01-1.772 1.153c-.636.247-1.363.416-2.427.465-1.067.048-1.407.06-4.123.06h-.08c-2.643 0-2.987-.012-4.043-.06-1.064-.049-1.791-.218-2.427-.465a4.902 4.902 0 01-1.772-1.153 4.902 4.902 0 01-1.153-1.772c-.247-.636-.416-1.363-.465-2.427-.047-1.024-.06-1.379-.06-3.808v-.63c0-2.43.013-2.784.06-3.808.049-1.064.218-1.791.465-2.427a4.902 4.902 0 011.153-1.772A4.902 4.902 0 015.45 2.525c.636-.247 1.363-.416 2.427-.465C8.901 2.013 9.256 2 11.685 2h.63zm-.081 1.802h-.468c-2.456 0-2.784.011-3.807.058-.975.045-1.504.207-1.857.344-.467.182-.8.398-1.15.748-.35.35-.566.683-.748 1.15-.137.353-.3.882-.344 1.857-.047 1.023-.058 1.351-.058 3.807v.468c0 2.456.011 2.784.058 3.807.045.975.207 1.504.344 1.857.182.466.399.8.748 1.15.35.35.683.566 1.15.748.353.137.882.3 1.857.344 1.054.048 1.37.058 4.041.058h.08c2.597 0 2.917-.01 3.96-.058.976-.045 1.505-.207 1.858-.344.466-.182.8-.398 1.15-.748.35-.35.566-.683.748-1.15.137-.353.3-.882.344-1.857.048-1.055.058-1.37.058-4.041v-.08c0-2.597-.01-2.917-.058-3.96-.045-.976-.207-1.505-.344-1.858a3.097 3.097 0 00-.748-1.15 3.098 3.098 0 00-1.15-.748c-.353-.137-.882-.3-1.857-.344-1.023-.047-1.351-.058-3.807-.058zM12 6.865a5.135 5.135 0 110 10.27 5.135 5.135 0 010-10.27zm0 1.802a3.333 3.333 0 100 6.666 3.333 3.333 0 000-6.666zm5.338-3.205a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg>
+            </a>
+          </div>
+        </div>
+
+        <div class="footer-section">
+          <h3>Quick Links</h3>
+          <a href="/course">The Course</a>
+          <a href="/visitors">Visitor Information</a>
+          <a href="/membership">Membership</a>
+          <a href="/clubhouse">Clubhouse</a>
+          <a href="/contact">Contact Us</a>
+        </div>
+
+        <div class="footer-section">
+          <h3>For Members</h3>
+          <a href="/members/login">Members Login</a>
+          <a href="https://members.brsgolf.com/alnmouthvillage" target="_blank" rel="noopener noreferrer">Book Tee Time</a>
+          <a href="/members/handbook">Members Handbook</a>
+          <a href="/members/results">Competition Results</a>
+        </div>
+
+        <div class="footer-section">
+          <h3>Contact</h3>
+          <div class="footer-contact">
+            <p>Marine Road, Alnmouth<br>Northumberland NE66 2RZ</p>
+            <p><a href="tel:01665830370">01665 830370</a></p>
+            <p><a href="mailto:Manager@AlnmouthVillage.Golf">Manager@AlnmouthVillage.Golf</a></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <p>&copy; {new Date().getFullYear()} Alnmouth Village Golf Club. All rights reserved.</p>
+        <div class="footer-links">
+          <a href="/faq">FAQ</a>
+          <a href="/contact">Contact</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script is:inline>
+    // Mobile menu toggle
+    const menuBtn = document.getElementById('menu-btn');
+    const mobileNav = document.getElementById('mobile-nav');
+
+    menuBtn?.addEventListener('click', () => {
+      menuBtn.classList.toggle('open');
+      mobileNav?.classList.toggle('open');
+      document.body.style.overflow = mobileNav?.classList.contains('open') ? 'hidden' : '';
+    });
+
+    // Header scroll effect
+    const header = document.getElementById('header');
+    const updateHeader = () => {
+      if (window.scrollY > 100) {
+        header?.classList.add('scrolled');
+      } else {
+        header?.classList.remove('scrolled');
+      }
+    };
+    window.addEventListener('scroll', updateHeader);
+    updateHeader();
+  </script>
+
+  <!-- FAQ Bot -->
+  <FAQBot />
+
+  <style is:global>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --primary: #1a4d2e;
+      --primary-dark: #0f3320;
+      --primary-light: #2d7a47;
+      --secondary: #f8f6f3;
+      --accent: #c9a227;
+      --text: #1a1a1a;
+      --text-light: #5a5a5a;
+      --text-muted: #8a8a8a;
+      --border: #e0e0e0;
+      --border-light: #f0f0f0;
+      --success: #28a745;
+      --warning: #ffc107;
+      --danger: #dc3545;
+      --white: #fff;
+      --surface: #fafaf8;
+      --header-height: 80px;
+      --font-display: 'Playfair Display', Georgia, serif;
+      --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--white);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.6;
+    }
+
+    body.has-large-hero {
+      --header-height: 90px;
+    }
+
+    /* Header */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--header-height);
+      background: var(--white);
+      z-index: 1000;
+      transition: all 0.4s ease;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .header-transparent {
+      background: transparent;
+      border-bottom-color: transparent;
+    }
+
+    .header-transparent .logo-name,
+    .header-transparent .logo-subtitle,
+    .header-transparent .nav-link {
+      color: var(--white);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .header-transparent .nav-cta {
+      background: var(--white);
+      color: var(--primary) !important;
+      text-shadow: none;
+    }
+
+    .header-transparent .menu-btn span {
+      background: var(--white);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .header.scrolled {
+      background: rgba(255,255,255,0.98);
+      backdrop-filter: blur(20px);
+      border-bottom-color: var(--border-light);
+    }
+
+    .header.scrolled .logo-name,
+    .header.scrolled .logo-subtitle,
+    .header.scrolled .nav-link {
+      color: var(--text);
+      text-shadow: none;
+    }
+
+    .header.scrolled .nav-link.active,
+    .header.scrolled .nav-link:hover {
+      color: var(--primary);
+    }
+
+    .header.scrolled .nav-cta {
+      background: var(--primary);
+      color: var(--white) !important;
+    }
+
+    .header.scrolled .menu-btn span {
+      background: var(--text);
+      box-shadow: none;
+    }
+
+    .header-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 2rem;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      text-decoration: none;
+    }
+
+    .logo-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .logo-name {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: var(--primary);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      transition: color 0.4s;
+    }
+
+    .logo-subtitle {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      transition: color 0.4s;
+    }
+
+    /* Desktop Navigation */
+    .nav {
+      display: none;
+    }
+
+    .nav-link {
+      padding: 0.6rem 1rem;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.3s;
+      position: relative;
+    }
+
+    .nav-link::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 1rem;
+      right: 1rem;
+      height: 2px;
+      background: var(--primary);
+      transform: scaleX(0);
+      transition: transform 0.3s;
+    }
+
+    .nav-link:hover::after,
+    .nav-link.active::after {
+      transform: scaleX(1);
+    }
+
+    .nav-cta {
+      margin-left: 1rem;
+      padding: 0.6rem 1.5rem;
+      background: var(--primary);
+      color: var(--white) !important;
+      border-radius: 6px;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .nav-cta::after {
+      display: none;
+    }
+
+    .nav-cta:hover {
+      background: var(--primary-dark);
+      transform: translateY(-1px);
+    }
+
+    /* Mobile menu button */
+    .menu-btn {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      z-index: 1001;
+    }
+
+    .menu-btn span {
+      display: block;
+      width: 26px;
+      height: 2px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: all 0.3s;
+    }
+
+    .menu-btn.open span:nth-child(1) {
+      transform: rotate(45deg) translate(6px, 6px);
+    }
+
+    .menu-btn.open span:nth-child(2) {
+      opacity: 0;
+    }
+
+    .menu-btn.open span:nth-child(3) {
+      transform: rotate(-45deg) translate(6px, -6px);
+    }
+
+    /* Mobile Navigation */
+    .mobile-nav {
+      position: fixed;
+      top: var(--header-height);
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--white);
+      padding: 1.5rem;
+      display: none;
+      flex-direction: column;
+      z-index: 999;
+      overflow-y: auto;
+    }
+
+    .mobile-nav.open {
+      display: flex;
+    }
+
+    .mobile-nav-link {
+      padding: 1.25rem 1rem;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 1.1rem;
+      font-weight: 500;
+      border-bottom: 1px solid var(--border-light);
+      transition: all 0.2s;
+    }
+
+    .mobile-nav-link:hover,
+    .mobile-nav-link.active {
+      color: var(--primary);
+    }
+
+    .mobile-nav-cta {
+      margin-top: 1.5rem;
+      padding: 1.25rem;
+      background: var(--primary);
+      color: var(--white) !important;
+      text-align: center;
+      border-radius: 8px;
+      font-weight: 600;
+      border: none;
+    }
+
+    /* Hero Section */
+    .hero {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: var(--primary);
+    }
+
+    .hero-standard {
+      min-height: 350px;
+      margin-top: var(--header-height);
+    }
+
+    .hero-large {
+      min-height: 60vh;
+      margin-top: 0;
+      padding-top: var(--header-height);
+    }
+
+    .hero-fullscreen {
+      min-height: 100vh;
+      margin-top: 0;
+    }
+
+    .hero-media {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+    }
+
+    .overlay-light .hero-overlay {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.4));
+    }
+
+    .overlay-medium .hero-overlay {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.3), rgba(0,0,0,0.55));
+    }
+
+    .overlay-dark .hero-overlay {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.4), rgba(0,0,0,0.7));
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 2rem;
+      max-width: 900px;
+    }
+
+    .hero-badge {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      color: rgba(255,255,255,0.85);
+      margin-bottom: 1rem;
+    }
+
+    .hero-title {
+      font-family: var(--font-display);
+      font-size: 2.5rem;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 0.75rem;
+      text-shadow: 0 2px 20px rgba(0,0,0,0.3);
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+
+    .hero-fullscreen .hero-title {
+      font-size: 3.5rem;
+    }
+
+    .hero-subtitle {
+      font-size: 1.15rem;
+      color: rgba(255,255,255,0.9);
+      text-shadow: 0 1px 10px rgba(0,0,0,0.3);
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    .hero-scroll {
+      position: absolute;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      color: rgba(255,255,255,0.8);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      animation: bounce 2s infinite;
+    }
+
+    .hero-scroll svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    @keyframes bounce {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(8px); }
+    }
+
+    /* Main content */
+    .main {
+      flex: 1;
+      padding-top: var(--header-height);
+    }
+
+    .main.has-hero {
+      padding-top: 0;
+    }
+
+    .content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Footer */
+    .footer {
+      background: var(--primary);
+      color: var(--white);
+      padding: 4rem 2rem 2rem;
+    }
+
+    .footer-container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+      margin-bottom: 3rem;
+    }
+
+    .footer-section h3 {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      color: var(--white);
+    }
+
+    .footer-about p {
+      color: rgba(255,255,255,0.8);
+      font-size: 0.95rem;
+      line-height: 1.7;
+      margin-bottom: 1.5rem;
+    }
+
+    .footer-section a {
+      display: block;
+      color: rgba(255,255,255,0.8);
+      font-size: 0.9rem;
+      text-decoration: none;
+      padding: 0.4rem 0;
+      transition: color 0.2s;
+    }
+
+    .footer-section a:hover {
+      color: var(--white);
+    }
+
+    .footer-contact p {
+      color: rgba(255,255,255,0.8);
+      font-size: 0.9rem;
+      line-height: 1.7;
+      margin-bottom: 0.75rem;
+    }
+
+    .footer-social {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .footer-social a {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
+      transition: all 0.3s;
+    }
+
+    .footer-social a:hover {
+      background: rgba(255,255,255,0.2);
+      transform: translateY(-2px);
+    }
+
+    .footer-social svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .footer-bottom {
+      padding-top: 2rem;
+      border-top: 1px solid rgba(255,255,255,0.15);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      text-align: center;
+    }
+
+    .footer-bottom p {
+      color: rgba(255,255,255,0.6);
+      font-size: 0.85rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+    }
+
+    .footer-links a {
+      color: rgba(255,255,255,0.6);
+      font-size: 0.85rem;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--white);
+    }
+
+    /* Responsive */
+    @media (min-width: 768px) {
+      .nav {
+        display: flex;
+        align-items: center;
+      }
+
+      .menu-btn {
+        display: none;
+      }
+
+      .hero-title {
+        font-size: 3rem;
+      }
+
+      .hero-fullscreen .hero-title {
+        font-size: 4.5rem;
+      }
+
+      .hero-subtitle {
+        font-size: 1.25rem;
+      }
+
+      .footer-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .footer-bottom {
+        flex-direction: row;
+        justify-content: space-between;
+        text-align: left;
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .hero-large {
+        min-height: 70vh;
+      }
+
+      .hero-title {
+        font-size: 3.5rem;
+      }
+
+      .hero-fullscreen .hero-title {
+        font-size: 5rem;
+      }
+
+      .footer-grid {
+        grid-template-columns: 2fr 1fr 1fr 1.5fr;
+      }
+    }
+
+    /* Common components */
+    .section {
+      padding: 4rem 0;
+    }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.02em;
+    }
+
+    .section-subtitle {
+      color: var(--text-light);
+      font-size: 1.1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.875rem 1.75rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.3s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: var(--white);
+      border-color: var(--primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+      border-color: var(--primary-dark);
+      transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+      background: var(--white);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--white);
+      border-color: var(--white);
+    }
+
+    .btn-outline:hover {
+      background: var(--white);
+      color: var(--primary);
+    }
+
+    .btn-large {
+      padding: 1rem 2.25rem;
+      font-size: 1rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    .grid-2 {
+      grid-template-columns: 1fr;
+    }
+
+    .grid-3 {
+      grid-template-columns: 1fr;
+    }
+
+    .grid-4 {
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 640px) {
+      .grid-2, .grid-3, .grid-4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .grid-3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .grid-4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .text-center { text-align: center; }
+  </style>
+</body>
+</html>

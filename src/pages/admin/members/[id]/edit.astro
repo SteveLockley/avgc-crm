@@ -1,0 +1,794 @@
+---
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+import { FEE_TEMPLATES, ZERO_COST_SUBSCRIPTIONS, PAYMENT_METHODS, AGE_GROUPS } from '../../../../lib/db';
+
+const { id } = Astro.params;
+const db = Astro.locals.runtime.env.DB;
+
+let error = '';
+let success = '';
+
+const member = await db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first();
+
+if (!member) {
+  return Astro.redirect('/members');
+}
+
+const subscriptionTypesResult = await db.prepare(
+  `SELECT name FROM payment_items WHERE category = 'Subscription' AND active = 1 ORDER BY name`
+).all();
+const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
+
+const isZeroCostSubscription = (category: string | null): boolean => {
+  if (!category) return false;
+  return ZERO_COST_SUBSCRIPTIONS.some(zc => category === zc);
+};
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+
+  const updates: Record<string, any> = {};
+  const fields = [
+    'surname', 'first_name', 'middle_initials', 'title', 'gender', 'date_of_birth',
+    'address_1', 'address_2', 'address_3', 'address_4', 'address_5',
+    'telephone_1', 'telephone_2', 'telephone_3', 'email',
+    'category', 'age_group', 'home_away', 'home_club', 'subscription_template',
+    'handicap_index', 'national_id', 'national_id_country',
+    'date_joined', 'date_renewed', 'date_expires', 'date_subscription_paid',
+    'default_payment_method', 'account_balance', 'competition_fee_purse',
+    'locker_number', 'additional_locker', 'send_invoice_by',
+    'account_notes', 'notes', 'officer_title', 'pin', 'club_number',
+    'electronic_communication_consent', 'parental_consent'
+  ];
+
+  for (const field of fields) {
+    const value = formData.get(field);
+    if (value !== null) {
+      updates[field] = value === '' ? null : value;
+    }
+  }
+
+  if (updates.handicap_index) updates.handicap_index = parseFloat(updates.handicap_index) || null;
+  if (updates.account_balance) updates.account_balance = parseFloat(updates.account_balance) || 0;
+  if (updates.competition_fee_purse) updates.competition_fee_purse = parseFloat(updates.competition_fee_purse) || 0;
+
+  const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+  const values = Object.values(updates);
+
+  try {
+    await db.prepare(
+      `UPDATE members SET ${setClauses}, updated_at = datetime('now') WHERE id = ?`
+    ).bind(...values, id).run();
+
+    await db.prepare(
+      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
+       VALUES (?, 'update', 'member', ?, ?)`
+    ).bind(Astro.locals.user?.email || 'system', id, JSON.stringify(updates)).run();
+
+    success = 'Member updated successfully';
+
+    const updatedMember = await db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first();
+    if (updatedMember) Object.assign(member, updatedMember);
+  } catch (e: any) {
+    error = `Failed to update member: ${e.message}`;
+  }
+}
+
+function formatDateForInput(dateStr: string | null): string {
+  if (!dateStr) return '';
+  try {
+    if (dateStr.includes('/')) {
+      const [day, month, year] = dateStr.split('/');
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    const date = new Date(dateStr);
+    return date.toISOString().split('T')[0];
+  } catch {
+    return '';
+  }
+}
+---
+
+<AdminLayout title={`Edit ${member.first_name} ${member.surname}`}>
+  <div class="edit-page">
+    <!-- Header -->
+    <div class="page-header">
+      <div class="header-left">
+        <button type="button" onclick="history.back()" class="back-btn">←</button>
+        <div>
+          <h1>Edit Member</h1>
+          <p class="subtitle">{member.first_name} {member.surname}</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <a href={`/members/${id}`} class="btn btn-secondary">Cancel</a>
+        <button type="submit" form="edit-form" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+
+    {error && <div class="alert alert-error">{error}</div>}
+    {success && <div class="alert alert-success">{success}</div>}
+
+    <form method="POST" id="edit-form">
+      <div class="form-grid">
+        <!-- Left Column -->
+        <div class="form-column">
+          <!-- Personal Information -->
+          <div class="m3-card">
+            <div class="card-icon">👤</div>
+            <h2>Personal Information</h2>
+
+            <div class="field-row four-col">
+              <div class="field">
+                <label for="title">Title</label>
+                <select name="title" id="title">
+                  <option value="">-</option>
+                  {['Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Prof'].map(t => (
+                    <option value={t} selected={member.title === t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="field">
+                <label for="first_name">First Name *</label>
+                <input type="text" name="first_name" id="first_name" required value={member.first_name} />
+              </div>
+              <div class="field">
+                <label for="middle_initials">Initials</label>
+                <input type="text" name="middle_initials" id="middle_initials" value={member.middle_initials || ''} />
+              </div>
+              <div class="field">
+                <label for="surname">Surname *</label>
+                <input type="text" name="surname" id="surname" required value={member.surname} />
+              </div>
+            </div>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="gender">Gender</label>
+                <select name="gender" id="gender">
+                  <option value="">-</option>
+                  <option value="M" selected={member.gender === 'M'}>Male</option>
+                  <option value="F" selected={member.gender === 'F'}>Female</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="date_of_birth">Date of Birth</label>
+                <input type="date" name="date_of_birth" id="date_of_birth" value={formatDateForInput(member.date_of_birth as string)} />
+              </div>
+              <div class="field">
+                <label for="age_group">Age Group</label>
+                <select name="age_group" id="age_group">
+                  <option value="">-</option>
+                  {AGE_GROUPS.map(ag => (
+                    <option value={ag} selected={member.age_group === ag}>{ag}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Information -->
+          <div class="m3-card">
+            <div class="card-icon">📱</div>
+            <h2>Contact</h2>
+
+            <div class="field full-width">
+              <label for="email">Email</label>
+              <input type="email" name="email" id="email" value={member.email || ''} />
+            </div>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="telephone_1">Phone 1</label>
+                <input type="tel" name="telephone_1" id="telephone_1" value={member.telephone_1 || ''} />
+              </div>
+              <div class="field">
+                <label for="telephone_2">Phone 2</label>
+                <input type="tel" name="telephone_2" id="telephone_2" value={member.telephone_2 || ''} />
+              </div>
+              <div class="field">
+                <label for="telephone_3">Phone 3</label>
+                <input type="tel" name="telephone_3" id="telephone_3" value={member.telephone_3 || ''} />
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="address_1">Address Line 1</label>
+                <input type="text" name="address_1" id="address_1" value={member.address_1 || ''} />
+              </div>
+              <div class="field">
+                <label for="address_2">Address Line 2</label>
+                <input type="text" name="address_2" id="address_2" value={member.address_2 || ''} />
+              </div>
+            </div>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="address_3">Town/City</label>
+                <input type="text" name="address_3" id="address_3" value={member.address_3 || ''} />
+              </div>
+              <div class="field">
+                <label for="address_4">County</label>
+                <input type="text" name="address_4" id="address_4" value={member.address_4 || ''} />
+              </div>
+              <div class="field">
+                <label for="address_5">Postcode</label>
+                <input type="text" name="address_5" id="address_5" value={member.address_5 || ''} />
+              </div>
+            </div>
+          </div>
+
+          <!-- Membership -->
+          <div class="m3-card">
+            <div class="card-icon">🏌️</div>
+            <h2>Membership</h2>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="category">Subscription Type</label>
+                <select name="category" id="category">
+                  <option value="">-</option>
+                  {subscriptionTypes.map(sub => (
+                    <option value={sub} selected={member.category === sub}>{sub}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="field" id="fee-template-group" style={isZeroCostSubscription(member.category as string) ? '' : 'display: none;'}>
+                <label for="subscription_template">Fee Template</label>
+                <select name="subscription_template" id="subscription_template">
+                  <option value="">-</option>
+                  {FEE_TEMPLATES.map(ft => (
+                    <option value={ft} selected={member.subscription_template === ft}>{ft}</option>
+                  ))}
+                </select>
+                <span class="field-hint">For Life, Honorary, Gratis only</span>
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="home_away">Home/Away</label>
+                <select name="home_away" id="home_away">
+                  <option value="">-</option>
+                  <option value="H" selected={member.home_away === 'H'}>Home</option>
+                  <option value="A" selected={member.home_away === 'A'}>Away</option>
+                  <option value="V" selected={member.home_away === 'V'}>Visitor</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="home_club">Home Club</label>
+                <input type="text" name="home_club" id="home_club" value={member.home_club || 'Alnmouth Village'} />
+              </div>
+            </div>
+
+            <div class="field-row four-col">
+              <div class="field">
+                <label for="date_joined">Joined</label>
+                <input type="date" name="date_joined" id="date_joined" value={formatDateForInput(member.date_joined as string)} />
+              </div>
+              <div class="field">
+                <label for="date_renewed">Renewed</label>
+                <input type="date" name="date_renewed" id="date_renewed" value={formatDateForInput(member.date_renewed as string)} />
+              </div>
+              <div class="field">
+                <label for="date_expires">Expires</label>
+                <input type="date" name="date_expires" id="date_expires" value={formatDateForInput(member.date_expires as string)} />
+              </div>
+              <div class="field">
+                <label for="date_subscription_paid">Paid</label>
+                <input type="date" name="date_subscription_paid" id="date_subscription_paid" value={formatDateForInput(member.date_subscription_paid as string)} />
+              </div>
+            </div>
+          </div>
+
+          <!-- Golf -->
+          <div class="m3-card">
+            <div class="card-icon">⛳</div>
+            <h2>Golf / WHS</h2>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="handicap_index">Handicap Index</label>
+                <input type="number" step="0.1" name="handicap_index" id="handicap_index" value={member.handicap_index || ''} />
+              </div>
+              <div class="field">
+                <label for="national_id">WHS National ID</label>
+                <input type="text" name="national_id" id="national_id" value={member.national_id || ''} />
+              </div>
+              <div class="field">
+                <label for="national_id_country">Country</label>
+                <input type="text" name="national_id_country" id="national_id_country" value={member.national_id_country || 'England'} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="form-column">
+          <!-- Financial -->
+          <div class="m3-card accent-card">
+            <h2>Financial</h2>
+
+            <div class="field">
+              <label for="default_payment_method">Payment Method</label>
+              <select name="default_payment_method" id="default_payment_method">
+                <option value="">-</option>
+                {PAYMENT_METHODS.map(pm => (
+                  <option value={pm} selected={member.default_payment_method === pm}>{pm}</option>
+                ))}
+              </select>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="account_balance">Balance (£)</label>
+                <input type="number" step="0.01" name="account_balance" id="account_balance" value={member.account_balance || 0} />
+              </div>
+              <div class="field">
+                <label for="competition_fee_purse">Comp Purse (£)</label>
+                <input type="number" step="0.01" name="competition_fee_purse" id="competition_fee_purse" value={member.competition_fee_purse || 0} />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="send_invoice_by">Invoice By</label>
+              <select name="send_invoice_by" id="send_invoice_by">
+                <option value="Email" selected={member.send_invoice_by === 'Email'}>Email</option>
+                <option value="Letter" selected={member.send_invoice_by === 'Letter'}>Letter</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Admin -->
+          <div class="m3-card">
+            <h2>Admin</h2>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="pin">PIN</label>
+                <input type="text" name="pin" id="pin" value={member.pin || ''} />
+              </div>
+              <div class="field">
+                <label for="club_number">Club Number</label>
+                <input type="text" name="club_number" id="club_number" value={member.club_number || ''} />
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="locker_number">Locker</label>
+                <input type="text" name="locker_number" id="locker_number" value={member.locker_number || ''} />
+              </div>
+              <div class="field">
+                <label for="additional_locker">Additional Locker</label>
+                <input type="text" name="additional_locker" id="additional_locker" value={member.additional_locker || ''} />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="officer_title">Committee Role</label>
+              <input type="text" name="officer_title" id="officer_title" value={member.officer_title || ''} placeholder="Not on Committee" />
+            </div>
+          </div>
+
+          <!-- Consent -->
+          <div class="m3-card">
+            <h2>Consent / GDPR</h2>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="electronic_communication_consent">Email Consent</label>
+                <select name="electronic_communication_consent" id="electronic_communication_consent">
+                  <option value="">-</option>
+                  <option value="Yes" selected={member.electronic_communication_consent === 'Yes'}>Yes</option>
+                  <option value="No" selected={member.electronic_communication_consent === 'No'}>No</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="parental_consent">Parental Consent</label>
+                <select name="parental_consent" id="parental_consent">
+                  <option value="">-</option>
+                  <option value="Yes" selected={member.parental_consent === 'Yes'}>Yes</option>
+                  <option value="No" selected={member.parental_consent === 'No'}>No</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notes -->
+          <div class="m3-card">
+            <h2>Notes</h2>
+
+            <div class="field">
+              <label for="account_notes">Account Notes</label>
+              <textarea name="account_notes" id="account_notes" rows="3">{member.account_notes || ''}</textarea>
+            </div>
+
+            <div class="field">
+              <label for="notes">General Notes</label>
+              <textarea name="notes" id="notes" rows="3">{member.notes || ''}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Actions (mobile) -->
+      <div class="bottom-actions">
+        <a href={`/members/${id}`} class="btn btn-secondary">Cancel</a>
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+
+  <style>
+    .edit-page {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 768px) {
+      .header-actions {
+        display: none;
+      }
+    }
+
+    /* Alerts */
+    .alert {
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      font-weight: 500;
+    }
+
+    .alert-error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    .alert-success {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+
+    /* Form Grid */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 1100px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* M3 Cards */
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 1.25rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: white;
+    }
+
+    .accent-card h2 {
+      color: white;
+    }
+
+    .accent-card label {
+      color: rgba(255,255,255,0.8);
+    }
+
+    .accent-card input,
+    .accent-card select,
+    .accent-card textarea {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.3);
+      color: white;
+    }
+
+    .accent-card input::placeholder {
+      color: rgba(255,255,255,0.5);
+    }
+
+    .accent-card input:focus,
+    .accent-card select:focus {
+      border-color: rgba(255,255,255,0.6);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
+    }
+
+    /* Fields */
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: white;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .field textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .field-hint {
+      display: block;
+      font-size: 0.75rem;
+      color: #888;
+      margin-top: 0.25rem;
+    }
+
+    .field.full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* Field Rows */
+    .field-row {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .field-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-row .field {
+      margin-bottom: 0;
+    }
+
+    .two-col {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .three-col {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .four-col {
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+    }
+
+    @media (max-width: 768px) {
+      .two-col,
+      .three-col,
+      .four-col {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .two-col,
+      .three-col,
+      .four-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.65rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-primary {
+      background: #1e5631;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #164424;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    /* Bottom Actions (mobile) */
+    .bottom-actions {
+      display: none;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      justify-content: flex-end;
+    }
+
+    @media (max-width: 768px) {
+      .bottom-actions {
+        display: flex;
+      }
+    }
+  </style>
+
+  <script is:inline define:vars={{ zeroCostSubscriptions: ZERO_COST_SUBSCRIPTIONS }}>
+    const categorySelect = document.getElementById('category');
+    const feeTemplateGroup = document.getElementById('fee-template-group');
+    const feeTemplateSelect = document.getElementById('subscription_template');
+
+    function updateFeeTemplateVisibility() {
+      const selectedCategory = categorySelect.value;
+      const isZeroCost = zeroCostSubscriptions.includes(selectedCategory);
+      feeTemplateGroup.style.display = isZeroCost ? '' : 'none';
+      if (!isZeroCost) feeTemplateSelect.value = '';
+    }
+
+    categorySelect.addEventListener('change', updateFeeTemplateVisibility);
+
+    // Unsaved changes detection
+    const form = document.getElementById('edit-form');
+    let initialFormData = new FormData(form);
+    let formSubmitting = false;
+
+    function getFormDataString(formData) {
+      return Array.from(formData.entries()).map(([k, v]) => `${k}=${v}`).sort().join('&');
+    }
+
+    function hasUnsavedChanges() {
+      return getFormDataString(initialFormData) !== getFormDataString(new FormData(form));
+    }
+
+    form.addEventListener('submit', () => { formSubmitting = true; });
+
+    window.addEventListener('beforeunload', (e) => {
+      if (!formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    document.querySelectorAll('a[href]').forEach(link => {
+      link.addEventListener('click', async (e) => {
+        if (!formSubmitting && hasUnsavedChanges()) {
+          e.preventDefault();
+          const confirmed = await m3Confirm('You have unsaved changes. Leave anyway?', {
+            title: 'Unsaved Changes',
+            confirmText: 'Leave',
+            cancelText: 'Stay'
+          });
+          if (confirmed) window.location.href = link.href;
+        }
+      });
+    });
+
+    document.querySelectorAll('button[onclick*="history.back"]').forEach(btn => {
+      btn.onclick = null;
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!formSubmitting && hasUnsavedChanges()) {
+          const confirmed = await m3Confirm('You have unsaved changes. Leave anyway?', {
+            title: 'Unsaved Changes',
+            confirmText: 'Leave',
+            cancelText: 'Stay'
+          });
+          if (confirmed) history.back();
+        } else {
+          history.back();
+        }
+      });
+    });
+
+    if (document.querySelector('.alert-success')) {
+      initialFormData = new FormData(form);
+    }
+  </script>
+</AdminLayout>

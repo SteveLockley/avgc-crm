@@ -1,0 +1,393 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatCurrency, getFullName, type Invoice, type InvoiceItem, type Member } from '../../../lib/db';
+import { generateInvoiceEmail, generateInvoiceSubject } from '../../../lib/email-template';
+import { sendEmail, isEmailConfigured, isValidEmail } from '../../../lib/email';
+
+const db = Astro.locals.runtime.env.DB;
+const user = Astro.locals.user;
+const env = Astro.locals.runtime.env;
+
+// Get invoice IDs from query params
+const url = Astro.url;
+const idsParam = url.searchParams.get('ids') || '';
+const invoiceIds = idsParam.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+if (invoiceIds.length === 0) {
+  return Astro.redirect('/invoices');
+}
+
+// Get settings
+const settingsResult = await db.prepare(
+  `SELECT * FROM invoice_settings`
+).all();
+const settings: Record<string, string> = {};
+settingsResult.results?.forEach((row: any) => {
+  settings[row.setting_key] = row.setting_value;
+});
+
+// Get invoices with member data
+const invoices: Array<{
+  invoice: Invoice;
+  member: Member;
+  items: InvoiceItem[];
+  emailHtml: string;
+  emailSubject: string;
+}> = [];
+
+for (const invoiceId of invoiceIds) {
+  const invoice = await db.prepare(
+    `SELECT * FROM invoices WHERE id = ? AND status = 'draft'`
+  ).bind(invoiceId).first<Invoice>();
+
+  if (!invoice) continue;
+
+  const member = await db.prepare(
+    `SELECT * FROM members WHERE id = ?`
+  ).bind(invoice.member_id).first<Member>();
+
+  if (!member) continue;
+
+  const itemsResult = await db.prepare(
+    `SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id`
+  ).bind(invoiceId).all();
+  const items = (itemsResult.results || []) as InvoiceItem[];
+
+  const periodYear = parseInt(invoice.period_start.substring(0, 4));
+  const emailHtml = generateInvoiceEmail({
+    member,
+    invoice,
+    items,
+    settings,
+  });
+  const emailSubject = generateInvoiceSubject(invoice, periodYear);
+
+  invoices.push({ invoice, member, items, emailHtml, emailSubject });
+}
+
+if (invoices.length === 0) {
+  return Astro.redirect('/invoices?error=no_valid_invoices');
+}
+
+// Check email configuration
+const emailConfigured = isEmailConfigured(env);
+
+let error = '';
+let success = '';
+let sentCount = 0;
+let failedCount = 0;
+
+// Handle form submission
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  if (action === 'send_test' || action === 'send_test_direct') {
+    // Send test email to logged-in user
+    const testEmail = formData.get('test_email') as string || user?.email;
+    const useDirectMailbox = action === 'send_test_direct';
+
+    if (!testEmail || !isValidEmail(testEmail)) {
+      error = 'Invalid test email address';
+    } else if (!emailConfigured) {
+      error = 'Email is not configured. Please set up Azure AD credentials.';
+    } else {
+      const firstInvoice = invoices[0];
+      const result = await sendEmail({
+        to: testEmail,
+        subject: `[TEST] ${firstInvoice.emailSubject}`,
+        html: firstInvoice.emailHtml,
+        useServiceAccountMailbox: useDirectMailbox,
+      }, {
+        AZURE_TENANT_ID: env.AZURE_TENANT_ID,
+        AZURE_CLIENT_ID: env.AZURE_CLIENT_ID,
+        AZURE_CLIENT_SECRET: env.AZURE_CLIENT_SECRET,
+        AZURE_SERVICE_USER: env.AZURE_SERVICE_USER,
+        AZURE_SERVICE_PASSWORD: env.AZURE_SERVICE_PASSWORD,
+      });
+
+      if (result.success) {
+        success = useDirectMailbox
+          ? `Test email sent from service account mailbox to ${testEmail}`
+          : `Test email sent to ${testEmail}`;
+      } else {
+        error = `Failed to send test email: ${result.error}`;
+      }
+    }
+
+  } else if (action === 'send_all') {
+    // Send all invoices
+    if (!emailConfigured) {
+      error = 'Email is not configured. Please set up Azure AD credentials.';
+    } else {
+      for (const { invoice, member, emailHtml, emailSubject } of invoices) {
+        if (!member.email || !isValidEmail(member.email)) {
+          failedCount++;
+          continue;
+        }
+
+        const result = await sendEmail({
+          to: member.email,
+          subject: emailSubject,
+          html: emailHtml,
+        }, {
+          AZURE_TENANT_ID: env.AZURE_TENANT_ID,
+          AZURE_CLIENT_ID: env.AZURE_CLIENT_ID,
+          AZURE_CLIENT_SECRET: env.AZURE_CLIENT_SECRET,
+          AZURE_SERVICE_USER: env.AZURE_SERVICE_USER,
+          AZURE_SERVICE_PASSWORD: env.AZURE_SERVICE_PASSWORD,
+        });
+
+        if (result.success) {
+          // Update invoice status
+          await db.prepare(
+            `UPDATE invoices SET
+              status = 'sent',
+              sent_at = datetime('now'),
+              sent_to_email = ?,
+              updated_at = datetime('now')
+            WHERE id = ?`
+          ).bind(member.email, invoice.id).run();
+
+          sentCount++;
+        } else {
+          failedCount++;
+        }
+
+        // Small delay between emails
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      if (sentCount > 0) {
+        // Log to audit
+        await db.prepare(
+          `INSERT INTO audit_log (user_email, action, entity_type, details)
+           VALUES (?, 'send_invoices', 'invoices', ?)`
+        ).bind(
+          user?.email || 'system',
+          JSON.stringify({ sent: sentCount, failed: failedCount })
+        ).run();
+
+        success = `Successfully sent ${sentCount} invoice(s)`;
+        if (failedCount > 0) {
+          success += ` (${failedCount} failed)`;
+        }
+      } else {
+        error = `Failed to send any invoices. ${failedCount} failed.`;
+      }
+    }
+  }
+}
+
+// Get current preview index
+const previewIndex = parseInt(url.searchParams.get('preview') || '0');
+const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
+---
+
+<AdminLayout title="Preview & Send Invoices">
+  {error && (
+    <div class="alert alert-error">{error}</div>
+  )}
+
+  {success && (
+    <div class="alert alert-success">
+      {success}
+      <a href="/admin/invoices?status=sent" style="margin-left: 1rem;">View Sent Invoices</a>
+    </div>
+  )}
+
+  <!-- Header -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+      <a href="/admin/invoices" class="btn btn-secondary">&larr; Back to Invoices</a>
+    </div>
+    <div>
+      <span class="badge badge-info" style="font-size: 1rem; padding: 0.5rem 1rem;">
+        {invoices.length} Invoice(s) Ready to Send
+      </span>
+    </div>
+  </div>
+
+  {!emailConfigured && (
+    <div class="alert alert-error">
+      <strong>Email Not Configured:</strong> To send invoices via email, you need to configure Azure AD credentials
+      (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) in Cloudflare.
+      <a href="/admin/invoices/settings">View setup instructions</a>
+    </div>
+  )}
+
+  <div style="display: grid; grid-template-columns: 300px 1fr; gap: 1.5rem;">
+    <!-- Sidebar: Invoice List -->
+    <div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Invoices to Send</h3>
+        </div>
+
+        <div style="max-height: 400px; overflow-y: auto;">
+          {invoices.map((data, index) => (
+            <a
+              href={`?ids=${idsParam}&preview=${index}`}
+              style={`
+                display: block;
+                padding: 0.75rem;
+                border-bottom: 1px solid #eee;
+                text-decoration: none;
+                color: inherit;
+                background: ${index === previewIndex ? '#f0f7f0' : 'transparent'};
+              `}
+            >
+              <div style="font-weight: 500;">{getFullName(data.member)}</div>
+              <div style="font-size: 0.875rem; color: #666;">
+                {data.invoice.invoice_number}
+              </div>
+              <div style="font-size: 0.875rem;">
+                {data.member.email ? (
+                  <span style="color: #28a745;">{data.member.email}</span>
+                ) : (
+                  <span style="color: #dc3545;">No email</span>
+                )}
+              </div>
+              <div style="font-size: 0.875rem; font-weight: 500;">
+                {formatCurrency(data.invoice.total)}
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Actions</h3>
+        </div>
+
+        <form method="POST" style="margin-bottom: 1rem;">
+          <input type="hidden" name="action" value="send_test" />
+          <div class="form-group">
+            <label class="form-label">Send Test Email To</label>
+            <input
+              type="email"
+              name="test_email"
+              class="form-input"
+              value={user?.email || ''}
+              placeholder="your@email.com"
+            />
+          </div>
+          <button type="submit" class="btn btn-secondary" style="width: 100%;" disabled={!emailConfigured}>
+            Send Test (from shared mailbox)
+          </button>
+        </form>
+
+        <form method="POST" style="margin-bottom: 1rem;">
+          <input type="hidden" name="action" value="send_test_direct" />
+          <input type="hidden" name="test_email" value={user?.email || ''} />
+          <button type="submit" class="btn btn-secondary" style="width: 100%; font-size: 0.8rem;" disabled={!emailConfigured}>
+            Test Direct (from service account)
+          </button>
+          <p style="margin: 0.25rem 0 0; font-size: 0.75rem; color: #666;">
+            Bypasses shared mailbox - for diagnostics
+          </p>
+        </form>
+
+        <form method="POST" id="send-all-form" data-count={invoices.length}>
+          <input type="hidden" name="action" value="send_all" />
+          <button
+            type="submit"
+            class="btn btn-primary"
+            style="width: 100%;"
+            disabled={!emailConfigured}
+          >
+            Send All {invoices.length} Invoice(s)
+          </button>
+        </form>
+
+        {!emailConfigured && (
+          <p style="margin: 1rem 0 0 0; font-size: 0.875rem; color: #dc3545;">
+            Email sending is disabled. Configure Azure AD credentials to enable.
+          </p>
+        )}
+      </div>
+
+      <!-- Summary -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Summary</h3>
+        </div>
+        <div style="font-size: 0.875rem;">
+          <p style="margin: 0 0 0.5rem 0;">
+            <strong>Total Invoices:</strong> {invoices.length}
+          </p>
+          <p style="margin: 0 0 0.5rem 0;">
+            <strong>With Email:</strong> {invoices.filter(i => i.member.email && isValidEmail(i.member.email)).length}
+          </p>
+          <p style="margin: 0 0 0.5rem 0;">
+            <strong>Without Email:</strong> {invoices.filter(i => !i.member.email || !isValidEmail(i.member.email)).length}
+          </p>
+          <p style="margin: 0; font-weight: 600;">
+            <strong>Total Value:</strong> {formatCurrency(invoices.reduce((sum, i) => sum + i.invoice.total, 0))}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main: Email Preview -->
+    <div>
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Email Preview</h3>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            {previewIndex > 0 && (
+              <a href={`?ids=${idsParam}&preview=${previewIndex - 1}`} class="btn btn-secondary btn-sm">
+                &larr; Previous
+              </a>
+            )}
+            <span style="color: #666; font-size: 0.875rem;">
+              {previewIndex + 1} of {invoices.length}
+            </span>
+            {previewIndex < invoices.length - 1 && (
+              <a href={`?ids=${idsParam}&preview=${previewIndex + 1}`} class="btn btn-secondary btn-sm">
+                Next &rarr;
+              </a>
+            )}
+          </div>
+        </div>
+
+        <div style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
+          <p style="margin: 0 0 0.25rem 0; font-size: 0.875rem;">
+            <strong>To:</strong> {currentPreview.member.email || 'No email address'}
+          </p>
+          <p style="margin: 0; font-size: 0.875rem;">
+            <strong>Subject:</strong> {currentPreview.emailSubject}
+          </p>
+        </div>
+
+        <div style="border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">
+          <iframe
+            style="width: 100%; height: 700px; border: none;"
+            srcdoc={currentPreview.emailHtml}
+          ></iframe>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    document.getElementById('send-all-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const count = e.target.dataset.count;
+      const confirmed = await m3Confirm(
+        `This will send ${count} invoice(s) to members via email. This cannot be undone.`,
+        {
+          title: 'Send Invoices?',
+          type: 'warning',
+          confirmText: 'Send All',
+          cancelText: 'Cancel'
+        }
+      );
+      if (confirmed) {
+        e.target.submit();
+      }
+    });
+  </script>
+</AdminLayout>

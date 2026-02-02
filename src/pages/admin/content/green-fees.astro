@@ -1,0 +1,585 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+interface GreenFee {
+  id: number;
+  category: string;
+  label: string;
+  badge: string | null;
+  price_18_holes: number | null;
+  price_day_ticket: number | null;
+  price_weekday: number | null;
+  price_weekend: number | null;
+  is_featured: number;
+  sort_order: number;
+  year: number;
+}
+
+interface AdditionalFee {
+  id: number;
+  name: string;
+  description: string | null;
+  price: number;
+  sort_order: number;
+  is_active: number;
+}
+
+let greenFees: GreenFee[] = [];
+let additionalFees: AdditionalFee[] = [];
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+const currentYear = new Date().getFullYear();
+
+// Handle form submissions
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  try {
+    if (action === 'update_green_fees') {
+      // Get all fee IDs from the form
+      const feeIds = formData.getAll('fee_id');
+
+      for (const id of feeIds) {
+        const label = formData.get(`label_${id}`)?.toString() || '';
+        const badge = formData.get(`badge_${id}`)?.toString() || '';
+        const price18 = parseInt(formData.get(`price_18_${id}`)?.toString() || '0') * 100;
+        const priceDay = parseInt(formData.get(`price_day_${id}`)?.toString() || '0') * 100;
+        const priceWeekday = parseInt(formData.get(`price_weekday_${id}`)?.toString() || '0') * 100;
+        const priceWeekend = parseInt(formData.get(`price_weekend_${id}`)?.toString() || '0') * 100;
+        const isFeatured = formData.get(`featured_${id}`) === 'on' ? 1 : 0;
+
+        await db.prepare(
+          `UPDATE green_fees SET
+            label = ?, badge = ?, price_18_holes = ?, price_day_ticket = ?,
+            price_weekday = ?, price_weekend = ?, is_featured = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        ).bind(
+          label, badge || null,
+          price18 || null, priceDay || null,
+          priceWeekday || null, priceWeekend || null,
+          isFeatured, id
+        ).run();
+      }
+      message = 'Green fees updated successfully';
+      messageType = 'success';
+    }
+
+    if (action === 'update_additional_fees') {
+      const feeIds = formData.getAll('additional_fee_id');
+
+      for (const id of feeIds) {
+        const name = formData.get(`add_name_${id}`)?.toString() || '';
+        const description = formData.get(`add_desc_${id}`)?.toString() || '';
+        const price = parseInt(formData.get(`add_price_${id}`)?.toString() || '0') * 100;
+        const isActive = formData.get(`add_active_${id}`) === 'on' ? 1 : 0;
+
+        await db.prepare(
+          `UPDATE additional_fees SET name = ?, description = ?, price = ?, is_active = ? WHERE id = ?`
+        ).bind(name, description || null, price, isActive, id).run();
+      }
+      message = 'Additional fees updated successfully';
+      messageType = 'success';
+    }
+
+    if (action === 'add_additional_fee') {
+      const name = formData.get('new_name')?.toString() || '';
+      const description = formData.get('new_desc')?.toString() || '';
+      const price = parseInt(formData.get('new_price')?.toString() || '0') * 100;
+
+      if (name && price > 0) {
+        const maxOrder = await db.prepare(
+          `SELECT MAX(sort_order) as max_order FROM additional_fees`
+        ).first<{ max_order: number }>();
+
+        await db.prepare(
+          `INSERT INTO additional_fees (name, description, price, sort_order, is_active) VALUES (?, ?, ?, ?, 1)`
+        ).bind(name, description || null, price, (maxOrder?.max_order || 0) + 1).run();
+
+        message = 'Additional fee added successfully';
+        messageType = 'success';
+      }
+    }
+
+    if (action === 'delete_additional_fee') {
+      const id = formData.get('delete_id');
+      if (id) {
+        await db.prepare(`DELETE FROM additional_fees WHERE id = ?`).bind(id).run();
+        message = 'Additional fee deleted';
+        messageType = 'success';
+      }
+    }
+
+  } catch (e: any) {
+    message = e.message || 'An error occurred';
+    messageType = 'error';
+  }
+}
+
+// Fetch current fees
+if (db) {
+  try {
+    const feesResult = await db.prepare(
+      `SELECT * FROM green_fees WHERE year = ? ORDER BY sort_order`
+    ).bind(currentYear).all<GreenFee>();
+    greenFees = feesResult.results || [];
+
+    const additionalResult = await db.prepare(
+      `SELECT * FROM additional_fees ORDER BY sort_order`
+    ).all<AdditionalFee>();
+    additionalFees = additionalResult.results || [];
+  } catch (e) {
+    console.error('Error fetching fees:', e);
+  }
+}
+
+// Helper to format price from pence to pounds
+function toPounds(pence: number | null): string {
+  if (pence === null || pence === 0) return '';
+  return (pence / 100).toFixed(0);
+}
+---
+
+<AdminLayout title="Green Fees">
+  <div class="page-header">
+    <h1>Green Fees Management</h1>
+    <p class="subtitle">Manage visitor green fees and additional charges for {currentYear}</p>
+  </div>
+
+  {message && (
+    <div class={`alert alert-${messageType}`}>
+      {message}
+    </div>
+  )}
+
+  <!-- Green Fees Section -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Green Fees {currentYear}</h3>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="update_green_fees" />
+
+      <div class="fees-grid">
+        {greenFees.map(fee => (
+          <div class={`fee-edit-card ${fee.is_featured ? 'featured' : ''}`}>
+            <input type="hidden" name="fee_id" value={fee.id} />
+
+            <div class="fee-header-edit">
+              <div class="form-group">
+                <label>Label</label>
+                <input type="text" name={`label_${fee.id}`} value={fee.label} class="form-input" />
+              </div>
+              <div class="form-group">
+                <label>Badge</label>
+                <input type="text" name={`badge_${fee.id}`} value={fee.badge || ''} class="form-input" placeholder="e.g., Mon - Fri" />
+              </div>
+            </div>
+
+            {fee.category === 'twilight' ? (
+              <div class="price-inputs">
+                <div class="form-group">
+                  <label>Weekday Price</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_weekday_${fee.id}`} value={toPounds(fee.price_weekday)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Weekend Price</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_weekend_${fee.id}`} value={toPounds(fee.price_weekend)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div class="price-inputs">
+                <div class="form-group">
+                  <label>18 Holes</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_18_${fee.id}`} value={toPounds(fee.price_18_holes)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Day Ticket</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_day_${fee.id}`} value={toPounds(fee.price_day_ticket)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div class="fee-options">
+              <label class="checkbox-label">
+                <input type="checkbox" name={`featured_${fee.id}`} checked={fee.is_featured === 1} />
+                <span>Featured (highlighted)</span>
+              </label>
+            </div>
+
+            <!-- Hidden fields for twilight prices when not twilight -->
+            {fee.category !== 'twilight' && (
+              <>
+                <input type="hidden" name={`price_weekday_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_weekend_${fee.id}`} value="0" />
+              </>
+            )}
+            {fee.category === 'twilight' && (
+              <>
+                <input type="hidden" name={`price_18_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_day_${fee.id}`} value="0" />
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Green Fees</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Additional Fees Section -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Additional Fees</h3>
+      <p class="card-subtitle">Buggy hire, trolley hire, club hire, etc.</p>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="update_additional_fees" />
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Price</th>
+            <th>Active</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {additionalFees.map(fee => (
+            <tr>
+              <input type="hidden" name="additional_fee_id" value={fee.id} />
+              <td>
+                <input type="text" name={`add_name_${fee.id}`} value={fee.name} class="form-input" />
+              </td>
+              <td>
+                <input type="text" name={`add_desc_${fee.id}`} value={fee.description || ''} class="form-input" placeholder="e.g., Per round" />
+              </td>
+              <td>
+                <div class="price-input-wrapper">
+                  <span class="currency">£</span>
+                  <input type="number" name={`add_price_${fee.id}`} value={toPounds(fee.price)} class="form-input price-input" min="0" />
+                </div>
+              </td>
+              <td>
+                <input type="checkbox" name={`add_active_${fee.id}`} checked={fee.is_active === 1} />
+              </td>
+              <td>
+                <button type="button" class="btn btn-small btn-danger" onclick={`deleteFee(${fee.id})`}>Delete</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Additional Fees</button>
+      </div>
+    </form>
+
+    <!-- Add New Additional Fee -->
+    <div class="add-fee-section">
+      <h4>Add New Fee</h4>
+      <form method="POST" class="add-fee-form">
+        <input type="hidden" name="action" value="add_additional_fee" />
+        <div class="add-fee-inputs">
+          <input type="text" name="new_name" placeholder="Name (e.g., Range Balls)" class="form-input" required />
+          <input type="text" name="new_desc" placeholder="Description (optional)" class="form-input" />
+          <div class="price-input-wrapper">
+            <span class="currency">£</span>
+            <input type="number" name="new_price" placeholder="Price" class="form-input price-input" min="1" required />
+          </div>
+          <button type="submit" class="btn btn-secondary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete form (hidden) -->
+  <form id="delete-form" method="POST" style="display: none;">
+    <input type="hidden" name="action" value="delete_additional_fee" />
+    <input type="hidden" name="delete_id" id="delete-id" />
+  </form>
+
+  <script is:inline>
+    function deleteFee(id) {
+      if (confirm('Are you sure you want to delete this fee?')) {
+        document.getElementById('delete-id').value = id;
+        document.getElementById('delete-form').submit();
+      }
+    }
+  </script>
+
+  <style>
+    .page-header {
+      margin-bottom: 2rem;
+    }
+
+    .page-header h1 {
+      margin: 0 0 0.5rem 0;
+    }
+
+    .subtitle {
+      color: var(--text-light, #666);
+      margin: 0;
+    }
+
+    .alert {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+
+    .card-subtitle {
+      color: var(--text-light, #666);
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+    }
+
+    .fees-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 900px) {
+      .fees-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .fee-edit-card {
+      background: var(--surface, #f9f9f9);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+
+    .fee-edit-card.featured {
+      border-color: var(--primary, #1e5631);
+      border-width: 2px;
+    }
+
+    .fee-header-edit {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .form-group label {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-light, #666);
+    }
+
+    .form-input {
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border, #ddd);
+      border-radius: 6px;
+      font-size: 0.95rem;
+      width: 100%;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--primary, #1e5631);
+    }
+
+    .price-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .price-input-wrapper {
+      display: flex;
+      align-items: center;
+    }
+
+    .currency {
+      background: var(--surface, #f0f0f0);
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border, #ddd);
+      border-right: none;
+      border-radius: 6px 0 0 6px;
+      font-weight: 500;
+    }
+
+    .price-input {
+      border-radius: 0 6px 6px 0;
+      width: 80px;
+    }
+
+    .fee-options {
+      margin-top: 0.5rem;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    .form-actions {
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border, #e0e0e0);
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1rem;
+    }
+
+    .table th,
+    .table td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+    }
+
+    .table th {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--text-light, #666);
+    }
+
+    .table input[type="text"],
+    .table input[type="number"] {
+      width: 100%;
+      min-width: 80px;
+    }
+
+    .btn-small {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .btn-danger {
+      background: #dc2626;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-danger:hover {
+      background: #b91c1c;
+    }
+
+    .add-fee-section {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border, #e0e0e0);
+    }
+
+    .add-fee-section h4 {
+      margin: 0 0 1rem 0;
+      font-size: 1rem;
+    }
+
+    .add-fee-inputs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: flex-end;
+    }
+
+    .add-fee-inputs input[type="text"] {
+      width: 180px;
+    }
+
+    .add-fee-inputs .price-input-wrapper {
+      width: auto;
+    }
+
+    .add-fee-inputs .price-input {
+      width: 70px;
+    }
+
+    .btn {
+      padding: 0.625rem 1.25rem;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      font-size: 0.95rem;
+    }
+
+    .btn-primary {
+      background: var(--primary, #1e5631);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+    }
+
+    .btn-secondary {
+      background: var(--surface, #f0f0f0);
+      border: 1px solid var(--border, #ddd);
+      color: var(--text, #333);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border, #e0e0e0);
+    }
+  </style>
+</AdminLayout>

@@ -1,0 +1,183 @@
+---
+import PublicLayout from '../../layouts/PublicLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+// Fetch published news articles
+let articles: any[] = [];
+try {
+  if (db) {
+    const result = await db.prepare(
+      `SELECT id, slug, title, excerpt, image, publish_date
+       FROM website_news
+       WHERE published = 1 AND (publish_date IS NULL OR publish_date <= date('now'))
+       ORDER BY publish_date DESC, created_at DESC
+       LIMIT 20`
+    ).all();
+    articles = result.results || [];
+  }
+} catch (e) {
+  console.error('Error fetching news:', e);
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+}
+---
+
+<PublicLayout
+  title="News & Events"
+  description="Stay up to date with the latest news and events from Alnmouth Village Golf Club."
+  heroTitle="News & Events"
+  heroSubtitle="The latest from Alnmouth Village Golf Club"
+>
+  <div class="content">
+    <section class="section">
+      {articles.length > 0 ? (
+        <div class="news-grid">
+          {articles.map((article) => (
+            <a href={`/news/${article.slug}`} class="news-card">
+              {article.image && (
+                <div class="news-image">
+                  <img src={article.image} alt={article.title} loading="lazy" />
+                </div>
+              )}
+              <div class="news-content">
+                {article.publish_date && (
+                  <span class="news-date">{formatDate(article.publish_date)}</span>
+                )}
+                <h2 class="news-title">{article.title}</h2>
+                {article.excerpt && (
+                  <p class="news-excerpt">{article.excerpt}</p>
+                )}
+                <span class="news-link">Read more</span>
+              </div>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1"/>
+            <path d="M18 14h4"/>
+            <path d="M18 18h4"/>
+            <path d="M18 10h4"/>
+          </svg>
+          <h2>No News Articles Yet</h2>
+          <p>Check back soon for the latest news and updates from the club.</p>
+        </div>
+      )}
+    </section>
+  </div>
+
+  <style>
+    .news-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+
+    @media (min-width: 768px) {
+      .news-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .news-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .news-card {
+      display: block;
+      background: var(--white);
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .news-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    .news-image {
+      aspect-ratio: 16/9;
+      overflow: hidden;
+    }
+
+    .news-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.3s;
+    }
+
+    .news-card:hover .news-image img {
+      transform: scale(1.05);
+    }
+
+    .news-content {
+      padding: 1.5rem;
+    }
+
+    .news-date {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin-bottom: 0.5rem;
+    }
+
+    .news-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 0.75rem 0;
+      line-height: 1.3;
+    }
+
+    .news-excerpt {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      line-height: 1.6;
+      margin: 0 0 1rem 0;
+    }
+
+    .news-link {
+      color: var(--primary);
+      font-weight: 500;
+      font-size: 0.9rem;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--text-light);
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .empty-state h2 {
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .empty-state p {
+      margin: 0;
+    }
+  </style>
+</PublicLayout>

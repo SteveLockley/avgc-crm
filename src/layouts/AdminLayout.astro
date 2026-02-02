@@ -8,12 +8,13 @@ const user = Astro.locals.user;
 const currentPath = Astro.url.pathname;
 
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: 'home' },
-  { href: '/members', label: 'Members', icon: 'users' },
-  { href: '/payments', label: 'Payments', icon: 'credit-card' },
-  { href: '/invoices', label: 'Invoices', icon: 'invoice' },
-  { href: '/reports', label: 'Reports', icon: 'chart' },
-  { href: '/database', label: 'Database', icon: 'database' },
+  { href: '/admin', label: 'Dashboard', icon: 'home' },
+  { href: '/admin/members', label: 'Members', icon: 'users' },
+  { href: '/admin/payments', label: 'Payments', icon: 'credit-card' },
+  { href: '/admin/invoices', label: 'Invoices', icon: 'invoice' },
+  { href: '/admin/reports', label: 'Reports', icon: 'chart' },
+  { href: '/admin/database', label: 'Database', icon: 'database' },
+  { href: '/admin/content', label: 'Website', icon: 'globe' },
 ];
 ---
 
@@ -610,7 +611,7 @@ const navItems = [
         {navItems.map(item => (
           <a
             href={item.href}
-            class={`nav-item ${currentPath === item.href ? 'active' : ''}`}
+            class={`nav-item ${currentPath === item.href || (item.href !== '/admin' && currentPath.startsWith(item.href + '/')) || (item.href === '/admin' && currentPath === '/admin') ? 'active' : ''}`}
           >
             <span>{item.label}</span>
           </a>

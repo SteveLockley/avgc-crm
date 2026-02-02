@@ -24,5 +24,11 @@ declare namespace App {
       name: string;
       role: string;
     };
+    member?: {
+      id: number;
+      firstName: string;
+      surname: string;
+      email: string;
+    };
   }
 }

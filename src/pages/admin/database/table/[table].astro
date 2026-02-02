@@ -1,0 +1,230 @@
+---
+import AdminLayout from '../../../../layouts/AdminLayout.astro';
+
+const { table } = Astro.params;
+const db = Astro.locals.runtime.env.DB;
+
+// Validate table exists
+const tableCheck = await db.prepare(
+  `SELECT name FROM sqlite_master WHERE type='table' AND name = ?`
+).bind(table).first();
+
+if (!tableCheck) {
+  return Astro.redirect('/database');
+}
+
+// Block access to FTS shadow tables (they have special structures that break normal queries)
+const isFtsShadowTable = table?.includes('_fts_') ||
+  table?.endsWith('_content') ||
+  table?.endsWith('_docsize') ||
+  table?.endsWith('_data') ||
+  table?.endsWith('_idx') ||
+  table?.endsWith('_config');
+
+if (isFtsShadowTable) {
+  return Astro.redirect('/database?error=fts');
+}
+
+// Get query parameters
+const url = Astro.url;
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 50;
+const offset = (page - 1) * perPage;
+const search = url.searchParams.get('search') || '';
+const sortCol = url.searchParams.get('sort') || '';
+const sortDir = url.searchParams.get('dir') || 'ASC';
+
+// Get columns
+const columnsResult = await db.prepare(`PRAGMA table_info("${table}")`).all();
+const columns = columnsResult.results || [];
+const primaryKey = columns.find((c: any) => c.pk === 1)?.name || 'rowid';
+
+// Handle delete
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+  const rowId = formData.get('rowId');
+
+  if (action === 'delete' && rowId) {
+    await db.prepare(`DELETE FROM "${table}" WHERE "${primaryKey}" = ?`).bind(rowId).run();
+    return Astro.redirect(`/database/table/${table}?page=${page}&deleted=1`);
+  }
+}
+
+// Build query
+let whereClause = '';
+const params: any[] = [];
+
+if (search) {
+  const searchConditions = columns.map((col: any) => `"${col.name}" LIKE ?`).join(' OR ');
+  whereClause = `WHERE (${searchConditions})`;
+  columns.forEach(() => params.push(`%${search}%`));
+}
+
+// Get total count
+const countResult = await db.prepare(
+  `SELECT COUNT(*) as count FROM "${table}" ${whereClause}`
+).bind(...params).first<{ count: number }>();
+const totalCount = countResult?.count || 0;
+const totalPages = Math.ceil(totalCount / perPage);
+
+// Get data
+let orderClause = '';
+if (sortCol && columns.some((c: any) => c.name === sortCol)) {
+  orderClause = `ORDER BY "${sortCol}" ${sortDir === 'DESC' ? 'DESC' : 'ASC'}`;
+}
+
+const dataResult = await db.prepare(
+  `SELECT rowid, * FROM "${table}" ${whereClause} ${orderClause} LIMIT ? OFFSET ?`
+).bind(...params, perPage, offset).all();
+const rows = dataResult.results || [];
+
+// Calculate pagination
+const paginationPages: number[] = [];
+const maxPagesToShow = 10;
+if (totalPages <= maxPagesToShow) {
+  for (let i = 1; i <= totalPages; i++) paginationPages.push(i);
+} else if (page <= 5) {
+  for (let i = 1; i <= maxPagesToShow; i++) paginationPages.push(i);
+} else if (page >= totalPages - 4) {
+  for (let i = totalPages - 9; i <= totalPages; i++) paginationPages.push(i);
+} else {
+  for (let i = page - 5; i <= page + 4; i++) paginationPages.push(i);
+}
+
+const deleted = url.searchParams.get('deleted');
+---
+
+<AdminLayout title={`Table: ${table}`}>
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">
+        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        &nbsp;/&nbsp; {table}
+        <span style="font-weight: normal; color: #666;">({totalCount.toLocaleString()} rows)</span>
+      </h3>
+      <div style="display: flex; gap: 0.5rem;">
+        <a href={`/database/table/${table}/structure`} class="btn btn-secondary">Structure</a>
+        <a href={`/database/table/${table}/insert`} class="btn btn-primary">+ Insert Row</a>
+      </div>
+    </div>
+
+    {deleted && (
+      <div style="background: #d4edda; color: #155724; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
+        Row deleted successfully.
+      </div>
+    )}
+
+    <!-- Search -->
+    <form method="GET" style="margin-bottom: 1rem;">
+      <div style="display: flex; gap: 0.5rem;">
+        <input
+          type="text"
+          name="search"
+          class="form-input"
+          placeholder="Search all columns..."
+          value={search}
+          style="flex: 1;"
+        />
+        <button type="submit" class="btn btn-primary">Search</button>
+        {search && <a href={`/database/table/${table}`} class="btn btn-secondary">Clear</a>}
+      </div>
+    </form>
+
+    <!-- Data table -->
+    <div class="table-container" style="overflow-x: auto;">
+      <table style="font-size: 0.875rem;">
+        <thead>
+          <tr>
+            <th style="width: 80px;">Actions</th>
+            {columns.map((col: any) => (
+              <th>
+                <a
+                  href={`?search=${search}&sort=${col.name}&dir=${sortCol === col.name && sortDir === 'ASC' ? 'DESC' : 'ASC'}&page=1`}
+                  style="color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.25rem;"
+                >
+                  {col.name}
+                  {col.pk === 1 && <span style="color: #ffc107;" title="Primary Key">🔑</span>}
+                  {sortCol === col.name && (
+                    <span>{sortDir === 'ASC' ? '↑' : '↓'}</span>
+                  )}
+                </a>
+                <div style="font-size: 0.7rem; color: #999; font-weight: normal;">{col.type || 'TEXT'}</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row: any) => (
+            <tr>
+              <td style="white-space: nowrap;">
+                <a href={`/database/table/${table}/edit/${row[primaryKey] || row.rowid}`} class="btn btn-secondary btn-sm">Edit</a>
+                <form method="POST" style="display: inline;" class="delete-row-form">
+                  <input type="hidden" name="action" value="delete" />
+                  <input type="hidden" name="rowId" value={row[primaryKey] || row.rowid} />
+                  <button type="submit" class="btn btn-sm" style="background: #dc3545; color: white;">Del</button>
+                </form>
+              </td>
+              {columns.map((col: any) => (
+                <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title={String(row[col.name] ?? '')}>
+                  {row[col.name] === null ? (
+                    <span style="color: #999; font-style: italic;">NULL</span>
+                  ) : String(row[col.name]).length > 50 ? (
+                    String(row[col.name]).substring(0, 50) + '...'
+                  ) : (
+                    String(row[col.name])
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colspan={columns.length + 1} style="text-align: center; color: #666; padding: 2rem;">
+                No data found
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={`?search=${search}&sort=${sortCol}&dir=${sortDir}&page=${page - 1}`}>Previous</a>
+        )}
+        {paginationPages.map((p) => (
+          <a
+            href={`?search=${search}&sort=${sortCol}&dir=${sortDir}&page=${p}`}
+            class={p === page ? 'active' : ''}
+          >
+            {p}
+          </a>
+        ))}
+        {page < totalPages && (
+          <a href={`?search=${search}&sort=${sortCol}&dir=${sortDir}&page=${page + 1}`}>Next</a>
+        )}
+      </div>
+    )}
+  </div>
+
+  <script is:inline>
+    document.querySelectorAll('.delete-row-form').forEach(form => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const confirmed = await m3Confirm('Are you sure you want to delete this row?', {
+          title: 'Delete Row?',
+          type: 'delete',
+          confirmText: 'Delete',
+          cancelText: 'Cancel',
+          danger: true
+        });
+        if (confirmed) {
+          form.submit();
+        }
+      });
+    });
+  </script>
+</AdminLayout>

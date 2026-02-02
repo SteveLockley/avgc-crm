@@ -1,0 +1,1342 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatDate, formatCurrency, INVOICE_STATUSES, getInvoiceStatusBadge, formatInvoicePeriod } from '../../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+const user = Astro.locals.user;
+
+// Handle bulk delete
+let deleteSuccess = '';
+let deleteError = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  if (action === 'bulk_delete') {
+    const invoiceIds = formData.get('invoice_ids')?.toString().split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+
+    if (invoiceIds && invoiceIds.length > 0) {
+      // Only delete draft and cancelled invoices
+      const placeholders = invoiceIds.map(() => '?').join(',');
+
+      // Delete invoice items first
+      await db.prepare(
+        `DELETE FROM invoice_items WHERE invoice_id IN (
+          SELECT id FROM invoices WHERE id IN (${placeholders}) AND status IN ('draft', 'cancelled')
+        )`
+      ).bind(...invoiceIds).run();
+
+      // Delete invoices
+      const result = await db.prepare(
+        `DELETE FROM invoices WHERE id IN (${placeholders}) AND status IN ('draft', 'cancelled')`
+      ).bind(...invoiceIds).run();
+
+      const deletedCount = result.meta.changes || 0;
+
+      if (deletedCount > 0) {
+        deleteSuccess = `Deleted ${deletedCount} invoice(s)`;
+
+        // Log action
+        await db.prepare(
+          `INSERT INTO audit_log (user_email, action, entity_type, details)
+           VALUES (?, 'bulk_delete_invoices', 'invoices', ?)`
+        ).bind(user?.email || 'system', JSON.stringify({ count: deletedCount, ids: invoiceIds })).run();
+      } else {
+        deleteError = 'No invoices were deleted. Only draft and cancelled invoices can be deleted.';
+      }
+    }
+  }
+}
+
+// Get query parameters
+const url = Astro.url;
+const search = url.searchParams.get('search') || '';
+const status = url.searchParams.get('status') || '';
+const periodYear = url.searchParams.get('year') || '';
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 25;
+const offset = (page - 1) * perPage;
+
+// Build query
+let whereClause = '1=1';
+const params: any[] = [];
+
+if (search) {
+  whereClause += ` AND (m.surname LIKE ? OR m.first_name LIKE ? OR i.invoice_number LIKE ?)`;
+  const searchTerm = `%${search}%`;
+  params.push(searchTerm, searchTerm, searchTerm);
+}
+
+if (status) {
+  whereClause += ' AND i.status = ?';
+  params.push(status);
+}
+
+if (periodYear) {
+  whereClause += ' AND i.period_start LIKE ?';
+  params.push(`${periodYear}-%`);
+}
+
+// Get total count
+const countResult = await db.prepare(
+  `SELECT COUNT(*) as count FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ count: number }>();
+const totalCount = countResult?.count || 0;
+const totalPages = Math.ceil(totalCount / perPage);
+
+// Get invoices
+const invoices = await db.prepare(
+  `SELECT i.*, m.first_name, m.surname, m.email, m.pin
+   FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}
+   ORDER BY i.created_at DESC
+   LIMIT ? OFFSET ?`
+).bind(...params, perPage, offset).all();
+
+// Get totals for filtered results
+const totalsResult = await db.prepare(
+  `SELECT SUM(i.total) as total FROM invoices i
+   JOIN members m ON i.member_id = m.id
+   WHERE ${whereClause}`
+).bind(...params).first<{ total: number }>();
+
+// Get status counts
+const statusCounts = await db.prepare(
+  `SELECT status, COUNT(*) as count FROM invoices GROUP BY status`
+).all();
+
+const statusCountMap: Record<string, number> = {};
+statusCounts.results?.forEach((row: any) => {
+  statusCountMap[row.status] = row.count;
+});
+
+// Get available years from invoices
+const years = await db.prepare(
+  `SELECT DISTINCT substr(period_start, 1, 4) as year FROM invoices ORDER BY year DESC`
+).all();
+
+// Calculate pagination pages
+const paginationPages: number[] = [];
+const maxPagesToShow = 7;
+if (totalPages <= maxPagesToShow) {
+  for (let i = 1; i <= totalPages; i++) paginationPages.push(i);
+} else if (page <= 4) {
+  for (let i = 1; i <= maxPagesToShow; i++) paginationPages.push(i);
+} else if (page >= totalPages - 3) {
+  for (let i = totalPages - 6; i <= totalPages; i++) paginationPages.push(i);
+} else {
+  for (let i = page - 3; i <= page + 3; i++) paginationPages.push(i);
+}
+
+// Build query string helper
+function buildQueryString(pageNum: number): string {
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (status) params.set('status', status);
+  if (periodYear) params.set('year', periodYear);
+  params.set('page', String(pageNum));
+  return `?${params.toString()}`;
+}
+---
+
+<AdminLayout title="Invoices">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Invoices</h1>
+      <p class="subtitle">Manage membership invoices and billing</p>
+    </div>
+    <div class="header-actions">
+      <a href="/admin/invoices/settings" class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        Settings
+      </a>
+      <a href="/admin/invoices/generate" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/>
+          <line x1="9" y1="15" x2="15" y2="15"/>
+        </svg>
+        Generate Invoices
+      </a>
+    </div>
+  </div>
+
+  {deleteSuccess && (
+    <div class="alert alert-success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+        <polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      {deleteSuccess}
+    </div>
+  )}
+  {deleteError && (
+    <div class="alert alert-error">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      {deleteError}
+    </div>
+  )}
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <a href="/admin/invoices" class="stat-card">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{totalCount}</span>
+        <span class="stat-label">Total</span>
+      </div>
+    </a>
+
+    <a href="/admin/invoices?status=draft" class="stat-card stat-draft">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{statusCountMap['draft'] || 0}</span>
+        <span class="stat-label">Draft</span>
+      </div>
+    </a>
+
+    <a href="/admin/invoices?status=sent" class="stat-card stat-sent">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{statusCountMap['sent'] || 0}</span>
+        <span class="stat-label">Sent</span>
+      </div>
+    </a>
+
+    <a href="/admin/invoices?status=paid" class="stat-card stat-paid">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{statusCountMap['paid'] || 0}</span>
+        <span class="stat-label">Paid</span>
+      </div>
+    </a>
+  </div>
+
+  <!-- Filter Card -->
+  <div class="filter-card">
+    <form method="GET" class="filter-form">
+      <div class="filter-row">
+        <div class="filter-group search-group">
+          <label class="filter-label">Search</label>
+          <div class="search-input-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" name="search" class="filter-input" placeholder="Member or invoice number..." value={search} />
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Status</label>
+          <select name="status" class="filter-select">
+            <option value="">All Statuses</option>
+            {INVOICE_STATUSES.map(s => (
+              <option value={s} selected={status === s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Period Year</label>
+          <select name="year" class="filter-select">
+            <option value="">All Years</option>
+            {years.results?.map((y: any) => (
+              <option value={y.year} selected={periodYear === y.year}>{y.year}/{parseInt(y.year) + 1}</option>
+            ))}
+          </select>
+        </div>
+
+        <div class="filter-actions">
+          <button type="submit" class="btn btn-primary">Filter</button>
+          <a href="/admin/invoices" class="btn btn-secondary">Clear</a>
+        </div>
+      </div>
+    </form>
+
+    {(search || status || periodYear) && (
+      <div class="active-filters">
+        <span class="filters-label">Active filters:</span>
+        {search && <span class="filter-tag">Search: {search}</span>}
+        {status && <span class="filter-tag">Status: {status}</span>}
+        {periodYear && <span class="filter-tag">Year: {periodYear}/{parseInt(periodYear) + 1}</span>}
+      </div>
+    )}
+  </div>
+
+  <!-- Summary Card -->
+  {totalsResult?.total !== null && (
+    <div class="summary-card">
+      <div class="summary-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="1" x2="12" y2="23"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+      </div>
+      <div class="summary-content">
+        <span class="summary-label">Total for selected filters</span>
+        <span class="summary-value">{formatCurrency(totalsResult?.total || 0)}</span>
+      </div>
+    </div>
+  )}
+
+  <!-- Invoices Table Card -->
+  <div class="m3-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        <span>All Invoices</span>
+      </div>
+      <span class="card-badge">{totalCount} invoices</span>
+    </div>
+    <form method="POST" id="bulk-form">
+      <input type="hidden" name="action" value="bulk_delete" />
+      <input type="hidden" name="invoice_ids" id="selected-invoice-ids" value="" />
+
+      <div class="bulk-actions">
+        <button type="submit" class="btn btn-danger btn-sm" id="bulk-delete-btn" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+          Delete Selected
+        </button>
+        <span id="selected-count" class="selected-count">0 selected</span>
+      </div>
+
+      <div class="table-container">
+        <table class="m3-table">
+          <thead>
+            <tr>
+              <th class="checkbox-col">
+                <input type="checkbox" id="select-all" class="checkbox" />
+              </th>
+              <th>Invoice No</th>
+              <th>Member</th>
+              <th>Period</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th class="text-right">Total</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.results?.map((invoice: any) => (
+              <tr>
+                <td class="checkbox-col">
+                  <input
+                    type="checkbox"
+                    class="invoice-checkbox checkbox"
+                    value={invoice.id}
+                    data-status={invoice.status}
+                  />
+                </td>
+                <td>
+                  <a href={`/invoices/${invoice.id}`} class="invoice-link">
+                    {invoice.invoice_number}
+                  </a>
+                </td>
+                <td class="member-cell">
+                  <a href={`/members/${invoice.member_id}`} class="member-link">
+                    {invoice.surname}, {invoice.first_name}
+                  </a>
+                  <span class="member-pin">M{invoice.pin?.padStart(4, '0')}</span>
+                </td>
+                <td class="period-cell">
+                  {formatInvoicePeriod(invoice.period_start, invoice.period_end)}
+                </td>
+                <td class="date-cell">{formatDate(invoice.invoice_date)}</td>
+                <td>
+                  <span class={`status-badge status-${invoice.status}`}>
+                    {invoice.status}
+                  </span>
+                </td>
+                <td class="text-right amount-cell">
+                  {formatCurrency(invoice.total)}
+                </td>
+                <td class="actions-col">
+                  <div class="action-buttons">
+                    <a href={`/invoices/${invoice.id}`} class="action-btn" title="View">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </a>
+                    {invoice.status === 'draft' && (
+                      <a href={`/invoices/preview?ids=${invoice.id}`} class="action-btn primary" title="Send">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <line x1="22" y1="2" x2="11" y2="13"/>
+                          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                      </a>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {(!invoices.results || invoices.results.length === 0) && (
+              <tr>
+                <td colspan="8" class="empty-row">
+                  <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <p>No invoices found</p>
+                    <a href="/admin/invoices/generate" class="btn btn-primary btn-sm">Generate Invoices</a>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </form>
+
+    <!-- Pagination -->
+    {totalPages > 1 && (
+      <div class="pagination">
+        {page > 1 && (
+          <a href={buildQueryString(page - 1)} class="page-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            Previous
+          </a>
+        )}
+
+        <div class="page-numbers">
+          {paginationPages.map((p) => (
+            <a
+              href={buildQueryString(p)}
+              class={`page-num ${p === page ? 'active' : ''}`}
+            >
+              {p}
+            </a>
+          ))}
+        </div>
+
+        {page < totalPages && (
+          <a href={buildQueryString(page + 1)} class="page-btn">
+            Next
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="quick-actions-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        <span>Quick Actions</span>
+      </div>
+    </div>
+    <div class="card-content">
+      <div class="quick-actions">
+        <a href="/admin/invoices/generate" class="action-link primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <line x1="9" y1="15" x2="15" y2="15"/>
+          </svg>
+          Generate New Invoices
+        </a>
+        <a href="/admin/invoices/settings" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Invoice Settings
+        </a>
+        <a href="/admin/invoices?status=draft" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+          View Draft Invoices
+        </a>
+        <a href="/admin/invoices?status=sent" class="action-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          View Sent Invoices
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    /* Page Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .header-content h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      color: #666;
+      font-size: 0.95rem;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .header-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .header-actions .btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Alert */
+    .alert {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .alert-success {
+      background: #e8f5e9;
+      color: #1e5631;
+      border: 1px solid #c8e6c9;
+    }
+
+    .alert-error {
+      background: #ffebee;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+    }
+
+    /* Stats Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      text-decoration: none;
+      transition: all 0.2s ease;
+      border: 1px solid #e8e8e8;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    }
+
+    .stat-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .stat-icon svg {
+      width: 20px;
+      height: 20px;
+      color: #fff;
+    }
+
+    .stat-draft .stat-icon { background: linear-gradient(135deg, #6c757d 0%, #868e96 100%); }
+    .stat-sent .stat-icon { background: linear-gradient(135deg, #0d6efd 0%, #3d8bfd 100%); }
+    .stat-paid .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+
+    .stat-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1a1a1a;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 0.125rem;
+    }
+
+    /* Filter Card */
+    .filter-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .filter-form {
+      width: 100%;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.375rem;
+    }
+
+    .search-group {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .filter-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 0.875rem;
+      width: 18px;
+      height: 18px;
+      color: #888;
+      pointer-events: none;
+    }
+
+    .filter-input {
+      width: 100%;
+      padding: 0.625rem 0.875rem 0.625rem 2.5rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+
+    .filter-input:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .filter-select {
+      padding: 0.625rem 2rem 0.625rem 0.875rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 0.75rem center;
+      appearance: none;
+      cursor: pointer;
+      min-width: 140px;
+      transition: all 0.2s ease;
+    }
+
+    .filter-select:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    /* Active Filters */
+    .active-filters {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid #f0f0f0;
+      flex-wrap: wrap;
+    }
+
+    .filters-label {
+      font-size: 0.85rem;
+      color: #666;
+      font-weight: 500;
+    }
+
+    .filter-tag {
+      background: #1e5631;
+      color: #fff;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    /* Summary Card */
+    .summary-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      border-radius: 16px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .summary-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .summary-icon svg {
+      width: 24px;
+      height: 24px;
+      color: #fff;
+    }
+
+    .summary-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .summary-label {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.8);
+    }
+
+    .summary-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    /* M3 Card */
+    .m3-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-badge {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.625rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .card-content {
+      padding: 0;
+    }
+
+    .bulk-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: #fafafa;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .bulk-actions .btn svg {
+      width: 16px;
+      height: 16px;
+      margin-right: 0.375rem;
+    }
+
+    .selected-count {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    /* M3 Table */
+    .m3-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .m3-table th {
+      text-align: left;
+      padding: 1rem;
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fafafa;
+      border-bottom: 2px solid #e8e8e8;
+      white-space: nowrap;
+    }
+
+    .m3-table td {
+      padding: 0.875rem 1rem;
+      font-size: 0.9rem;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+
+    .m3-table tbody tr:hover {
+      background: #f8faf8;
+    }
+
+    .checkbox-col {
+      width: 40px;
+    }
+
+    .checkbox {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #1e5631;
+    }
+
+    .text-right {
+      text-align: right;
+    }
+
+    .invoice-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .invoice-link:hover {
+      text-decoration: underline;
+    }
+
+    .member-cell {
+      min-width: 150px;
+    }
+
+    .member-link {
+      display: block;
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .member-link:hover {
+      text-decoration: underline;
+    }
+
+    .member-pin {
+      display: block;
+      font-size: 0.75rem;
+      color: #888;
+      margin-top: 0.125rem;
+    }
+
+    .period-cell {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .date-cell {
+      white-space: nowrap;
+      color: #666;
+    }
+
+    .amount-cell {
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    /* Status Badges */
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      text-transform: capitalize;
+    }
+
+    .status-draft {
+      background: #f0f0f0;
+      color: #666;
+    }
+
+    .status-sent {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+
+    .status-paid {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .status-cancelled {
+      background: #ffebee;
+      color: #c62828;
+    }
+
+    .status-partial {
+      background: #fff3e0;
+      color: #e65100;
+    }
+
+    /* Actions */
+    .actions-col {
+      width: 100px;
+      text-align: right;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 0.375rem;
+      justify-content: flex-end;
+    }
+
+    .action-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: #f4f4f4;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-decoration: none;
+      color: #555;
+    }
+
+    .action-btn:hover {
+      background: #e8e8e8;
+      color: #1e5631;
+    }
+
+    .action-btn.primary {
+      background: #1e5631;
+      color: #fff;
+    }
+
+    .action-btn.primary:hover {
+      background: #164024;
+    }
+
+    .action-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* Empty State */
+    .empty-row {
+      padding: 3rem !important;
+    }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      color: #888;
+    }
+
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      opacity: 0.5;
+    }
+
+    .empty-state p {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    /* Pagination */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 1rem;
+      border-top: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .page-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.5rem 0.875rem;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid #ddd;
+      color: #333;
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .page-btn:hover {
+      background: #f4f4f4;
+      border-color: #ccc;
+    }
+
+    .page-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .page-numbers {
+      display: flex;
+      gap: 0.25rem;
+    }
+
+    .page-num {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid #ddd;
+      color: #333;
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .page-num:hover {
+      background: #f4f4f4;
+      border-color: #ccc;
+    }
+
+    .page-num.active {
+      background: #1e5631;
+      border-color: #1e5631;
+      color: #fff;
+    }
+
+    /* Quick Actions Card */
+    .quick-actions-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-content {
+      padding: 1.25rem;
+    }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+    }
+
+    .action-link {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.875rem 1rem;
+      background: #f8f9fa;
+      border-radius: 10px;
+      color: #333;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+
+    .action-link:hover {
+      background: #f0f0f0;
+    }
+
+    .action-link.primary {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: #fff;
+    }
+
+    .action-link.primary:hover {
+      background: linear-gradient(135deg, #164024 0%, #246339 100%);
+    }
+
+    .action-link svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .quick-actions {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .stats-row {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .filter-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .filter-group {
+        width: 100%;
+      }
+
+      .search-group {
+        min-width: auto;
+      }
+
+      .filter-select {
+        width: 100%;
+      }
+
+      .filter-actions {
+        justify-content: flex-end;
+      }
+
+      .quick-actions {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+
+      .page-numbers {
+        display: none;
+      }
+    }
+  </style>
+
+  <script>
+    const selectAll = document.getElementById('select-all') as HTMLInputElement;
+    const checkboxes = document.querySelectorAll('.invoice-checkbox') as NodeListOf<HTMLInputElement>;
+    const selectedCount = document.getElementById('selected-count');
+    const selectedIdsInput = document.getElementById('selected-invoice-ids') as HTMLInputElement;
+    const deleteBtn = document.getElementById('bulk-delete-btn') as HTMLButtonElement;
+
+    function updateSelection() {
+      const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
+      const deletableSelected = Array.from(selected).filter(cb =>
+        cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
+      );
+
+      if (selectedCount) {
+        selectedCount.textContent = `${selected.length} selected (${deletableSelected.length} deletable)`;
+      }
+      if (selectedIdsInput) {
+        selectedIdsInput.value = Array.from(selected).map(cb => cb.value).join(',');
+      }
+      if (deleteBtn) {
+        deleteBtn.disabled = deletableSelected.length === 0;
+      }
+    }
+
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        checkboxes.forEach(cb => cb.checked = selectAll.checked);
+        updateSelection();
+      });
+    }
+
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', updateSelection);
+    });
+
+    // M3 confirm for bulk delete
+    document.getElementById('bulk-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const selected = document.querySelectorAll('.invoice-checkbox:checked');
+      const deletableCount = Array.from(selected).filter(cb =>
+        cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
+      ).length;
+
+      const confirmed = await m3Confirm(
+        `Delete ${deletableCount} invoice(s)? Only draft and cancelled invoices will be deleted.`,
+        {
+          title: 'Delete Invoices?',
+          type: 'delete',
+          confirmText: 'Delete',
+          cancelText: 'Cancel',
+          danger: true
+        }
+      );
+      if (confirmed) {
+        (e.target as HTMLFormElement).submit();
+      }
+    });
+  </script>
+</AdminLayout>

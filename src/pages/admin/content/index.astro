@@ -1,0 +1,295 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+// Get content stats
+let stats = {
+  pages: 0,
+  news: 0,
+  faq: 0,
+  gallery: 0
+};
+
+try {
+  if (db) {
+    const [pagesCount, newsCount, faqCount, galleryCount] = await Promise.all([
+      db.prepare('SELECT COUNT(*) as count FROM website_pages').first<{count: number}>(),
+      db.prepare('SELECT COUNT(*) as count FROM website_news').first<{count: number}>(),
+      db.prepare('SELECT COUNT(*) as count FROM website_faq').first<{count: number}>(),
+      db.prepare('SELECT COUNT(*) as count FROM website_gallery').first<{count: number}>()
+    ]);
+    stats = {
+      pages: pagesCount?.count || 0,
+      news: newsCount?.count || 0,
+      faq: faqCount?.count || 0,
+      gallery: galleryCount?.count || 0
+    };
+  }
+} catch (e) {
+  console.error('Error fetching content stats:', e);
+}
+
+const contentSections = [
+  {
+    title: 'Pages',
+    description: 'Manage static website pages like Course, Visitors, and Membership',
+    href: '/admin/content/pages',
+    icon: 'file-text',
+    count: stats.pages,
+    countLabel: 'pages'
+  },
+  {
+    title: 'News & Events',
+    description: 'Create and manage news articles and event announcements',
+    href: '/admin/content/news',
+    icon: 'newspaper',
+    count: stats.news,
+    countLabel: 'articles'
+  },
+  {
+    title: 'FAQ',
+    description: 'Manage frequently asked questions for the FAQ page and bot',
+    href: '/admin/content/faq',
+    icon: 'help-circle',
+    count: stats.faq,
+    countLabel: 'questions'
+  },
+  {
+    title: 'Gallery',
+    description: 'Upload and manage images for the website gallery',
+    href: '/admin/content/gallery',
+    icon: 'image',
+    count: stats.gallery,
+    countLabel: 'images'
+  }
+];
+
+const icons: Record<string, string> = {
+  'file-text': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>',
+  'newspaper': '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>',
+  'help-circle': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  'image': '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'
+};
+---
+
+<AdminLayout title="Website Content">
+  <div class="content-dashboard">
+    <div class="dashboard-header">
+      <p>Manage the content on the public website including pages, news articles, FAQs, and images.</p>
+    </div>
+
+    <div class="content-grid">
+      {contentSections.map(section => (
+        <a href={section.href} class="content-card">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <Fragment set:html={icons[section.icon]} />
+            </svg>
+          </div>
+          <div class="card-content">
+            <h2>{section.title}</h2>
+            <p>{section.description}</p>
+            <div class="card-footer">
+              <span class="card-count">{section.count} {section.countLabel}</span>
+              <span class="card-link">
+                Manage
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <Fragment set:html={icons['arrow-right']} />
+                </svg>
+              </span>
+            </div>
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <div class="quick-actions">
+      <h3>Quick Actions</h3>
+      <div class="action-buttons">
+        <a href="/admin/content/news?action=new" class="action-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Article
+        </a>
+        <a href="/admin/content/faq?action=new" class="action-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New FAQ
+        </a>
+        <a href="/" target="_blank" class="action-btn secondary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          View Website
+        </a>
+      </div>
+    </div>
+  </div>
+</AdminLayout>
+
+<style>
+  .content-dashboard {
+    max-width: 1000px;
+  }
+
+  .dashboard-header {
+    margin-bottom: 2rem;
+  }
+
+  .dashboard-header p {
+    color: var(--text-light);
+    font-size: 1.05rem;
+    margin: 0;
+  }
+
+  .content-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  @media (min-width: 600px) {
+    .content-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  .content-card {
+    display: flex;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+
+  .content-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+
+  .card-icon {
+    width: 48px;
+    height: 48px;
+    background: var(--primary-light, #e8f5e9);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .card-icon svg {
+    width: 24px;
+    height: 24px;
+    color: var(--primary);
+  }
+
+  .card-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .card-content h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.1rem;
+    color: var(--text);
+  }
+
+  .card-content p {
+    margin: 0 0 1rem 0;
+    font-size: 0.9rem;
+    color: var(--text-light);
+    line-height: 1.5;
+  }
+
+  .card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .card-count {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    background: var(--surface);
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+  }
+
+  .card-link {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--primary);
+  }
+
+  .card-link svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .quick-actions {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .quick-actions h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1rem;
+    color: var(--text);
+  }
+
+  .action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    background: var(--primary);
+    color: white;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: background 0.2s;
+  }
+
+  .action-btn:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .action-btn.secondary {
+    background: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .action-btn.secondary:hover {
+    background: var(--border);
+  }
+
+  .action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+</style>

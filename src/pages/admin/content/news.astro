@@ -1,0 +1,571 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+const url = new URL(Astro.request.url);
+const action = url.searchParams.get('action');
+const editId = url.searchParams.get('id');
+
+let articles: any[] = [];
+let editArticle: any = null;
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+// Handle form submission
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const formAction = formData.get('_action');
+
+  try {
+    if (formAction === 'create' || formAction === 'update') {
+      const title = formData.get('title')?.toString().trim();
+      const slug = formData.get('slug')?.toString().trim();
+      const excerpt = formData.get('excerpt')?.toString().trim() || null;
+      const content = formData.get('content')?.toString().trim();
+      const image = formData.get('image')?.toString().trim() || null;
+      const publishDate = formData.get('publish_date')?.toString() || null;
+      const published = formData.get('published') === 'on' ? 1 : 0;
+
+      if (!title || !slug || !content) {
+        message = 'Title, slug, and content are required.';
+        messageType = 'error';
+      } else if (formAction === 'create') {
+        await db.prepare(
+          `INSERT INTO website_news (slug, title, excerpt, content, image, publish_date, published, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        ).bind(slug, title, excerpt, content, image, publishDate, published).run();
+        message = 'Article created successfully.';
+        messageType = 'success';
+      } else {
+        const id = formData.get('id');
+        await db.prepare(
+          `UPDATE website_news
+           SET slug = ?, title = ?, excerpt = ?, content = ?, image = ?, publish_date = ?, published = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        ).bind(slug, title, excerpt, content, image, publishDate, published, id).run();
+        message = 'Article updated successfully.';
+        messageType = 'success';
+      }
+    } else if (formAction === 'delete') {
+      const id = formData.get('id');
+      await db.prepare('DELETE FROM website_news WHERE id = ?').bind(id).run();
+      message = 'Article deleted successfully.';
+      messageType = 'success';
+    }
+  } catch (e: any) {
+    message = e.message || 'An error occurred.';
+    messageType = 'error';
+  }
+}
+
+// Fetch articles
+if (db) {
+  try {
+    const result = await db.prepare(
+      'SELECT * FROM website_news ORDER BY publish_date DESC, created_at DESC'
+    ).all();
+    articles = result.results || [];
+
+    if (editId) {
+      editArticle = await db.prepare('SELECT * FROM website_news WHERE id = ?').bind(editId).first();
+    }
+  } catch (e) {
+    console.error('Error fetching articles:', e);
+  }
+}
+
+const isEditing = action === 'edit' && editArticle;
+const isCreating = action === 'new';
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  return dateStr.split('T')[0];
+}
+---
+
+<AdminLayout title="News & Events">
+  <div class="news-admin">
+    {message && (
+      <div class={`alert alert-${messageType}`}>
+        {message}
+      </div>
+    )}
+
+    {(isCreating || isEditing) ? (
+      <div class="editor-section">
+        <div class="editor-header">
+          <a href="/admin/content/news" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to Articles
+          </a>
+          <h2>{isEditing ? 'Edit Article' : 'New Article'}</h2>
+        </div>
+
+        <form method="POST" class="editor-form">
+          <input type="hidden" name="_action" value={isEditing ? 'update' : 'create'} />
+          {isEditing && <input type="hidden" name="id" value={editArticle.id} />}
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="title">Title *</label>
+              <input
+                type="text"
+                id="title"
+                name="title"
+                value={editArticle?.title || ''}
+                required
+              />
+            </div>
+            <div class="form-group">
+              <label for="slug">URL Slug *</label>
+              <input
+                type="text"
+                id="slug"
+                name="slug"
+                value={editArticle?.slug || ''}
+                pattern="[a-z0-9-]+"
+                required
+              />
+              <span class="form-hint">Lowercase letters, numbers, and hyphens only</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="excerpt">Excerpt</label>
+            <textarea
+              id="excerpt"
+              name="excerpt"
+              rows="2"
+              placeholder="Brief summary for article listings..."
+            >{editArticle?.excerpt || ''}</textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="content">Content * (HTML)</label>
+            <textarea
+              id="content"
+              name="content"
+              rows="15"
+              required
+            >{editArticle?.content || ''}</textarea>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="image">Featured Image URL</label>
+              <input
+                type="url"
+                id="image"
+                name="image"
+                value={editArticle?.image || ''}
+                placeholder="https://..."
+              />
+            </div>
+            <div class="form-group">
+              <label for="publish_date">Publish Date</label>
+              <input
+                type="date"
+                id="publish_date"
+                name="publish_date"
+                value={formatDate(editArticle?.publish_date)}
+              />
+            </div>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                name="published"
+                checked={editArticle?.published === 1}
+              />
+              <span>Published</span>
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <a href="/admin/content/news" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">
+              {isEditing ? 'Save Changes' : 'Create Article'}
+            </button>
+          </div>
+        </form>
+      </div>
+    ) : (
+      <div class="list-section">
+        <div class="list-header">
+          <p>{articles.length} article{articles.length !== 1 ? 's' : ''}</p>
+          <a href="/admin/content/news?action=new" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Article
+          </a>
+        </div>
+
+        {articles.length > 0 ? (
+          <div class="article-list">
+            {articles.map(article => (
+              <div class="article-item">
+                <div class="article-info">
+                  <h3>{article.title}</h3>
+                  <div class="article-meta">
+                    <span class={`status-badge ${article.published ? 'published' : 'draft'}`}>
+                      {article.published ? 'Published' : 'Draft'}
+                    </span>
+                    {article.publish_date && (
+                      <span class="date">{formatDate(article.publish_date)}</span>
+                    )}
+                    <span class="slug">/news/{article.slug}</span>
+                  </div>
+                </div>
+                <div class="article-actions">
+                  <a href={`/news/${article.slug}`} target="_blank" class="action-btn" title="View">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </a>
+                  <a href={`/admin/content/news?action=edit&id=${article.id}`} class="action-btn" title="Edit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </a>
+                  <form method="POST" class="delete-form" onsubmit="return confirm('Delete this article?')">
+                    <input type="hidden" name="_action" value="delete" />
+                    <input type="hidden" name="id" value={article.id} />
+                    <button type="submit" class="action-btn delete" title="Delete">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+              <path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>
+            </svg>
+            <h3>No Articles Yet</h3>
+            <p>Create your first news article to get started.</p>
+            <a href="/admin/content/news?action=new" class="btn btn-primary">Create Article</a>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</AdminLayout>
+
+<style>
+  .news-admin {
+    max-width: 1000px;
+  }
+
+  .alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+
+  .alert-success {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  /* Editor Section */
+  .editor-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-light);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .back-link:hover {
+    color: var(--primary);
+  }
+
+  .back-link svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .editor-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .editor-form {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  @media (min-width: 600px) {
+    .form-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .form-group input,
+  .form-group textarea {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+
+  .form-group textarea {
+    resize: vertical;
+    font-family: monospace;
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+  }
+
+  .form-hint {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--text-light);
+  }
+
+  .checkbox-group {
+    margin-top: 1rem;
+  }
+
+  .checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .checkbox-label input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* List Section */
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .list-header p {
+    margin: 0;
+    color: var(--text-light);
+  }
+
+  .article-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .article-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .article-info h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .article-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .status-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .status-badge.published {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .status-badge.draft {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .slug {
+    font-family: monospace;
+  }
+
+  .article-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card-bg);
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .action-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .action-btn.delete:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: #fee2e2;
+  }
+
+  .action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .delete-form {
+    display: contents;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+
+  .btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--border);
+  }
+
+  /* Empty State */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .empty-state svg {
+    width: 64px;
+    height: 64px;
+    color: var(--text-light);
+    opacity: 0.5;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state h3 {
+    margin: 0 0 0.5rem 0;
+  }
+
+  .empty-state p {
+    margin: 0 0 1.5rem 0;
+    color: var(--text-light);
+  }
+</style>

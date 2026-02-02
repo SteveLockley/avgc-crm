@@ -1,0 +1,348 @@
+---
+import AdminLayout from '../../../../../layouts/AdminLayout.astro';
+
+const { table } = Astro.params;
+const db = Astro.locals.runtime.env.DB;
+
+// Validate table exists
+const tableCheck = await db.prepare(
+  `SELECT name FROM sqlite_master WHERE type='table' AND name = ?`
+).bind(table).first();
+
+if (!tableCheck) {
+  return Astro.redirect('/database');
+}
+
+// Get columns
+const columnsResult = await db.prepare(`PRAGMA table_info("${table}")`).all();
+const columns = columnsResult.results || [];
+const primaryKey = columns.find((c: any) => c.pk === 1)?.name || 'rowid';
+
+let error = '';
+
+// Handle form submission
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+
+  try {
+    const colNames: string[] = [];
+    const placeholders: string[] = [];
+    const values: any[] = [];
+
+    for (const col of columns) {
+      const colName = (col as any).name;
+
+      // Skip auto-increment primary key
+      if ((col as any).pk === 1 && (col as any).type?.toUpperCase() === 'INTEGER') {
+        const rawValue = formData.get(colName);
+        if (!rawValue || rawValue === '') continue; // Let SQLite auto-generate
+      }
+
+      const rawValue = formData.get(colName);
+      const isNull = formData.get(`${colName}_null`) === 'on';
+
+      if (isNull) {
+        colNames.push(`"${colName}"`);
+        placeholders.push('NULL');
+      } else if (rawValue !== null && rawValue !== '') {
+        colNames.push(`"${colName}"`);
+        placeholders.push('?');
+        values.push(rawValue);
+      } else if ((col as any).notnull && !(col as any).dflt_value) {
+        throw new Error(`Column "${colName}" cannot be empty (NOT NULL constraint)`);
+      }
+    }
+
+    if (colNames.length > 0) {
+      const result = await db.prepare(
+        `INSERT INTO "${table}" (${colNames.join(', ')}) VALUES (${placeholders.join(', ')})`
+      ).bind(...values).run();
+
+      // Redirect to the new row
+      const lastId = result.meta?.last_row_id;
+      if (lastId) {
+        return Astro.redirect(`/database/table/${table}/edit/${lastId}?inserted=1`);
+      }
+      return Astro.redirect(`/database/table/${table}?inserted=1`);
+    }
+  } catch (e: any) {
+    error = e.message || 'Failed to insert row';
+  }
+}
+---
+
+<AdminLayout title={`Insert Row - ${table}`}>
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">
+        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        &nbsp;/&nbsp;
+        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        &nbsp;/&nbsp; Insert Row
+      </h3>
+    </div>
+
+    {error && (
+      <div style="background: #f8d7da; color: #721c24; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem;">
+        {error}
+      </div>
+    )}
+
+    <form method="POST">
+      <div style="display: flex; flex-direction: column; gap: 1rem;">
+        {columns.map((col: any) => {
+          const isPK = col.pk === 1;
+          const isAutoIncrement = isPK && col.type?.toUpperCase() === 'INTEGER';
+          const isLargeText = col.type?.toUpperCase().includes('TEXT');
+
+          return (
+            <div class="form-group" style="margin-bottom: 0;">
+              <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                {col.name}
+                {isPK && <span class="badge badge-success">PK</span>}
+                {isAutoIncrement && <span class="badge badge-info">AUTO</span>}
+                {col.notnull && !isAutoIncrement && <span class="badge badge-warning">NOT NULL</span>}
+                <span style="color: #999; font-weight: normal;">({col.type || 'TEXT'})</span>
+              </label>
+
+              <div style="display: flex; gap: 0.5rem; align-items: start;">
+                {isLargeText ? (
+                  <textarea
+                    name={col.name}
+                    class="form-input"
+                    rows="3"
+                    style="flex: 1;"
+                    placeholder={isAutoIncrement ? '(auto-generated)' : col.dflt_value ? `Default: ${col.dflt_value}` : ''}
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    name={col.name}
+                    class="form-input"
+                    style="flex: 1;"
+                    placeholder={isAutoIncrement ? '(auto-generated)' : col.dflt_value ? `Default: ${col.dflt_value}` : ''}
+                  />
+                )}
+
+                {!col.notnull && (
+                  <label style="display: flex; align-items: center; gap: 0.25rem; white-space: nowrap; padding: 0.5rem;">
+                    <input type="checkbox" name={`${col.name}_null`} />
+                    NULL
+                  </label>
+                )}
+              </div>
+
+              {col.dflt_value && (
+                <div style="font-size: 0.75rem; color: #666; margin-top: 0.25rem;">
+                  Default: <code>{col.dflt_value}</code>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem;">
+        <button type="submit" class="btn btn-primary">Insert Row</button>
+        <button type="button" onclick="handleBack()" class="btn btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- M3 Unsaved Changes Dialog -->
+  <div id="unsaved-dialog" class="m3-dialog-overlay" style="display: none;">
+    <div class="m3-dialog">
+      <div class="m3-dialog-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/>
+        </svg>
+      </div>
+      <h2 class="m3-dialog-title">Unsaved changes</h2>
+      <p class="m3-dialog-content">You have unsaved changes. Are you sure you want to leave this page?</p>
+      <div class="m3-dialog-actions">
+        <button type="button" id="dialog-cancel" class="m3-btn m3-btn-text">Stay</button>
+        <button type="button" id="dialog-confirm" class="m3-btn m3-btn-filled">Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .m3-dialog-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.32);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: fadeIn 0.15s ease-out;
+    }
+    .m3-dialog {
+      background: #fff;
+      border-radius: 28px;
+      padding: 24px;
+      min-width: 280px;
+      max-width: 400px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+      animation: scaleIn 0.15s ease-out;
+    }
+    .m3-dialog-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #fef3e0;
+      color: #f59e0b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .m3-dialog-title {
+      font-size: 1.25rem;
+      font-weight: 500;
+      margin: 0 0 8px 0;
+      color: #1c1b1f;
+    }
+    .m3-dialog-content {
+      font-size: 0.875rem;
+      color: #49454f;
+      margin: 0 0 24px 0;
+      line-height: 1.5;
+    }
+    .m3-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .m3-btn {
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 10px 24px;
+      border-radius: 20px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .m3-btn-text {
+      background: transparent;
+      color: #1e5631;
+    }
+    .m3-btn-text:hover {
+      background: rgba(30, 86, 49, 0.08);
+    }
+    .m3-btn-filled {
+      background: #1e5631;
+      color: #fff;
+    }
+    .m3-btn-filled:hover {
+      background: #164023;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes scaleIn {
+      from { transform: scale(0.9); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</AdminLayout>
+
+<script>
+  // When NULL checkbox is checked, disable the input
+  document.querySelectorAll('input[type="checkbox"][name$="_null"]').forEach(checkbox => {
+    const input = checkbox.closest('.form-group')?.querySelector('input[type="text"], textarea') as HTMLInputElement;
+    if (input) {
+      checkbox.addEventListener('change', (e) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        input.disabled = checked;
+        if (checked) input.value = '';
+      });
+    }
+  });
+
+  // Unsaved changes detection
+  const form = document.querySelector('form');
+  let initialFormData: FormData | null = null;
+  let pendingNavigation: (() => void) | null = null;
+
+  function captureInitialState() {
+    if (form) {
+      initialFormData = new FormData(form);
+    }
+  }
+
+  function checkForChanges(): boolean {
+    if (!form || !initialFormData) return false;
+    const currentData = new FormData(form);
+
+    for (const [key, value] of currentData.entries()) {
+      const initial = initialFormData.get(key) || '';
+      if (value !== initial) return true;
+    }
+
+    return false;
+  }
+
+  function showDialog(onConfirm: () => void) {
+    const dialog = document.getElementById('unsaved-dialog');
+    if (dialog) dialog.style.display = 'flex';
+    pendingNavigation = onConfirm;
+  }
+
+  function hideDialog() {
+    const dialog = document.getElementById('unsaved-dialog');
+    if (dialog) dialog.style.display = 'none';
+    pendingNavigation = null;
+  }
+
+  (window as any).handleBack = function() {
+    if (checkForChanges()) {
+      showDialog(() => history.back());
+    } else {
+      history.back();
+    }
+  };
+
+  document.getElementById('dialog-cancel')?.addEventListener('click', hideDialog);
+
+  document.getElementById('dialog-confirm')?.addEventListener('click', () => {
+    hideDialog();
+    if (pendingNavigation) {
+      pendingNavigation();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const link = (e.target as HTMLElement).closest('a');
+    if (link && link.href && checkForChanges()) {
+      e.preventDefault();
+      showDialog(() => window.location.href = link.href);
+    }
+  });
+
+  window.addEventListener('popstate', () => {
+    if (checkForChanges()) {
+      history.pushState(null, '', window.location.href);
+      showDialog(() => history.back());
+    }
+  });
+
+  window.addEventListener('beforeunload', (e) => {
+    if (checkForChanges()) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  form?.addEventListener('submit', () => {
+    initialFormData = null;
+  });
+
+  captureInitialState();
+  history.pushState(null, '', window.location.href);
+</script>

@@ -1,0 +1,622 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+import { getAllOpeningHours, formatWeeklyHours } from '../lib/opening-hours';
+
+// Get any pre-filled enquiry type from query params
+const enquiryType = Astro.url.searchParams.get('enquiry') || '';
+
+const db = Astro.locals.runtime?.env?.DB;
+let weeklyHours: { day: string; dayShort: string; time: string; isClosed: boolean }[] = [];
+
+if (db) {
+  try {
+    const hours = await getAllOpeningHours(db, 'Clubhouse');
+    weeklyHours = formatWeeklyHours(hours);
+  } catch (e) {
+    console.error('Failed to fetch opening hours:', e);
+  }
+}
+
+// Image
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg';
+---
+
+<PublicLayout
+  title="Contact Us"
+  description="Get in touch with Alnmouth Village Golf Club. Find directions, opening hours, and contact details."
+  heroImage={heroImage}
+  heroTitle="Contact Us"
+  heroSubtitle="We'd love to hear from you"
+  heroSize="standard"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <section class="section contact-section">
+      <div class="contact-grid">
+        <!-- Contact Form -->
+        <div class="contact-form-wrapper">
+          <span class="form-label">Get In Touch</span>
+          <h2 class="section-title">Send Us a Message</h2>
+          <form class="contact-form" id="contact-form" method="POST" action="/api/contact">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="name" class="form-label">Your Name *</label>
+                <input type="text" id="name" name="name" class="form-input" required />
+              </div>
+              <div class="form-group">
+                <label for="email" class="form-label">Email Address *</label>
+                <input type="email" id="email" name="email" class="form-input" required />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="phone" class="form-label">Phone Number</label>
+              <input type="tel" id="phone" name="phone" class="form-input" />
+            </div>
+
+            <div class="form-group">
+              <label for="enquiry" class="form-label">Enquiry Type</label>
+              <select id="enquiry" name="enquiry" class="form-input">
+                <option value="">Please select...</option>
+                <option value="general" selected={enquiryType === 'general'}>General Enquiry</option>
+                <option value="visitor" selected={enquiryType === 'visitor'}>Visitor Booking</option>
+                <option value="membership" selected={enquiryType === 'membership'}>Membership Enquiry</option>
+                <option value="society" selected={enquiryType === 'society'}>Society / Group Booking</option>
+                <option value="function" selected={enquiryType === 'function'}>Function / Event Enquiry</option>
+                <option value="feedback" selected={enquiryType === 'feedback'}>Feedback</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="message" class="form-label">Your Message *</label>
+              <textarea id="message" name="message" class="form-input" rows="5" required></textarea>
+            </div>
+
+            <div class="form-group">
+              <button type="submit" class="btn btn-primary btn-large">
+                Send Message
+              </button>
+            </div>
+
+            <p class="form-note">
+              * Required fields. We'll respond to your enquiry as soon as possible.
+            </p>
+          </form>
+        </div>
+
+        <!-- Contact Info -->
+        <div class="contact-info">
+          <div class="info-card address-card">
+            <h3>Club Office</h3>
+            <div class="info-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+              <div>
+                <p>Alnmouth Village Golf Club</p>
+                <p>Marine Road</p>
+                <p>Alnmouth</p>
+                <p>Northumberland</p>
+                <p>NE66 2RZ</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>Phone</h3>
+            <div class="info-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              <div>
+                <p><a href="tel:01665830370">01665 830370</a></p>
+                <p class="sub">Main Office / Clubhouse</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>Email</h3>
+            <div class="info-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                <polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <div>
+                <p><a href="mailto:Manager@AlnmouthVillage.Golf">Manager@AlnmouthVillage.Golf</a></p>
+                <p class="sub">General Enquiries</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="info-card">
+            <h3>Opening Hours</h3>
+            <div class="hours-list">
+              {weeklyHours.length > 0 ? (
+                weeklyHours.map(h => (
+                  <div class={`hours-row ${h.isClosed ? 'closed' : ''}`}>
+                    <span>{h.dayShort}</span>
+                    <span>{h.time}</span>
+                  </div>
+                ))
+              ) : (
+                <div class="hours-row">
+                  <span>Every day</span>
+                  <span>8:00 AM - Dusk</span>
+                </div>
+              )}
+            </div>
+            <p class="hours-note">Hours may vary seasonally</p>
+          </div>
+
+          <div class="info-card social-card">
+            <h3>Follow Us</h3>
+            <div class="social-links">
+              <a href="https://www.facebook.com/p/Alnmouth-Village-Golf-Club-100063579043415/" target="_blank" rel="noopener noreferrer" class="social-link">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Facebook
+              </a>
+              <a href="https://www.instagram.com/alnmouthvillagegolf/" target="_blank" rel="noopener noreferrer" class="social-link">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12.315 2c2.43 0 2.784.013 3.808.06 1.064.049 1.791.218 2.427.465a4.902 4.902 0 011.772 1.153 4.902 4.902 0 011.153 1.772c.247.636.416 1.363.465 2.427.048 1.067.06 1.407.06 4.123v.08c0 2.643-.012 2.987-.06 4.043-.049 1.064-.218 1.791-.465 2.427a4.902 4.902 0 01-1.153 1.772 4.902 4.902 0 01-1.772 1.153c-.636.247-1.363.416-2.427.465-1.067.048-1.407.06-4.123.06h-.08c-2.643 0-2.987-.012-4.043-.06-1.064-.049-1.791-.218-2.427-.465a4.902 4.902 0 01-1.772-1.153 4.902 4.902 0 01-1.153-1.772c-.247-.636-.416-1.363-.465-2.427-.047-1.024-.06-1.379-.06-3.808v-.63c0-2.43.013-2.784.06-3.808.049-1.064.218-1.791.465-2.427a4.902 4.902 0 011.153-1.772A4.902 4.902 0 015.45 2.525c.636-.247 1.363-.416 2.427-.465C8.901 2.013 9.256 2 11.685 2h.63zm-.081 1.802h-.468c-2.456 0-2.784.011-3.807.058-.975.045-1.504.207-1.857.344-.467.182-.8.398-1.15.748-.35.35-.566.683-.748 1.15-.137.353-.3.882-.344 1.857-.047 1.023-.058 1.351-.058 3.807v.468c0 2.456.011 2.784.058 3.807.045.975.207 1.504.344 1.857.182.466.399.8.748 1.15.35.35.683.566 1.15.748.353.137.882.3 1.857.344 1.054.048 1.37.058 4.041.058h.08c2.597 0 2.917-.01 3.96-.058.976-.045 1.505-.207 1.858-.344.466-.182.8-.398 1.15-.748.35-.35.566-.683.748-1.15.137-.353.3-.882.344-1.857.048-1.055.058-1.37.058-4.041v-.08c0-2.597-.01-2.917-.058-3.96-.045-.976-.207-1.505-.344-1.858a3.097 3.097 0 00-.748-1.15 3.098 3.098 0 00-1.15-.748c-.353-.137-.882-.3-1.857-.344-1.023-.047-1.351-.058-3.807-.058zM12 6.865a5.135 5.135 0 110 10.27 5.135 5.135 0 010-10.27zm0 1.802a3.333 3.333 0 100 6.666 3.333 3.333 0 000-6.666zm5.338-3.205a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4z"/></svg>
+                Instagram
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Map -->
+    <section class="section map-section">
+      <div class="section-header">
+        <h2 class="section-title">Find Us</h2>
+        <p class="section-subtitle">Located on the beautiful Northumberland coast, just off the A1</p>
+      </div>
+
+      <div class="map-container">
+        <iframe
+          src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2288.5!2d-1.6!3d55.38!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zNTXCsDIyJzQ4LjAiTiAxwrAzNicwMC4wIlc!5e0!3m2!1sen!2suk!4v1"
+          width="100%"
+          height="400"
+          style="border:0; border-radius: 16px;"
+          allowfullscreen=""
+          loading="lazy"
+          referrerpolicy="no-referrer-when-downgrade">
+        </iframe>
+      </div>
+
+      <div class="directions-grid">
+        <div class="direction-card">
+          <div class="direction-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+            </svg>
+          </div>
+          <h3>By Car</h3>
+          <p>
+            From the A1, take the Alnmouth turn-off (signposted Alnmouth Village).
+            Follow the road into the village and turn right onto Marine Road.
+            The golf club is on the right. Free parking is available.
+          </p>
+        </div>
+        <div class="direction-card">
+          <div class="direction-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="3" width="16" height="18" rx="2"/>
+              <line x1="12" y1="7" x2="12" y2="17"/>
+              <line x1="8" y1="11" x2="16" y2="11"/>
+            </svg>
+          </div>
+          <h3>By Train</h3>
+          <p>
+            Alnmouth station is on the East Coast Main Line with regular services
+            from Edinburgh (1 hour) and Newcastle (30 minutes). The club is a
+            10-minute taxi ride from the station.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    /* Contact Section */
+    .contact-section {
+      padding-top: 4rem;
+    }
+
+    .contact-grid {
+      display: grid;
+      gap: 3rem;
+    }
+
+    @media (min-width: 900px) {
+      .contact-grid {
+        grid-template-columns: 1fr 380px;
+      }
+    }
+
+    .contact-form-wrapper {
+      background: var(--surface);
+      border-radius: 20px;
+      padding: 2.5rem;
+    }
+
+    .form-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .contact-form-wrapper .section-title {
+      margin-bottom: 2rem;
+    }
+
+    .form-row {
+      display: grid;
+      gap: 1rem;
+    }
+
+    @media (min-width: 600px) {
+      .form-row {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .contact-form .form-label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+      font-size: 0.9rem;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 1rem;
+      font-family: inherit;
+      background: var(--white);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    textarea.form-input {
+      resize: vertical;
+      min-height: 140px;
+    }
+
+    .form-note {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin-top: 1rem;
+    }
+
+    .form-alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem;
+      border-radius: 10px;
+      margin-bottom: 1.5rem;
+      font-size: 0.95rem;
+    }
+
+    .form-alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .form-alert-success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+
+    .form-alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+
+    /* Contact Info */
+    .contact-info {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .info-card {
+      background: var(--white);
+      border-radius: 14px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    }
+
+    .info-card h3 {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 1rem;
+    }
+
+    .info-item {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .info-item svg {
+      width: 22px;
+      height: 22px;
+      color: var(--primary);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .info-item p {
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    .info-item a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .info-item a:hover {
+      text-decoration: underline;
+    }
+
+    .info-item .sub {
+      font-size: 0.85rem;
+      color: var(--text-light);
+      margin-top: 0.25rem;
+    }
+
+    .hours-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .hours-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+    }
+
+    .hours-row.closed {
+      color: var(--text-light);
+    }
+
+    .hours-note {
+      font-size: 0.8rem;
+      color: var(--text-light);
+      margin-top: 0.75rem;
+      font-style: italic;
+    }
+
+    .social-links {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .social-link {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.625rem 1rem;
+      background: var(--surface);
+      border-radius: 10px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .social-link:hover {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .social-link svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Map Section */
+    .map-section {
+      background: var(--surface);
+      margin-left: -2rem;
+      margin-right: -2rem;
+      padding: 5rem 2rem;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0.5rem;
+    }
+
+    .map-container {
+      margin-bottom: 2.5rem;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.1);
+    }
+
+    .directions-grid {
+      display: grid;
+      gap: 1.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 768px) {
+      .directions-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .direction-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+      display: flex;
+      gap: 1.25rem;
+      align-items: flex-start;
+    }
+
+    .direction-icon {
+      width: 50px;
+      height: 50px;
+      background: var(--primary);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .direction-icon svg {
+      width: 24px;
+      height: 24px;
+      color: var(--white);
+    }
+
+    .direction-card h3 {
+      font-family: var(--font-display);
+      margin-bottom: 0.5rem;
+      font-size: 1.05rem;
+    }
+
+    .direction-card p {
+      color: var(--text-light);
+      line-height: 1.7;
+      margin: 0;
+      font-size: 0.95rem;
+    }
+  </style>
+
+  <script is:inline>
+    const form = document.getElementById('contact-form');
+    const submitBtn = form?.querySelector('button[type="submit"]');
+    const originalBtnText = submitBtn?.innerHTML;
+    let isSubmitting = false;
+
+    form?.addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      if (isSubmitting) return;
+      isSubmitting = true;
+
+      // Update button state
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = 'Sending...';
+      }
+
+      // Remove any existing alerts
+      const existingAlert = form.querySelector('.form-alert');
+      if (existingAlert) existingAlert.remove();
+
+      // Collect form data
+      const formData = new FormData(form);
+      const data = {
+        name: formData.get('name'),
+        email: formData.get('email'),
+        phone: formData.get('phone'),
+        enquiry: formData.get('enquiry'),
+        message: formData.get('message')
+      };
+
+      try {
+        const response = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        // Create alert element
+        const alert = document.createElement('div');
+        alert.className = 'form-alert';
+
+        if (result.success) {
+          alert.className += ' form-alert-success';
+          alert.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <span>${result.message || 'Thank you for your message. We will respond shortly.'}</span>
+          `;
+          // Clear the form
+          form.reset();
+        } else {
+          alert.className += ' form-alert-error';
+          alert.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span>${result.error || 'Something went wrong. Please try again.'}</span>
+          `;
+        }
+
+        // Insert alert before form
+        form.insertBefore(alert, form.firstChild);
+
+        // Scroll to alert
+        alert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      } catch (error) {
+        const alert = document.createElement('div');
+        alert.className = 'form-alert form-alert-error';
+        alert.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <span>Unable to send message. Please email Manager@AlnmouthVillage.Golf or call 01665 830370.</span>
+        `;
+        form.insertBefore(alert, form.firstChild);
+      } finally {
+        isSubmitting = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalBtnText;
+        }
+      }
+    });
+  </script>
+</PublicLayout>
