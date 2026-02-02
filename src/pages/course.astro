@@ -9,10 +9,10 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
 
 <PublicLayout
   title="The Course"
-  description="Discover our stunning 18-hole links course at Alnmouth Village Golf Club with breathtaking views of the Northumberland coast."
+  description="The oldest 9-hole links course in England at Alnmouth Village Golf Club - a historic gem on the Northumberland coast since 1869."
   heroImage={heroImage}
   heroTitle="The Course"
-  heroSubtitle="18 holes of classic links golf on the Northumberland coast"
+  heroSubtitle="The oldest 9-hole links course in England, played twice for a full 18"
   heroSize="large"
   heroOverlay="medium"
 >
@@ -21,15 +21,15 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
     <section class="section intro-section">
       <div class="intro-grid">
         <div class="intro-content">
-          <span class="intro-label">Since 1869</span>
+          <span class="intro-label">England's Oldest 9-Hole Links</span>
           <h2 class="section-title">A True Links Experience</h2>
           <p class="intro-text">
-            Alnmouth Village Golf Club offers one of the finest links experiences in Northumberland.
-            Our 18-hole course provides a challenging yet fair test of golf for players of all abilities,
-            with stunning views of the coast and the Cheviot Hills.
+            Alnmouth Village Golf Club is proud to be the oldest 9-hole links course in England.
+            Established in 1869, our historic course is played twice to provide a challenging yet fair
+            18-hole test of golf for players of all abilities, with stunning views of the Northumberland coast.
           </p>
           <p class="intro-text">
-            The course measures 6,088 yards from the white tees (par 69) and features the
+            The course plays to par 71 from the white tees and features the
             traditional links characteristics of firm, fast-running fairways, subtle undulations,
             and well-protected greens. The prevailing coastal winds add an extra dimension to
             every round.
@@ -45,16 +45,16 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
     <section class="section stats-section">
       <div class="stats-grid">
         <div class="stat-card">
-          <span class="stat-number">18</span>
+          <span class="stat-number">9</span>
           <span class="stat-label">Holes</span>
         </div>
         <div class="stat-card">
-          <span class="stat-number">69</span>
-          <span class="stat-label">Par</span>
+          <span class="stat-number">71</span>
+          <span class="stat-label">Par (White)</span>
         </div>
         <div class="stat-card">
-          <span class="stat-number">6,088</span>
-          <span class="stat-label">Yards</span>
+          <span class="stat-number">70.0</span>
+          <span class="stat-label">Course Rating</span>
         </div>
         <div class="stat-card">
           <span class="stat-number">1869</span>
@@ -93,7 +93,7 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
             </div>
             <div>
               <h3>Coastal Views</h3>
-              <p>Breathtaking panoramas of the Northumberland coast and Cheviot Hills accompany every round.</p>
+              <p>Breathtaking panoramas of the Northumberland coast accompany every round.</p>
             </div>
           </div>
           <div class="feature-item">
@@ -117,10 +117,27 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
     <section class="section scorecard-section">
       <div class="section-header">
         <h2 class="section-title">Course Card</h2>
-        <p class="section-subtitle">Hole-by-hole details from the white tees</p>
+        <p class="section-subtitle">Select your tee to view hole-by-hole details</p>
       </div>
 
-      <div class="scorecard-wrapper">
+      <!-- Tee Selector -->
+      <div class="tee-selector">
+        <button class="tee-btn active" data-tee="white">
+          <span class="tee-color white"></span>
+          White Tees (Men)
+        </button>
+        <button class="tee-btn" data-tee="yellow">
+          <span class="tee-color yellow"></span>
+          Yellow Tees (Men)
+        </button>
+        <button class="tee-btn" data-tee="red">
+          <span class="tee-color red"></span>
+          Red Tees (Ladies)
+        </button>
+      </div>
+
+      <!-- White Tees -->
+      <div class="scorecard-wrapper" id="scorecard-white">
         <table class="scorecard">
           <thead>
             <tr>
@@ -139,26 +156,13 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
           </thead>
           <tbody>
             <tr>
-              <td class="label">Yards</td>
-              <td>342</td>
-              <td>378</td>
-              <td>162</td>
-              <td>390</td>
-              <td>457</td>
-              <td>154</td>
-              <td>372</td>
-              <td>303</td>
-              <td>380</td>
-              <td class="total">2938</td>
-            </tr>
-            <tr>
               <td class="label">Par</td>
-              <td>4</td>
-              <td>4</td>
               <td>3</td>
               <td>4</td>
-              <td>5</td>
-              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
               <td>4</td>
               <td>4</td>
               <td>4</td>
@@ -166,15 +170,15 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
             </tr>
             <tr>
               <td class="label">S.I.</td>
+              <td>9</td>
               <td>11</td>
+              <td>17</td>
               <td>5</td>
               <td>15</td>
-              <td>3</td>
-              <td>7</td>
-              <td>17</td>
               <td>1</td>
+              <td>7</td>
+              <td>3</td>
               <td>13</td>
-              <td>9</td>
               <td class="total">-</td>
             </tr>
           </tbody>
@@ -198,21 +202,181 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
           </thead>
           <tbody>
             <tr>
-              <td class="label">Yards</td>
-              <td>390</td>
-              <td>145</td>
-              <td>328</td>
-              <td>425</td>
-              <td>320</td>
-              <td>175</td>
-              <td>397</td>
-              <td>448</td>
-              <td>522</td>
-              <td class="total">3150</td>
+              <td class="label">Par</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>5</td>
+              <td>4</td>
+              <td class="total">36</td>
             </tr>
             <tr>
-              <td class="label">Par</td>
+              <td class="label">S.I.</td>
+              <td>8</td>
+              <td>10</td>
+              <td>18</td>
               <td>4</td>
+              <td>16</td>
+              <td>2</td>
+              <td>6</td>
+              <td>12</td>
+              <td>14</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="scorecard-totals">
+          <div class="total-item">
+            <span class="total-label">Total Par</span>
+            <span class="total-value">71</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">Course Rating</span>
+            <span class="total-value">70.0</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">Slope Rating</span>
+            <span class="total-value">122</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Yellow Tees -->
+      <div class="scorecard-wrapper hidden" id="scorecard-yellow">
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>1</th>
+              <th>2</th>
+              <th>3</th>
+              <th>4</th>
+              <th>5</th>
+              <th>6</th>
+              <th>7</th>
+              <th>8</th>
+              <th>9</th>
+              <th class="total">Out</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Par</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td class="total">35</td>
+            </tr>
+            <tr>
+              <td class="label">S.I.</td>
+              <td>9</td>
+              <td>11</td>
+              <td>17</td>
+              <td>5</td>
+              <td>15</td>
+              <td>1</td>
+              <td>7</td>
+              <td>3</td>
+              <td>13</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>10</th>
+              <th>11</th>
+              <th>12</th>
+              <th>13</th>
+              <th>14</th>
+              <th>15</th>
+              <th>16</th>
+              <th>17</th>
+              <th>18</th>
+              <th class="total">In</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Par</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td>4</td>
+              <td class="total">35</td>
+            </tr>
+            <tr>
+              <td class="label">S.I.</td>
+              <td>10</td>
+              <td>12</td>
+              <td>18</td>
+              <td>6</td>
+              <td>16</td>
+              <td>2</td>
+              <td>8</td>
+              <td>4</td>
+              <td>14</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="scorecard-totals">
+          <div class="total-item">
+            <span class="total-label">Total Par</span>
+            <span class="total-value">70</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">Course Rating</span>
+            <span class="total-value">67.7</span>
+          </div>
+          <div class="total-item">
+            <span class="total-label">Slope Rating</span>
+            <span class="total-value">117</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Red Tees -->
+      <div class="scorecard-wrapper hidden" id="scorecard-red">
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>1</th>
+              <th>2</th>
+              <th>3</th>
+              <th>4</th>
+              <th>5</th>
+              <th>6</th>
+              <th>7</th>
+              <th>8</th>
+              <th>9</th>
+              <th class="total">Out</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Par</td>
               <td>3</td>
               <td>4</td>
               <td>4</td>
@@ -221,19 +385,66 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
               <td>4</td>
               <td>4</td>
               <td>5</td>
+              <td>4</td>
               <td class="total">35</td>
             </tr>
             <tr>
               <td class="label">S.I.</td>
+              <td>15</td>
+              <td>9</td>
+              <td>13</td>
+              <td>3</td>
+              <td>11</td>
+              <td>1</td>
+              <td>5</td>
+              <td>7</td>
+              <td>17</td>
+              <td class="total">-</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table class="scorecard">
+          <thead>
+            <tr>
+              <th>Hole</th>
+              <th>10</th>
+              <th>11</th>
+              <th>12</th>
+              <th>13</th>
+              <th>14</th>
+              <th>15</th>
+              <th>16</th>
+              <th>17</th>
+              <th>18</th>
+              <th class="total">In</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="label">Par</td>
+              <td>3</td>
               <td>4</td>
-              <td>18</td>
+              <td>4</td>
+              <td>4</td>
+              <td>3</td>
+              <td>4</td>
+              <td>4</td>
+              <td>5</td>
+              <td>4</td>
+              <td class="total">35</td>
+            </tr>
+            <tr>
+              <td class="label">S.I.</td>
+              <td>16</td>
+              <td>10</td>
+              <td>14</td>
+              <td>4</td>
               <td>12</td>
               <td>2</td>
-              <td>14</td>
-              <td>16</td>
               <td>6</td>
               <td>8</td>
-              <td>10</td>
+              <td>18</td>
               <td class="total">-</td>
             </tr>
           </tbody>
@@ -241,19 +452,34 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
 
         <div class="scorecard-totals">
           <div class="total-item">
-            <span class="total-label">Total</span>
-            <span class="total-value">6,088 yards</span>
+            <span class="total-label">Total Par</span>
+            <span class="total-value">70</span>
           </div>
           <div class="total-item">
-            <span class="total-label">Par</span>
-            <span class="total-value">69</span>
+            <span class="total-label">Course Rating</span>
+            <span class="total-value">70.9</span>
           </div>
           <div class="total-item">
-            <span class="total-label">SSS</span>
-            <span class="total-value">69</span>
+            <span class="total-label">Slope Rating</span>
+            <span class="total-value">123</span>
           </div>
         </div>
       </div>
+
+      <script is:inline>
+        document.querySelectorAll('.tee-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            // Update active button
+            document.querySelectorAll('.tee-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            // Show selected scorecard
+            const tee = btn.dataset.tee;
+            document.querySelectorAll('.scorecard-wrapper').forEach(sc => sc.classList.add('hidden'));
+            document.getElementById('scorecard-' + tee).classList.remove('hidden');
+          });
+        });
+      </script>
     </section>
 
     <!-- Signature Holes -->
@@ -265,9 +491,9 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
 
       <div class="holes-grid">
         <div class="hole-card">
-          <div class="hole-badge">Hole 7</div>
+          <div class="hole-badge">Hole 6</div>
           <div class="hole-content">
-            <h3>372 yards · Par 4 · S.I. 1</h3>
+            <h3>Par 4 · S.I. 1</h3>
             <p>
               Stroke index 1 for good reason. This demanding par 4 requires accuracy off the tee
               to avoid the out of bounds on the left. The approach to an elevated green,
@@ -277,11 +503,11 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
         </div>
 
         <div class="hole-card">
-          <div class="hole-badge">Hole 18</div>
+          <div class="hole-badge">Hole 17</div>
           <div class="hole-content">
-            <h3>522 yards · Par 5 · S.I. 10</h3>
+            <h3>Par 5 · S.I. 12</h3>
             <p>
-              A fitting finale to your round. This par 5 offers a risk-reward opportunity
+              A fitting finale to the back nine. This par 5 offers a risk-reward opportunity
               for longer hitters, while the wise player will lay up short of the bunkers
               before attacking the well-protected green.
             </p>
@@ -532,12 +758,73 @@ const courseImage2 = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploa
       margin-bottom: 0.5rem;
     }
 
+    /* Tee Selector */
+    .tee-selector {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 2rem;
+    }
+
+    .tee-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      border: 2px solid var(--border);
+      border-radius: 50px;
+      background: var(--white);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.3s;
+    }
+
+    .tee-btn:hover {
+      border-color: var(--primary);
+    }
+
+    .tee-btn.active {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .tee-color {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid rgba(0,0,0,0.1);
+    }
+
+    .tee-color.white {
+      background: #fff;
+      border-color: #ccc;
+    }
+
+    .tee-color.yellow {
+      background: #ffd700;
+    }
+
+    .tee-color.red {
+      background: #dc3545;
+    }
+
+    .tee-btn.active .tee-color {
+      border-color: rgba(255,255,255,0.3);
+    }
+
     .scorecard-wrapper {
       overflow-x: auto;
       background: var(--white);
       border-radius: 16px;
       padding: 1.5rem;
       box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    .scorecard-wrapper.hidden {
+      display: none;
     }
 
     .scorecard {
