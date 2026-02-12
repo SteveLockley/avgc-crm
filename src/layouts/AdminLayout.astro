@@ -111,9 +111,33 @@ const navItems = [
     }
 
     .sidebar-footer {
-      padding: 1rem 1.5rem;
       border-top: 1px solid var(--primary-light);
       font-size: 0.875rem;
+    }
+
+    .nav-website {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      color: var(--white);
+      text-decoration: none;
+      opacity: 0.8;
+      transition: all 0.2s;
+    }
+
+    .nav-website:hover {
+      opacity: 1;
+      background: var(--primary-light);
+    }
+
+    .nav-website svg {
+      flex-shrink: 0;
+    }
+
+    .user-info {
+      padding: 0.75rem 1.5rem;
+      border-top: 1px solid var(--primary-light);
     }
 
     .sidebar-footer .user-name {
@@ -124,7 +148,7 @@ const navItems = [
       color: var(--white);
       opacity: 0.8;
       font-size: 0.75rem;
-      margin-top: 0.5rem;
+      margin-top: 0.25rem;
       display: inline-block;
     }
 
@@ -584,7 +608,8 @@ const navItems = [
       .sidebar-header h1,
       .sidebar-header p,
       .nav-item span,
-      .sidebar-footer {
+      .nav-website span,
+      .user-info {
         display: none;
       }
 
@@ -619,8 +644,18 @@ const navItems = [
       </nav>
 
       <div class="sidebar-footer">
-        <div class="user-name">{user?.name || 'Guest'}</div>
-        <a href="/logout" class="logout">Sign out</a>
+        <a href="https://www.alnmouthvillage.golf" class="nav-item nav-website">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+          <span>Main Website</span>
+        </a>
+        <div class="user-info">
+          <div class="user-name">{user?.name || 'Guest'}</div>
+          <a href="/logout" class="logout">Sign out</a>
+        </div>
       </div>
     </aside>
 
