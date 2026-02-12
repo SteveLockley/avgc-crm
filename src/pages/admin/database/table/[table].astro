@@ -10,7 +10,7 @@ const tableCheck = await db.prepare(
 ).bind(table).first();
 
 if (!tableCheck) {
-  return Astro.redirect('/database');
+  return Astro.redirect('/admin/database');
 }
 
 // Block access to FTS shadow tables (they have special structures that break normal queries)
@@ -22,7 +22,7 @@ const isFtsShadowTable = table?.includes('_fts_') ||
   table?.endsWith('_config');
 
 if (isFtsShadowTable) {
-  return Astro.redirect('/database?error=fts');
+  return Astro.redirect('/admin/database?error=fts');
 }
 
 // Get query parameters
@@ -47,7 +47,7 @@ if (Astro.request.method === 'POST') {
 
   if (action === 'delete' && rowId) {
     await db.prepare(`DELETE FROM "${table}" WHERE "${primaryKey}" = ?`).bind(rowId).run();
-    return Astro.redirect(`/database/table/${table}?page=${page}&deleted=1`);
+    return Astro.redirect(`/admin/database/table/${table}?page=${page}&deleted=1`);
   }
 }
 
@@ -99,13 +99,13 @@ const deleted = url.searchParams.get('deleted');
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">
-        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        <a href="/admin/database" style="color: #666; text-decoration: none;">&larr; Database</a>
         &nbsp;/&nbsp; {table}
         <span style="font-weight: normal; color: #666;">({totalCount.toLocaleString()} rows)</span>
       </h3>
       <div style="display: flex; gap: 0.5rem;">
-        <a href={`/database/table/${table}/structure`} class="btn btn-secondary">Structure</a>
-        <a href={`/database/table/${table}/insert`} class="btn btn-primary">+ Insert Row</a>
+        <a href={`/admin/database/table/${table}/structure`} class="btn btn-secondary">Structure</a>
+        <a href={`/admin/database/table/${table}/insert`} class="btn btn-primary">+ Insert Row</a>
       </div>
     </div>
 
@@ -127,7 +127,7 @@ const deleted = url.searchParams.get('deleted');
           style="flex: 1;"
         />
         <button type="submit" class="btn btn-primary">Search</button>
-        {search && <a href={`/database/table/${table}`} class="btn btn-secondary">Clear</a>}
+        {search && <a href={`/admin/database/table/${table}`} class="btn btn-secondary">Clear</a>}
       </div>
     </form>
 
@@ -158,7 +158,7 @@ const deleted = url.searchParams.get('deleted');
           {rows.map((row: any) => (
             <tr>
               <td style="white-space: nowrap;">
-                <a href={`/database/table/${table}/edit/${row[primaryKey] || row.rowid}`} class="btn btn-secondary btn-sm">Edit</a>
+                <a href={`/admin/database/table/${table}/edit/${row[primaryKey] || row.rowid}`} class="btn btn-secondary btn-sm">Edit</a>
                 <form method="POST" style="display: inline;" class="delete-row-form">
                   <input type="hidden" name="action" value="delete" />
                   <input type="hidden" name="rowId" value={row[primaryKey] || row.rowid} />

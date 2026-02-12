@@ -230,6 +230,10 @@ const currentYear = new Date().getFullYear();
             Instant Confirmation
           </span>
         </div>
+
+        <div class="payment-legal">
+          By making a payment you agree to our <a href="/terms">Terms &amp; Conditions</a> and <a href="/refund-policy">Refund Policy</a>. See our <a href="/privacy-policy">Privacy Policy</a> for how we handle your data. Payments are processed securely by DOJO (Paymentsense Ltd.).
+        </div>
       </div>
 
       <div class="payment-card">
@@ -761,6 +765,20 @@ const currentYear = new Date().getFullYear();
       width: 16px;
       height: 16px;
       color: var(--primary);
+    }
+
+    .payment-legal {
+      font-size: 0.8rem;
+      color: var(--text-light);
+      line-height: 1.6;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .payment-legal a {
+      color: var(--primary);
+      text-decoration: underline;
     }
 
     .btn {

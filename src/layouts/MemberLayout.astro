@@ -121,6 +121,33 @@ const icons: Record<string, string> = {
       <div class="page-content">
         <slot />
       </div>
+      <footer class="member-footer">
+        <div class="footer-cards">
+          <span class="footer-cards-label">We accept</span>
+          <div class="card-logos">
+            <svg viewBox="0 0 750 471" aria-label="Visa" role="img" class="card-logo">
+              <rect width="750" height="471" rx="40" fill="#1a1f71"/>
+              <path d="M278.2 334.2h-60.6l37.9-233.9h60.6L278.2 334.2z" fill="#fff"/>
+              <path d="M524.3 105.2c-12-4.5-30.8-9.4-54.3-9.4-59.8 0-101.9 31.8-102.2 77.3-.3 33.7 30 52.4 53 63.6 23.6 11.4 31.5 18.7 31.5 28.9-.2 15.6-18.9 22.8-36.3 22.8-24.3 0-37.2-3.6-57.1-12.3l-7.8-3.7-8.5 52.6c14.2 6.5 40.4 12.2 67.6 12.5 63.6 0 104.9-31.4 105.3-80 .2-26.7-15.9-47-50.9-63.7-21.2-10.9-34.2-18.1-34.2-29.1.2-9.9 11-20.2 34.8-20.2 19.9-.3 34.3 4.2 45.5 9l5.5 2.7 8.1-51z" fill="#fff"/>
+              <path d="M661.6 100.3h-46.8c-14.5 0-25.3 4.2-31.7 19.5L487 334.2h63.6s10.4-28.8 12.7-35.2h77.7c1.8 8.2 7.3 35.2 7.3 35.2H704L661.6 100.3zm-74.9 181.1c5-13.6 24.3-65.8 24.3-65.8-.4.6 5-13.7 8.1-22.6l4.1 20.4s11.7 56.5 14.1 68H586.7z" fill="#fff"/>
+              <path d="M232.8 100.3L173.5 261l-6.4-32.5c-11-37.5-45.5-78.1-84-98.4l54.2 204h64L296.8 100.3H232.8z" fill="#fff"/>
+              <path d="M120.8 100.3H24.7L24 105c75.9 19.4 126.1 66.2 147 122.5L149 119.9c-3.4-15-14.3-19.3-28.2-19.6z" fill="#f9a533"/>
+            </svg>
+            <svg viewBox="0 0 750 471" aria-label="Mastercard" role="img" class="card-logo">
+              <rect width="750" height="471" rx="40" fill="#000"/>
+              <circle cx="299" cy="236" r="148" fill="#eb001b"/>
+              <circle cx="451" cy="236" r="148" fill="#f79e1b"/>
+              <path d="M375 119.8c37.7 29.8 61.8 76 61.8 127.8S412.7 327 375 356.8c-37.7-29.8-61.8-76-61.8-127.8s24.1-98 61.8-127.8z" fill="#ff5f00"/>
+            </svg>
+          </div>
+        </div>
+        <div class="footer-links">
+          <a href="/privacy-policy">Privacy Policy</a>
+          <a href="/terms">Terms &amp; Conditions</a>
+          <a href="/refund-policy">Refund Policy</a>
+        </div>
+        <p class="footer-company">Alnmouth Village Golf Club Ltd. Company No. 09903211</p>
+      </footer>
     </main>
   </div>
 
@@ -379,6 +406,65 @@ const icons: Record<string, string> = {
 
     .page-content {
       padding: 2rem;
+    }
+
+    /* Member Footer */
+    .member-footer {
+      margin-top: 2rem;
+      padding: 1.5rem 2rem;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .member-footer .footer-cards {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 0.75rem;
+    }
+
+    .member-footer .footer-cards-label {
+      font-size: 0.75rem;
+      color: #999;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .member-footer .card-logos {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .member-footer .card-logo {
+      width: 44px;
+      height: 28px;
+      border-radius: 3px;
+    }
+
+    .member-footer .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .member-footer .footer-links a {
+      color: #999;
+      font-size: 0.8rem;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .member-footer .footer-links a:hover {
+      color: var(--primary);
+    }
+
+    .member-footer .footer-company {
+      margin-top: 0.5rem;
+      font-size: 0.75rem;
+      color: #bbb;
     }
 
     /* Mobile Styles */

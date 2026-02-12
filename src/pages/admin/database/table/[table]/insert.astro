@@ -10,7 +10,7 @@ const tableCheck = await db.prepare(
 ).bind(table).first();
 
 if (!tableCheck) {
-  return Astro.redirect('/database');
+  return Astro.redirect('/admin/database');
 }
 
 // Get columns
@@ -61,9 +61,9 @@ if (Astro.request.method === 'POST') {
       // Redirect to the new row
       const lastId = result.meta?.last_row_id;
       if (lastId) {
-        return Astro.redirect(`/database/table/${table}/edit/${lastId}?inserted=1`);
+        return Astro.redirect(`/admin/database/table/${table}/edit/${lastId}?inserted=1`);
       }
-      return Astro.redirect(`/database/table/${table}?inserted=1`);
+      return Astro.redirect(`/admin/database/table/${table}?inserted=1`);
     }
   } catch (e: any) {
     error = e.message || 'Failed to insert row';
@@ -75,9 +75,9 @@ if (Astro.request.method === 'POST') {
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">
-        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        <a href="/admin/database" style="color: #666; text-decoration: none;">&larr; Database</a>
         &nbsp;/&nbsp;
-        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        <a href={`/admin/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
         &nbsp;/&nbsp; Insert Row
       </h3>
     </div>

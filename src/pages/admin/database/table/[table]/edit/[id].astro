@@ -10,7 +10,7 @@ const tableCheck = await db.prepare(
 ).bind(table).first();
 
 if (!tableCheck) {
-  return Astro.redirect('/database');
+  return Astro.redirect('/admin/database');
 }
 
 // Get columns
@@ -24,7 +24,7 @@ const row = await db.prepare(
 ).bind(id).first();
 
 if (!row) {
-  return Astro.redirect(`/database/table/${table}`);
+  return Astro.redirect(`/admin/database/table/${table}`);
 }
 
 let error = '';
@@ -80,9 +80,9 @@ if (Astro.request.method === 'POST') {
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">
-        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        <a href="/admin/database" style="color: #666; text-decoration: none;">&larr; Database</a>
         &nbsp;/&nbsp;
-        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        <a href={`/admin/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
         &nbsp;/&nbsp; Edit Row #{id}
       </h3>
     </div>

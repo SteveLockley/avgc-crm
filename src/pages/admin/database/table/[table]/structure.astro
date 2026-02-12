@@ -10,7 +10,7 @@ const tableCheck = await db.prepare(
 ).bind(table).first<{ name: string; sql: string }>();
 
 if (!tableCheck) {
-  return Astro.redirect('/database');
+  return Astro.redirect('/admin/database');
 }
 
 // Get columns
@@ -41,12 +41,12 @@ const rowCount = countResult?.count || 0;
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">
-        <a href="/database" style="color: #666; text-decoration: none;">&larr; Database</a>
+        <a href="/admin/database" style="color: #666; text-decoration: none;">&larr; Database</a>
         &nbsp;/&nbsp;
-        <a href={`/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
+        <a href={`/admin/database/table/${table}`} style="color: #666; text-decoration: none;">{table}</a>
         &nbsp;/&nbsp; Structure
       </h3>
-      <a href={`/database/table/${table}`} class="btn btn-primary">Browse Data</a>
+      <a href={`/admin/database/table/${table}`} class="btn btn-primary">Browse Data</a>
     </div>
 
     <!-- Table Info -->
@@ -172,7 +172,7 @@ const rowCount = countResult?.count || 0;
                 <tr>
                   <td style="font-weight: 500;">{fk.from}</td>
                   <td>
-                    <a href={`/database/table/${fk.table}`}>{fk.table}</a>.{fk.to}
+                    <a href={`/admin/database/table/${fk.table}`}>{fk.table}</a>.{fk.to}
                   </td>
                   <td>{fk.on_update || 'NO ACTION'}</td>
                   <td>{fk.on_delete || 'NO ACTION'}</td>
