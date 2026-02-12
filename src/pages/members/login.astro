@@ -4,7 +4,6 @@ import PublicLayout from '../../layouts/PublicLayout.astro';
 // Check if already logged in
 const sessionToken = Astro.cookies.get('avgc_member_session')?.value;
 if (sessionToken) {
-  // Validate session
   const db = Astro.locals.runtime?.env?.DB;
   if (db) {
     const session = await db.prepare(
@@ -16,37 +15,8 @@ if (sessionToken) {
   }
 }
 
-// Handle form submission
-let message = '';
-let messageType: 'success' | 'error' | '' = '';
-
-if (Astro.request.method === 'POST') {
-  const formData = await Astro.request.formData();
-  const email = formData.get('email')?.toString().trim();
-
-  if (!email) {
-    message = 'Please enter your email address.';
-    messageType = 'error';
-  } else {
-    // Call the API to send magic link
-    const baseUrl = new URL(Astro.request.url).origin;
-    const response = await fetch(`${baseUrl}/api/member-auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'request-link', email })
-    });
-
-    const result = await response.json();
-
-    if (result.success) {
-      message = 'If your email is registered, you will receive a login link shortly. Please check your inbox.';
-      messageType = 'success';
-    } else {
-      message = result.error || 'Something went wrong. Please try again.';
-      messageType = 'error';
-    }
-  }
-}
+// Check for query params (e.g. after password reset)
+const resetSuccess = Astro.url.searchParams.get('reset') === 'success';
 ---
 
 <PublicLayout
@@ -64,70 +34,140 @@ if (Astro.request.method === 'POST') {
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
               <circle cx="12" cy="7" r="4"/>
             </svg>
-            <h2>Member Sign In</h2>
-            <p>Enter your email address and we'll send you a secure login link.</p>
+            <h2 id="form-title">Member Sign In</h2>
+            <p id="form-subtitle">Enter your email and password to access the members area.</p>
           </div>
 
-          {message && (
-            <div class={`alert alert-${messageType}`}>
-              {messageType === 'success' ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                  <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="8" x2="12" y2="12"/>
-                  <line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-              )}
-              <span>{message}</span>
+          <!-- Alert area -->
+          <div id="alert-box" class="alert" style="display: none;">
+            <svg id="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span id="alert-text"></span>
+          </div>
+
+          {resetSuccess && (
+            <div class="alert alert-success">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              <span>Your password has been reset. You can now sign in.</span>
             </div>
           )}
 
-          <form method="POST" class="login-form" id="login-form">
+          <!-- Login Form -->
+          <form id="login-form" class="login-form">
             <div class="form-group">
-              <label for="email">Email Address</label>
+              <label for="login-email">Email Address</label>
               <input
                 type="email"
-                id="email"
-                name="email"
+                id="login-email"
                 placeholder="your.email@example.com"
                 required
                 autocomplete="email"
               />
             </div>
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input
+                type="password"
+                id="login-password"
+                placeholder="Enter your password"
+                required
+                autocomplete="current-password"
+                minlength="8"
+              />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-default">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span class="btn-text">Sign In</span>
+            </button>
+            <div class="form-links">
+              <a href="#" id="show-register">First time? Create account</a>
+              <a href="#" id="show-forgot">Forgot password?</a>
+            </div>
+          </form>
 
-            <button type="submit" class="btn btn-primary btn-block" id="submit-btn">
+          <!-- Register Form -->
+          <form id="register-form" class="login-form" style="display: none;">
+            <div class="form-group">
+              <label for="reg-email">Email Address</label>
+              <input
+                type="email"
+                id="reg-email"
+                placeholder="your.email@example.com"
+                required
+                autocomplete="email"
+              />
+              <span class="form-hint">Must match the email on your club membership.</span>
+            </div>
+            <div class="form-group">
+              <label for="reg-password">Password</label>
+              <input
+                type="password"
+                id="reg-password"
+                placeholder="Choose a password (min. 8 characters)"
+                required
+                autocomplete="new-password"
+                minlength="8"
+              />
+            </div>
+            <div class="form-group">
+              <label for="reg-confirm">Confirm Password</label>
+              <input
+                type="password"
+                id="reg-confirm"
+                placeholder="Confirm your password"
+                required
+                autocomplete="new-password"
+                minlength="8"
+              />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" id="register-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-default">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="8.5" cy="7" r="4"/>
+                <line x1="20" y1="8" x2="20" y2="14"/>
+                <line x1="23" y1="11" x2="17" y2="11"/>
+              </svg>
+              <span class="btn-text">Create Account</span>
+            </button>
+            <div class="form-links">
+              <a href="#" id="show-login-from-register">Already have an account? Sign in</a>
+            </div>
+          </form>
+
+          <!-- Forgot Password Form -->
+          <form id="forgot-form" class="login-form" style="display: none;">
+            <div class="form-group">
+              <label for="forgot-email">Email Address</label>
+              <input
+                type="email"
+                id="forgot-email"
+                placeholder="your.email@example.com"
+                required
+                autocomplete="email"
+              />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" id="forgot-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon-default">
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                 <polyline points="22,6 12,13 2,6"/>
               </svg>
-              <span class="btn-text">Send Login Link</span>
+              <span class="btn-text">Send Reset Link</span>
             </button>
+            <div class="form-links">
+              <a href="#" id="show-login-from-forgot">Back to sign in</a>
+            </div>
           </form>
 
-          <script>
-            // Prevent double submission
-            const form = document.getElementById('login-form');
-            const btn = document.getElementById('submit-btn');
-            const btnText = btn?.querySelector('.btn-text');
-            let isSubmitting = false;
-
-            form?.addEventListener('submit', (e) => {
-              if (isSubmitting) {
-                e.preventDefault();
-                return;
-              }
-              isSubmitting = true;
-              if (btn) btn.disabled = true;
-              if (btnText) btnText.textContent = 'Sending...';
-            });
-          </script>
-
           <div class="login-help">
-            <p>Your login link will expire in 15 minutes.</p>
             <p>Having trouble? Contact us at <a href="mailto:Manager@AlnmouthVillage.Golf">Manager@AlnmouthVillage.Golf</a></p>
           </div>
         </div>
@@ -161,13 +201,181 @@ if (Astro.request.method === 'POST') {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                 <polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
-              View your membership details
+              Make payments online
             </li>
           </ul>
         </div>
       </div>
     </section>
   </div>
+
+  <script is:inline>
+    const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
+    const forgotForm = document.getElementById('forgot-form');
+    const formTitle = document.getElementById('form-title');
+    const formSubtitle = document.getElementById('form-subtitle');
+    const alertBox = document.getElementById('alert-box');
+    const alertIcon = document.getElementById('alert-icon');
+    const alertText = document.getElementById('alert-text');
+
+    function showAlert(message, type) {
+      alertBox.className = 'alert alert-' + type;
+      alertBox.style.display = 'flex';
+      alertText.textContent = message;
+      if (type === 'success') {
+        alertIcon.innerHTML = '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';
+      } else {
+        alertIcon.innerHTML = '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>';
+      }
+    }
+
+    function hideAlert() {
+      alertBox.style.display = 'none';
+    }
+
+    function showForm(form, title, subtitle) {
+      loginForm.style.display = 'none';
+      registerForm.style.display = 'none';
+      forgotForm.style.display = 'none';
+      form.style.display = 'flex';
+      formTitle.textContent = title;
+      formSubtitle.textContent = subtitle;
+      hideAlert();
+    }
+
+    // Toggle links
+    document.getElementById('show-register').addEventListener('click', function(e) {
+      e.preventDefault();
+      showForm(registerForm, 'Create Account', 'Register using the email address on your club membership.');
+    });
+
+    document.getElementById('show-forgot').addEventListener('click', function(e) {
+      e.preventDefault();
+      showForm(forgotForm, 'Reset Password', 'Enter your email and we\'ll send you a password reset link.');
+    });
+
+    document.getElementById('show-login-from-register').addEventListener('click', function(e) {
+      e.preventDefault();
+      showForm(loginForm, 'Member Sign In', 'Enter your email and password to access the members area.');
+    });
+
+    document.getElementById('show-login-from-forgot').addEventListener('click', function(e) {
+      e.preventDefault();
+      showForm(loginForm, 'Member Sign In', 'Enter your email and password to access the members area.');
+    });
+
+    // Login
+    loginForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const btnText = btn.querySelector('.btn-text');
+      btn.disabled = true;
+      btnText.textContent = 'Signing in...';
+      hideAlert();
+
+      try {
+        const res = await fetch('/api/member-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'login',
+            email: document.getElementById('login-email').value,
+            password: document.getElementById('login-password').value
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          window.location.href = '/members';
+        } else {
+          showAlert(data.error || 'Login failed.', 'error');
+          btn.disabled = false;
+          btnText.textContent = 'Sign In';
+        }
+      } catch (err) {
+        showAlert('Something went wrong. Please try again.', 'error');
+        btn.disabled = false;
+        btnText.textContent = 'Sign In';
+      }
+    });
+
+    // Register
+    registerForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const password = document.getElementById('reg-password').value;
+      const confirm = document.getElementById('reg-confirm').value;
+
+      if (password !== confirm) {
+        showAlert('Passwords do not match.', 'error');
+        return;
+      }
+      if (password.length < 8) {
+        showAlert('Password must be at least 8 characters.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('register-btn');
+      const btnText = btn.querySelector('.btn-text');
+      btn.disabled = true;
+      btnText.textContent = 'Creating account...';
+      hideAlert();
+
+      try {
+        const res = await fetch('/api/member-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'register',
+            email: document.getElementById('reg-email').value,
+            password: password
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showAlert('A verification email has been sent. Please check your inbox and click the link to complete registration.', 'success');
+          btn.disabled = false;
+          btnText.textContent = 'Create Account';
+        } else {
+          showAlert(data.error || 'Registration failed.', 'error');
+          btn.disabled = false;
+          btnText.textContent = 'Create Account';
+        }
+      } catch (err) {
+        showAlert('Something went wrong. Please try again.', 'error');
+        btn.disabled = false;
+        btnText.textContent = 'Create Account';
+      }
+    });
+
+    // Forgot Password
+    forgotForm.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('forgot-btn');
+      const btnText = btn.querySelector('.btn-text');
+      btn.disabled = true;
+      btnText.textContent = 'Sending...';
+      hideAlert();
+
+      try {
+        const res = await fetch('/api/member-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'forgot-password',
+            email: document.getElementById('forgot-email').value
+          })
+        });
+        const data = await res.json();
+        showAlert('If your email is registered, you will receive a reset link shortly. Please check your inbox.', 'success');
+        btn.disabled = false;
+        btnText.textContent = 'Send Reset Link';
+      } catch (err) {
+        showAlert('Something went wrong. Please try again.', 'error');
+        btn.disabled = false;
+        btnText.textContent = 'Send Reset Link';
+      }
+    });
+  </script>
 
   <style>
     .login-container {
@@ -245,7 +453,7 @@ if (Astro.request.method === 'POST') {
     .login-form {
       display: flex;
       flex-direction: column;
-      gap: 1.5rem;
+      gap: 1.25rem;
     }
 
     .form-group {
@@ -273,6 +481,11 @@ if (Astro.request.method === 'POST') {
       box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
     }
 
+    .form-hint {
+      font-size: 0.8rem;
+      color: var(--text-light);
+    }
+
     .btn-block {
       width: 100%;
       display: flex;
@@ -285,6 +498,23 @@ if (Astro.request.method === 'POST') {
     .btn-block svg {
       width: 20px;
       height: 20px;
+    }
+
+    .form-links {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .form-links a {
+      font-size: 0.9rem;
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .form-links a:hover {
+      text-decoration: underline;
     }
 
     .login-help {

@@ -19,7 +19,7 @@ const publicPrefixes = [
   '/api/faq',
 ];
 
-// Member routes (require magic link auth)
+// Member routes (require password auth)
 const memberPrefixes = [
   '/members',
 ];
@@ -39,8 +39,8 @@ function isPublicRoute(pathname: string): boolean {
 }
 
 function isMemberRoute(pathname: string): boolean {
-  // Login and verify pages are accessible without auth
-  if (pathname === '/members/login' || pathname.startsWith('/members/verify/')) {
+  // Login, verify, and reset-password pages are accessible without auth
+  if (pathname === '/members/login' || pathname.startsWith('/members/verify/') || pathname.startsWith('/members/reset-password/')) {
     return false; // These should be public
   }
   return memberPrefixes.some(prefix => pathname.startsWith(prefix));
@@ -63,12 +63,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  // Member login/verify pages - no auth required
-  if (pathname === '/members/login' || pathname.startsWith('/members/verify/')) {
+  // Member login/verify/reset pages - no auth required
+  if (pathname === '/members/login' || pathname.startsWith('/members/verify/') || pathname.startsWith('/members/reset-password/')) {
     return next();
   }
 
-  // Member protected routes - check magic link session
+  // Member protected routes - check session
   if (isMemberRoute(pathname)) {
     const sessionToken = context.cookies.get('avgc_member_session')?.value;
 

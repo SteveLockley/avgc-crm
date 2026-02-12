@@ -1,6 +1,6 @@
 ---
 import PublicLayout from '../../../layouts/PublicLayout.astro';
-import { verifyMagicLink } from '../../../lib/member-auth';
+import { verifyRegistration } from '../../../lib/member-auth';
 
 const { token } = Astro.params;
 const db = Astro.locals.runtime?.env?.DB;
@@ -9,14 +9,13 @@ let error = '';
 let verifying = true;
 
 if (!token) {
-  error = 'Invalid login link.';
+  error = 'Invalid verification link.';
   verifying = false;
 } else if (!db) {
   error = 'Database unavailable. Please try again later.';
   verifying = false;
 } else {
-  // Verify the token
-  const result = await verifyMagicLink(token, db);
+  const result = await verifyRegistration(token, db);
 
   if (result.success && result.sessionToken) {
     // Set session cookie (1 year)
@@ -25,23 +24,22 @@ if (!token) {
       secure: import.meta.env.PROD,
       sameSite: 'strict',
       path: '/',
-      maxAge: 365 * 24 * 60 * 60 // 1 year in seconds
+      maxAge: 365 * 24 * 60 * 60
     });
 
-    // Redirect to members area
     return Astro.redirect('/members');
   } else {
-    error = result.error || 'Invalid or expired link. Please request a new one.';
+    error = result.error || 'Invalid or expired verification link.';
     verifying = false;
   }
 }
 ---
 
 <PublicLayout
-  title="Verify Login"
-  description="Verifying your login link"
+  title="Verify Email"
+  description="Verifying your email address"
   heroTitle="Members Area"
-  heroSubtitle="Verifying your login"
+  heroSubtitle="Email Verification"
 >
   <div class="content">
     <section class="section">
@@ -50,8 +48,8 @@ if (!token) {
           {verifying ? (
             <div class="verify-loading">
               <div class="spinner"></div>
-              <h2>Verifying your login...</h2>
-              <p>Please wait while we verify your login link.</p>
+              <h2>Verifying your email...</h2>
+              <p>Please wait while we verify your email address.</p>
             </div>
           ) : (
             <div class="verify-error">
@@ -60,10 +58,10 @@ if (!token) {
                 <line x1="12" y1="8" x2="12" y2="12"/>
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
-              <h2>Login Link Invalid</h2>
+              <h2>Verification Failed</h2>
               <p>{error}</p>
               <a href="/members/login" class="btn btn-primary">
-                Request New Login Link
+                Back to Login
               </a>
             </div>
           )}

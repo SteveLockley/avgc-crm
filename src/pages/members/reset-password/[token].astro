@@ -1,0 +1,265 @@
+---
+import PublicLayout from '../../../layouts/PublicLayout.astro';
+
+const { token } = Astro.params;
+
+if (!token) {
+  return Astro.redirect('/members/login');
+}
+---
+
+<PublicLayout
+  title="Reset Password"
+  description="Set a new password for your account"
+  heroTitle="Members Area"
+  heroSubtitle="Reset your password"
+>
+  <div class="content">
+    <section class="section">
+      <div class="reset-container">
+        <div class="reset-card">
+          <div class="reset-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <h2>Set New Password</h2>
+            <p>Enter your new password below.</p>
+          </div>
+
+          <div id="alert-box" class="alert" style="display: none;">
+            <svg id="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span id="alert-text"></span>
+          </div>
+
+          <form id="reset-form" class="reset-form">
+            <div class="form-group">
+              <label for="new-password">New Password</label>
+              <input
+                type="password"
+                id="new-password"
+                placeholder="Choose a new password (min. 8 characters)"
+                required
+                autocomplete="new-password"
+                minlength="8"
+              />
+            </div>
+            <div class="form-group">
+              <label for="confirm-password">Confirm Password</label>
+              <input
+                type="password"
+                id="confirm-password"
+                placeholder="Confirm your new password"
+                required
+                autocomplete="new-password"
+                minlength="8"
+              />
+            </div>
+            <button type="submit" class="btn btn-primary btn-block" id="reset-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span class="btn-text">Reset Password</span>
+            </button>
+          </form>
+
+          <div class="reset-help">
+            <a href="/members/login">Back to login</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script is:inline define:vars={{ token }}>
+    const alertBox = document.getElementById('alert-box');
+    const alertIcon = document.getElementById('alert-icon');
+    const alertText = document.getElementById('alert-text');
+
+    function showAlert(message, type) {
+      alertBox.className = 'alert alert-' + type;
+      alertBox.style.display = 'flex';
+      alertText.textContent = message;
+      if (type === 'success') {
+        alertIcon.innerHTML = '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>';
+      } else {
+        alertIcon.innerHTML = '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>';
+      }
+    }
+
+    document.getElementById('reset-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const password = document.getElementById('new-password').value;
+      const confirm = document.getElementById('confirm-password').value;
+
+      if (password !== confirm) {
+        showAlert('Passwords do not match.', 'error');
+        return;
+      }
+      if (password.length < 8) {
+        showAlert('Password must be at least 8 characters.', 'error');
+        return;
+      }
+
+      const btn = document.getElementById('reset-btn');
+      const btnText = btn.querySelector('.btn-text');
+      btn.disabled = true;
+      btnText.textContent = 'Resetting...';
+
+      try {
+        const res = await fetch('/api/member-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'reset-password',
+            token: token,
+            password: password
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          window.location.href = '/members/login?reset=success';
+        } else {
+          showAlert(data.error || 'Reset failed. Please try again.', 'error');
+          btn.disabled = false;
+          btnText.textContent = 'Reset Password';
+        }
+      } catch (err) {
+        showAlert('Something went wrong. Please try again.', 'error');
+        btn.disabled = false;
+        btnText.textContent = 'Reset Password';
+      }
+    });
+  </script>
+
+  <style>
+    .reset-container {
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    .reset-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      border: 1px solid var(--border);
+    }
+
+    .reset-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .reset-header svg {
+      width: 48px;
+      height: 48px;
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .reset-header h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.5rem;
+    }
+
+    .reset-header p {
+      margin: 0;
+      color: var(--text-light);
+      font-size: 0.95rem;
+    }
+
+    .alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      font-size: 0.95rem;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .alert-success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .alert-error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .reset-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .form-group label {
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    .form-group input {
+      padding: 0.875rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .btn-block {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.875rem 1.5rem;
+    }
+
+    .btn-block svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .reset-help {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    .reset-help a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .reset-help a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</PublicLayout>
