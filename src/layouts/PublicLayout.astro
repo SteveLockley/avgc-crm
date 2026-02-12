@@ -40,6 +40,7 @@ const isActive = (href: string) => {
 
 const hasHero = heroImage || heroVideo || heroTitle;
 const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
+const isAdmin = !!Astro.locals.user;
 ---
 
 <!DOCTYPE html>
@@ -73,6 +74,7 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
           </a>
         ))}
         <a href="/members/login" class="nav-link nav-cta">Members</a>
+        {isAdmin && <a href="/admin" class="nav-link nav-admin">Admin</a>}
       </nav>
 
       <button class="menu-btn" id="menu-btn" aria-label="Toggle menu">
@@ -91,6 +93,7 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
       </a>
     ))}
     <a href="/members/login" class="mobile-nav-link mobile-nav-cta">Members Area</a>
+    {isAdmin && <a href="/admin" class="mobile-nav-link mobile-nav-admin">Admin</a>}
   </nav>
 
   <!-- Hero Section -->
@@ -332,6 +335,18 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
       text-shadow: none;
     }
 
+    .header-transparent .nav-admin {
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--white) !important;
+      border-color: rgba(255, 255, 255, 0.4);
+      text-shadow: none;
+    }
+
+    .header-transparent .nav-admin:hover {
+      background: rgba(255, 255, 255, 0.9);
+      color: #7c3aed !important;
+    }
+
     .header-transparent .menu-btn span {
       background: var(--white);
       box-shadow: 0 1px 3px rgba(0,0,0,0.3);
@@ -453,6 +468,28 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
       transform: translateY(-1px);
     }
 
+    .nav-admin {
+      margin-left: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: rgba(139, 92, 246, 0.1);
+      color: #7c3aed !important;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      transition: all 0.3s;
+    }
+
+    .nav-admin::after {
+      display: none;
+    }
+
+    .nav-admin:hover {
+      background: #7c3aed;
+      color: var(--white) !important;
+      border-color: #7c3aed;
+    }
+
     /* Mobile menu button */
     .menu-btn {
       display: flex;
@@ -529,6 +566,18 @@ const isLargeHero = heroSize === 'large' || heroSize === 'fullscreen';
       border-radius: 8px;
       font-weight: 600;
       border: none;
+    }
+
+    .mobile-nav-admin {
+      margin-top: 0.75rem;
+      padding: 1rem;
+      background: rgba(139, 92, 246, 0.1);
+      color: #7c3aed !important;
+      text-align: center;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border: 1px solid rgba(139, 92, 246, 0.3);
     }
 
     /* Hero Section */

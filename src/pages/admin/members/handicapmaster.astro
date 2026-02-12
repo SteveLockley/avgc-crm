@@ -732,11 +732,11 @@ const hasDiscrepancies = result ? (
                     <tr>
                       <td><code>{crm.crmPin || '-'}</code></td>
                       <td>
-                        <a href={`/members/${crm.crmId}`} class="table-link">{crm.crmName}</a>
+                        <a href={`/admin/members/${crm.crmId}`} class="table-link">{crm.crmName}</a>
                       </td>
                       <td>{crm.crmCategory || '-'}</td>
                       <td class="actions-col">
-                        <a href={`/members/${crm.crmId}`} class="btn btn-secondary btn-sm">View</a>
+                        <a href={`/admin/members/${crm.crmId}`} class="btn btn-secondary btn-sm">View</a>
                       </td>
                     </tr>
                   ))}
@@ -777,7 +777,7 @@ const hasDiscrepancies = result ? (
                     <tr>
                       <td><code>{m.hmRecord.pin || m.crmPin || '-'}</code></td>
                       <td>
-                        <a href={`/members/${m.crmId}`} class="table-link">{m.crmName}</a>
+                        <a href={`/admin/members/${m.crmId}`} class="table-link">{m.crmName}</a>
                       </td>
                       <td>
                         <ul style="margin: 0; padding-left: 1rem; font-size: 0.85rem; color: #856404;">
@@ -785,7 +785,7 @@ const hasDiscrepancies = result ? (
                         </ul>
                       </td>
                       <td class="actions-col">
-                        <a href={`/members/${m.crmId}/edit`} class="btn btn-secondary btn-sm">Edit</a>
+                        <a href={`/admin/members/${m.crmId}/edit`} class="btn btn-secondary btn-sm">Edit</a>
                       </td>
                     </tr>
                   ))}
@@ -826,7 +826,7 @@ const hasDiscrepancies = result ? (
                     <td><code>{m.hmRecord.pin || m.crmPin || '-'}</code></td>
                     <td>{m.hmRecord.firstName} {m.hmRecord.surname}</td>
                     <td>
-                      <a href={`/members/${m.crmId}`} class="table-link">{m.crmName}</a>
+                      <a href={`/admin/members/${m.crmId}`} class="table-link">{m.crmName}</a>
                     </td>
                     <td>{m.hmRecord.category || '-'}</td>
                     <td>

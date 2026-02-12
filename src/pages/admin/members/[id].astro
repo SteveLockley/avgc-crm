@@ -8,7 +8,7 @@ const db = Astro.locals.runtime.env.DB;
 const member = await db.prepare('SELECT * FROM members WHERE id = ?').bind(id).first();
 
 if (!member) {
-  return Astro.redirect('/members');
+  return Astro.redirect('/admin/members');
 }
 
 const payments = await db.prepare(
@@ -41,8 +41,8 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
         </div>
       </div>
       <div class="header-actions">
-        <a href={`/members/email?member_id=${id}`} class="btn btn-secondary">Email</a>
-        <a href={`/members/${id}/edit`} class="btn btn-primary">Edit</a>
+        <a href={`/admin/members/email?member_id=${id}`} class="btn btn-secondary">Email</a>
+        <a href={`/admin/members/${id}/edit`} class="btn btn-primary">Edit</a>
       </div>
     </div>
 
@@ -165,7 +165,7 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
               <div class="card-icon inline">💳</div>
               <h2 class="inline">Payment History</h2>
             </div>
-            <a href={`/payments/new?member_id=${id}`} class="btn btn-sm btn-secondary">+ Record Payment</a>
+            <a href={`/admin/payments/new?member_id=${id}`} class="btn btn-sm btn-secondary">+ Record Payment</a>
           </div>
 
           {payments.results && payments.results.length > 0 ? (

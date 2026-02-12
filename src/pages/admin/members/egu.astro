@@ -575,7 +575,7 @@ if (result) {
                     <td><code>{m.cdhNumber}</code></td>
                     <td>{m.eguName}</td>
                     <td>
-                      <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                      <a href={`/admin/members/${m.crmId}`}>{m.crmName}</a>
                     </td>
                     <td>
                       <ul class="discrepancy-list">
@@ -588,7 +588,7 @@ if (result) {
                       </ul>
                     </td>
                     <td>
-                      <a href={`/members/${m.crmId}/edit`} class="btn btn-secondary btn-sm">Edit CRM</a>
+                      <a href={`/admin/members/${m.crmId}/edit`} class="btn btn-secondary btn-sm">Edit CRM</a>
                     </td>
                   </tr>
                 ))}
@@ -619,7 +619,7 @@ if (result) {
                   <tr>
                     <td><code>{m.cdhNumber}</code></td>
                     <td>
-                      <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                      <a href={`/admin/members/${m.crmId}`}>{m.crmName}</a>
                     </td>
                     <td><span class="badge-correct">Synchronized</span></td>
                   </tr>
@@ -701,11 +701,11 @@ if (result) {
                     <tr>
                       <td><code>{m.cdhNumber}</code></td>
                       <td>
-                        <a href={`/members/${m.crmId}`}>{m.crmName}</a>
+                        <a href={`/admin/members/${m.crmId}`}>{m.crmName}</a>
                       </td>
                       <td>{m.crmSubscription || '-'}</td>
                       <td>
-                        <a href={`/members/${m.crmId}`} class="btn btn-secondary btn-sm">View</a>
+                        <a href={`/admin/members/${m.crmId}`} class="btn btn-secondary btn-sm">View</a>
                       </td>
                     </tr>
                   ))}

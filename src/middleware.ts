@@ -61,6 +61,46 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
+  // Opportunistic admin detection on ALL routes via CF_Authorization cookie
+  // This allows layouts to show admin links when an admin is browsing any page
+  if (!context.locals.user) {
+    // Check Cloudflare Access headers first (present on CF Access protected paths)
+    let cfEmail = context.request.headers.get('Cf-Access-Authenticated-User-Email');
+    if (!cfEmail) {
+      const jwt = context.request.headers.get('Cf-Access-Jwt-Assertion');
+      if (jwt) {
+        try {
+          const parts = jwt.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            cfEmail = payload.email;
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+    // Fall back to CF_Authorization cookie (works across subdomains if cookie domain is set)
+    if (!cfEmail) {
+      const cfAuthCookie = context.cookies.get('CF_Authorization')?.value;
+      if (cfAuthCookie) {
+        try {
+          const parts = cfAuthCookie.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            cfEmail = payload.email;
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+    if (cfEmail) {
+      const namePart = cfEmail.split('@')[0];
+      const name = namePart
+        .split('.')
+        .map((part: string) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+        .join(' ');
+      context.locals.user = { email: cfEmail, name, role: 'admin' };
+    }
+  }
+
   // Public routes - no auth required
   if (isPublicRoute(pathname)) {
     return next();
@@ -71,8 +111,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  // Member protected routes - check session
+  // Member protected routes - check session (admins bypass)
   if (isMemberRoute(pathname)) {
+    // Admins authenticated via Cloudflare Access can access member pages directly
+    if (context.locals.user) {
+      return next();
+    }
+
     const sessionToken = context.cookies.get('avgc_member_session')?.value;
 
     if (!sessionToken) {
@@ -120,27 +165,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Admin routes - require Cloudflare Access
   if (isAdminRoute(pathname)) {
-    // Try multiple ways to get the Cloudflare Access user
-    let cfEmail = context.request.headers.get('Cf-Access-Authenticated-User-Email');
-
-    // If header not found, try to decode from JWT
-    if (!cfEmail) {
-      const jwt = context.request.headers.get('Cf-Access-Jwt-Assertion');
-      if (jwt) {
-        try {
-          // Decode JWT payload (middle part)
-          const parts = jwt.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(atob(parts[1]));
-            cfEmail = payload.email;
-          }
-        } catch (e) {
-          // JWT decode failed
-        }
-      }
-    }
-
-    if (!cfEmail) {
+    if (!context.locals.user) {
       // In development, allow access with a default user
       if (import.meta.env.DEV) {
         context.locals.user = {
@@ -153,20 +178,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
       return new Response('Unauthorized - Cloudflare Access required', { status: 401 });
     }
-
-    // Extract name from email (before @) and format it
-    const namePart = cfEmail.split('@')[0];
-    const name = namePart
-      .split('.')
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-      .join(' ');
-
-    // Add user to locals from Cloudflare Access
-    context.locals.user = {
-      email: cfEmail,
-      name: name,
-      role: 'admin' // All authenticated users are admins
-    };
 
     return next();
   }

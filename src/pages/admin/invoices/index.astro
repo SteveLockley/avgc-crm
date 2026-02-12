@@ -375,7 +375,7 @@ function buildQueryString(pageNum: number): string {
                   </a>
                 </td>
                 <td class="member-cell">
-                  <a href={`/members/${invoice.member_id}`} class="member-link">
+                  <a href={`/admin/members/${invoice.member_id}`} class="member-link">
                     {invoice.surname}, {invoice.first_name}
                   </a>
                   <span class="member-pin">M{invoice.pin?.padStart(4, '0')}</span>

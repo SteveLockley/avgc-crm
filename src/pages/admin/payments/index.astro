@@ -240,7 +240,7 @@ function buildQueryString(pageNum: number): string {
             <tr>
               <td class="date-cell">{formatDate(payment.payment_date as string)}</td>
               <td class="member-cell">
-                <a href={`/members/${payment.member_id}`} class="member-link">
+                <a href={`/admin/members/${payment.member_id}`} class="member-link">
                   {payment.surname}, {payment.first_name}
                 </a>
               </td>

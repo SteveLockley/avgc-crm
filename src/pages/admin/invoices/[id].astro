@@ -287,7 +287,7 @@ const emailPreview = generateInvoiceEmail({
           <h3 class="card-title">Member</h3>
         </div>
         <p style="font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem 0;">
-          <a href={`/members/${member.id}`}>{getFullName(member)}</a>
+          <a href={`/admin/members/${member.id}`}>{getFullName(member)}</a>
         </p>
         <p style="margin: 0 0 0.5rem 0; font-size: 0.875rem; color: #666;">
           Member No: M{member.pin?.padStart(4, '0')}
