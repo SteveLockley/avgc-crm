@@ -7,10 +7,40 @@ const db = Astro.locals.runtime?.env?.DB;
 // Check for payment status from redirect
 const paymentStatus = Astro.url.searchParams.get('status');
 
-// Fetch any outstanding invoices for this member
+// Fetch member details including category
+interface MemberDetails {
+  id: number;
+  first_name: string;
+  surname: string;
+  category: string;
+  club_number: string;
+}
+
+interface SubscriptionFee {
+  name: string;
+  fee: number;
+}
+
+let memberDetails: MemberDetails | null = null;
+let subscriptionFee: SubscriptionFee | null = null;
 let outstandingInvoices: any[] = [];
+
 if (db && member?.id) {
   try {
+    // Get full member details
+    memberDetails = await db.prepare(
+      `SELECT id, first_name, surname, category, club_number FROM members WHERE id = ?`
+    ).bind(member.id).first<MemberDetails>();
+
+    // Get subscription fee for this member's category
+    if (memberDetails?.category) {
+      subscriptionFee = await db.prepare(
+        `SELECT name, fee FROM payment_items
+         WHERE category = 'Subscription' AND name = ? AND active = 1`
+      ).bind(memberDetails.category).first<SubscriptionFee>();
+    }
+
+    // Fetch outstanding invoices
     const result = await db.prepare(
       `SELECT i.*,
               (SELECT SUM(amount) FROM invoice_items WHERE invoice_id = i.id) as total_amount
@@ -20,7 +50,7 @@ if (db && member?.id) {
     ).bind(member.id).all();
     outstandingInvoices = result.results || [];
   } catch (e) {
-    console.error('Error fetching invoices:', e);
+    console.error('Error fetching member data:', e);
   }
 }
 
@@ -30,6 +60,14 @@ function formatCurrency(amount: number | null): string {
     style: 'currency',
     currency: 'GBP'
   }).format(amount / 100);
+}
+
+function formatCurrencyPounds(amount: number | null): string {
+  if (amount === null || amount === undefined) return '£0.00';
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP'
+  }).format(amount);
 }
 
 function formatDate(dateStr: string | null): string {
@@ -42,8 +80,12 @@ function formatDate(dateStr: string | null): string {
   });
 }
 
-const memberId = member?.id;
-const memberName = `${member?.firstName} ${member?.surname}`;
+const memberId = memberDetails?.id || member?.id;
+const memberNumber = memberDetails?.club_number || memberId;
+const memberName = memberDetails ? `${memberDetails.first_name} ${memberDetails.surname}` : `${member?.firstName} ${member?.surname}`;
+const memberCategory = memberDetails?.category || 'Member';
+const annualFee = subscriptionFee?.fee || null;
+const currentYear = new Date().getFullYear();
 ---
 
 <MemberLayout title="Make a Payment">
@@ -86,7 +128,6 @@ const memberName = `${member?.firstName} ${member?.surname}`;
                   data-amount={invoice.total_amount}
                   data-reference={`INV-${invoice.invoice_number || invoice.id}`}
                   data-description={`Invoice ${invoice.invoice_number || invoice.id} - ${invoice.period || 'Payment'}`}
-                  onclick="payInvoice(this)"
                 >
                   Pay Now
                 </button>
@@ -108,8 +149,40 @@ const memberName = `${member?.firstName} ${member?.surname}`;
         <h2>Pay Online with DOJO</h2>
         <p>Make a secure payment online using your debit or credit card. All major cards accepted.</p>
 
+        {annualFee && (
+          <div class="subscription-payment">
+            <div class="subscription-details">
+              <span class="subscription-label">Annual Subscription</span>
+              <span class="subscription-type">{memberCategory} Membership {currentYear}/{currentYear + 1}</span>
+              <span class="subscription-member">{memberName} (#{memberNumber})</span>
+            </div>
+            <div class="subscription-amount">{formatCurrencyPounds(annualFee)}</div>
+            <button
+              type="button"
+              class="btn btn-primary btn-pay-subscription"
+              data-amount={Math.round(annualFee * 100)}
+              data-reference={`SUB-${memberNumber}-${currentYear}`}
+              data-description={`${memberCategory} Subscription ${currentYear}/${currentYear + 1} - ${memberName} (#${memberNumber})`}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                <line x1="1" y1="10" x2="23" y2="10"/>
+              </svg>
+              Pay Subscription
+            </button>
+          </div>
+        )}
+
         <div class="custom-payment">
-          <label for="custom-amount">Enter amount to pay:</label>
+          <label for="custom-description">What is this payment for?</label>
+          <input
+            type="text"
+            id="custom-description"
+            placeholder="e.g. Competition entry, Bar tab, Locker rental"
+            class="description-input"
+            maxlength="100"
+          />
+          <label for="custom-amount">Amount:</label>
           <div class="amount-input-group">
             <span class="currency-symbol">£</span>
             <input
@@ -124,14 +197,13 @@ const memberName = `${member?.firstName} ${member?.surname}`;
           <button
             type="button"
             id="pay-custom-btn"
-            class="btn btn-primary"
-            onclick="payCustomAmount()"
+            class="btn btn-secondary"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
               <line x1="1" y1="10" x2="23" y2="10"/>
             </svg>
-            Pay with DOJO
+            Pay Custom Amount
           </button>
         </div>
 
@@ -190,7 +262,7 @@ const memberName = `${member?.firstName} ${member?.surname}`;
           </div>
           <div class="detail-row">
             <span class="label">Reference:</span>
-            <span class="value">Member #{memberId}</span>
+            <span class="value">{memberId} {memberName}</span>
           </div>
         </div>
       </div>
@@ -238,10 +310,55 @@ const memberName = `${member?.firstName} ${member?.surname}`;
     </div>
   </div>
 
-  <script is:inline define:vars={{ memberId, memberName }}>
+  <!-- M3 Dialog -->
+  <div id="m3-dialog" class="m3-dialog-overlay" style="display: none;">
+    <div class="m3-dialog">
+      <div class="m3-dialog-icon" id="dialog-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+      <h3 id="dialog-title">Notice</h3>
+      <p id="dialog-message"></p>
+      <div class="m3-dialog-actions">
+        <button type="button" class="btn btn-primary" id="dialog-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ memberId, memberNumber, memberName, memberCategory }}>
+    // M3 Dialog functions
+    function showDialog(title, message, type = 'warning') {
+      const dialog = document.getElementById('m3-dialog');
+      const titleEl = document.getElementById('dialog-title');
+      const messageEl = document.getElementById('dialog-message');
+      const iconEl = document.getElementById('dialog-icon');
+
+      titleEl.textContent = title;
+      messageEl.textContent = message;
+
+      // Update icon based on type
+      iconEl.className = 'm3-dialog-icon ' + type;
+      if (type === 'error') {
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      } else if (type === 'success') {
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+      } else {
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+      }
+
+      dialog.style.display = 'flex';
+    }
+
+    function closeDialog() {
+      document.getElementById('m3-dialog').style.display = 'none';
+    }
+
     async function initiatePayment(amount, reference, description) {
       const loadingEl = document.getElementById('payment-loading');
-      loadingEl.style.display = 'flex';
+      if (loadingEl) loadingEl.style.display = 'flex';
 
       try {
         const response = await fetch('/api/dojo-payment', {
@@ -249,8 +366,8 @@ const memberName = `${member?.firstName} ${member?.surname}`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             amount: amount,
-            reference: reference || `AVGC-${memberId}-${Date.now()}`,
-            description: description || `Payment from ${memberName}`
+            reference: reference || `AVGC-${memberNumber}-${Date.now()}`,
+            description: description || `Payment from ${memberName} (#${memberNumber})`
           })
         });
 
@@ -263,12 +380,12 @@ const memberName = `${member?.firstName} ${member?.surname}`;
         // Redirect to DOJO checkout
         window.location.href = data.checkoutUrl;
       } catch (error) {
-        loadingEl.style.display = 'none';
-        alert('Unable to process payment: ' + error.message);
+        if (loadingEl) loadingEl.style.display = 'none';
+        showDialog('Payment Error', error.message, 'error');
       }
     }
 
-    function payInvoice(button) {
+    function payWithData(button) {
       const amount = parseInt(button.dataset.amount, 10);
       const reference = button.dataset.reference;
       const description = button.dataset.description;
@@ -276,18 +393,65 @@ const memberName = `${member?.firstName} ${member?.surname}`;
     }
 
     function payCustomAmount() {
-      const input = document.getElementById('custom-amount');
-      const pounds = parseFloat(input.value);
+      const descInput = document.getElementById('custom-description');
+      const amountInput = document.getElementById('custom-amount');
+      const description = descInput.value.trim();
+      const pounds = parseFloat(amountInput.value);
+
+      if (!description) {
+        showDialog('Description Required', 'Please enter what this payment is for', 'warning');
+        descInput.focus();
+        return;
+      }
 
       if (!pounds || pounds < 1) {
-        alert('Please enter an amount of at least £1.00');
-        input.focus();
+        showDialog('Invalid Amount', 'Please enter an amount of at least £1.00', 'warning');
+        amountInput.focus();
         return;
       }
 
       const pence = Math.round(pounds * 100);
-      initiatePayment(pence, null, `Custom payment - £${pounds.toFixed(2)}`);
+      const year = new Date().getFullYear();
+      initiatePayment(pence, `AVGC-${memberNumber}-${year}`, `${description} - £${pounds.toFixed(2)} - ${memberName} (#${memberNumber})`);
     }
+
+    // Attach event listeners when DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+      // Custom amount button
+      const payBtn = document.getElementById('pay-custom-btn');
+      if (payBtn) {
+        payBtn.addEventListener('click', payCustomAmount);
+      }
+
+      // Subscription pay button
+      const subBtn = document.querySelector('.btn-pay-subscription');
+      if (subBtn) {
+        subBtn.addEventListener('click', function() {
+          payWithData(this);
+        });
+      }
+
+      // Invoice pay buttons
+      document.querySelectorAll('.btn-pay').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          payWithData(this);
+        });
+      });
+
+      // Dialog close button
+      const dialogOkBtn = document.getElementById('dialog-ok-btn');
+      if (dialogOkBtn) {
+        dialogOkBtn.addEventListener('click', closeDialog);
+      }
+
+      // Close dialog on overlay click
+      const dialogOverlay = document.getElementById('m3-dialog');
+      if (dialogOverlay) {
+        dialogOverlay.addEventListener('click', function(e) {
+          if (e.target === dialogOverlay) closeDialog();
+        });
+      }
+    });
   </script>
 
   <style>
@@ -473,8 +637,56 @@ const memberName = `${member?.firstName} ${member?.surname}`;
       line-height: 1.5;
     }
 
+    /* Subscription Payment */
+    .subscription-payment {
+      background: white;
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .subscription-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .subscription-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .subscription-type {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .subscription-member {
+      font-size: 0.9rem;
+      color: var(--text-light);
+    }
+
+    .subscription-amount {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .btn-pay-subscription {
+      width: 100%;
+      justify-content: center;
+    }
+
     .custom-payment {
       margin-bottom: 1.25rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
     }
 
     .custom-payment label {
@@ -482,6 +694,21 @@ const memberName = `${member?.firstName} ${member?.surname}`;
       font-size: 0.9rem;
       font-weight: 500;
       margin-bottom: 0.5rem;
+      color: var(--text-light);
+    }
+
+    .description-input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      margin-bottom: 1rem;
+    }
+
+    .description-input:focus {
+      outline: none;
+      border-color: var(--primary);
     }
 
     .amount-input-group {
@@ -698,6 +925,96 @@ const memberName = `${member?.firstName} ${member?.surname}`;
       margin: 0;
       color: var(--text);
       font-weight: 500;
+    }
+
+    /* M3 Dialog */
+    .m3-dialog-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1001;
+      padding: 1rem;
+    }
+
+    .m3-dialog {
+      background: white;
+      border-radius: 28px;
+      padding: 1.5rem;
+      max-width: 320px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      animation: dialogEnter 0.2s ease-out;
+    }
+
+    @keyframes dialogEnter {
+      from {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    .m3-dialog-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1rem;
+    }
+
+    .m3-dialog-icon.warning {
+      background: #fef3c7;
+      color: #d97706;
+    }
+
+    .m3-dialog-icon.error {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
+    .m3-dialog-icon.success {
+      background: #d1fae5;
+      color: #059669;
+    }
+
+    .m3-dialog-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .m3-dialog h3 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.25rem;
+      color: var(--text);
+    }
+
+    .m3-dialog p {
+      margin: 0 0 1.5rem 0;
+      font-size: 0.95rem;
+      color: var(--text-light);
+      line-height: 1.5;
+    }
+
+    .m3-dialog-actions {
+      display: flex;
+      justify-content: center;
+      gap: 0.75rem;
+    }
+
+    .m3-dialog-actions .btn {
+      min-width: 100px;
     }
   </style>
 </MemberLayout>

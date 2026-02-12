@@ -9,7 +9,7 @@ let importedCount = 0;
 let updatedCount = 0;
 let skippedCount = 0;
 
-// Subscription template mapping from old ClubV1 format to new Payment Items format
+// Subscription template mapping from old HandicapMaster format to new Payment Items format
 const subscriptionTemplateMap: Record<string, string> = {
   'A) Full Home': 'Full',
   'B) Full Away': 'Full',
@@ -282,7 +282,7 @@ function parseCSVLine(line: string): string[] {
     </div>
 
     <p style="margin-bottom: 1rem; color: #666;">
-      Upload a CSV file in the same format as your ClubV1 member export.
+      Upload a CSV file in the same format as your HandicapMaster member export.
       Members are matched by <strong>PIN number</strong> for updates.
     </p>
 
@@ -313,13 +313,13 @@ function parseCSVLine(line: string): string[] {
       <h3 class="card-title">Subscription Template Mapping</h3>
     </div>
     <p style="font-size: 0.875rem; color: #666; margin-bottom: 1rem;">
-      Old ClubV1 subscription templates are automatically mapped to the new format during import:
+      Old HandicapMaster subscription templates are automatically mapped to the new format during import:
     </p>
     <div class="table-container" style="max-height: 300px; overflow-y: auto;">
       <table style="font-size: 0.875rem;">
         <thead>
           <tr>
-            <th>ClubV1 Format</th>
+            <th>HandicapMaster Format</th>
             <th>New Format</th>
           </tr>
         </thead>
