@@ -11,6 +11,9 @@ const publicRoutes = [
   '/news',
   '/faq',
   '/book',
+  '/privacy-policy',
+  '/terms',
+  '/refund-policy',
 ];
 
 // Routes that start with these prefixes are public
