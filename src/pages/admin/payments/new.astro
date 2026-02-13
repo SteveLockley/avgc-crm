@@ -151,9 +151,9 @@ if (Astro.request.method === 'POST') {
 
         // Redirect back to member or payments list
         if (preselectedMemberId) {
-          return Astro.redirect(`/members/${preselectedMemberId}?payment_recorded=1`);
+          return Astro.redirect(`/admin/members/${preselectedMemberId}?payment_recorded=1`);
         }
-        return Astro.redirect('/payments?payment_recorded=1');
+        return Astro.redirect('/admin/payments?payment_recorded=1');
       }
     } catch (e: any) {
       error = `Failed to record payment: ${e.message}`;

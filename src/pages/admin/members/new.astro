@@ -83,7 +83,7 @@ if (Astro.request.method === 'POST') {
        VALUES (?, 'create', 'member', ?, ?)`
     ).bind(Astro.locals.user?.email || 'system', newId, JSON.stringify(member)).run();
 
-    return Astro.redirect(`/members/${newId}`);
+    return Astro.redirect(`/admin/members/${newId}`);
   } catch (e: any) {
     error = `Failed to create member: ${e.message}`;
   }

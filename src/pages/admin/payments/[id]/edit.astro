@@ -17,7 +17,7 @@ const payment = await db.prepare(
 ).bind(id).first();
 
 if (!payment) {
-  return Astro.redirect('/payments');
+  return Astro.redirect('/admin/payments');
 }
 
 if (Astro.request.method === 'POST') {
@@ -32,7 +32,7 @@ if (Astro.request.method === 'POST') {
        VALUES (?, 'delete', 'payment', ?)`
     ).bind(Astro.locals.user?.email || 'system', id).run();
 
-    return Astro.redirect(`/members/${payment.member_id}`);
+    return Astro.redirect(`/admin/members/${payment.member_id}`);
   }
 
   const amount = parseFloat(formData.get('amount')?.toString() || '0');
