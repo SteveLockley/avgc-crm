@@ -173,338 +173,553 @@ const membersWithInvoices = await db.prepare(
 ---
 
 <AdminLayout title="Record Payment">
-  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <button type="button" onclick="handleBack()" class="btn btn-secondary">
-      &larr; Back
-    </button>
-  </div>
-
-  {error && <div class="alert alert-error">{error}</div>}
-
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-    <!-- Payment Form -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Record Invoice Payment</h3>
-      </div>
-
-      {(!membersWithInvoices.results || membersWithInvoices.results.length === 0) && !preselectedMember ? (
-        <div style="padding: 2rem; text-align: center; color: #666;">
-          <p>No members have outstanding invoices.</p>
-          <p style="margin-top: 1rem;">
-            <a href="/admin/invoices" class="btn btn-primary">View Invoices</a>
-          </p>
+  <div class="edit-page">
+    <!-- Header -->
+    <div class="page-header">
+      <div class="header-left">
+        <button type="button" id="back-btn" class="back-btn">&larr;</button>
+        <div>
+          <h1>Record Payment</h1>
+          {preselectedMember && <p class="subtitle">{preselectedMember.first_name} {preselectedMember.surname}</p>}
         </div>
-      ) : (
-        <form method="POST" id="payment-form">
-          <table style="width: 100%; border-collapse: collapse;">
-            <tbody>
-              <tr>
-                <td style="padding: 0.75rem 0; vertical-align: top; width: 40%;">
-                  <label class="form-label" for="member_id">Member *</label>
-                </td>
-                <td style="padding: 0.75rem 0;">
-                  {preselectedMember ? (
-                    <>
-                      <input type="hidden" name="member_id" value={preselectedMember.id} />
-                      <input type="text" class="form-input" readonly
-                             value={`${preselectedMember.surname}, ${preselectedMember.first_name}`} />
-                    </>
-                  ) : (
-                    <select name="member_id" id="member_id" class="form-input" required onchange="window.location.href=`/payments/new?member_id=${this.value}`">
-                      <option value="">Select member...</option>
-                      {membersWithInvoices.results?.map((m: any) => (
-                        <option value={m.id}>
-                          {m.surname}, {m.first_name} ({m.outstanding_count} invoice{m.outstanding_count > 1 ? 's' : ''})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </td>
-              </tr>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="cancel-btn" class="btn btn-secondary">Cancel</button>
+        {preselectedMember && outstandingInvoices.length > 0 && (
+          <button type="submit" form="payment-form" class="btn btn-primary">Record Payment</button>
+        )}
+      </div>
+    </div>
+
+    {error && <div class="alert alert-error">{error}</div>}
+
+    <div class="form-grid">
+      <!-- Payment Form -->
+      <div class="form-column">
+        <div class="m3-card accent-card">
+          <h2>Invoice Payment</h2>
+
+          {(!membersWithInvoices.results || membersWithInvoices.results.length === 0) && !preselectedMember ? (
+            <div class="empty-state">
+              <p>No members have outstanding invoices.</p>
+              <p style="margin-top: 1rem;">
+                <a href="/admin/invoices" class="btn btn-primary">View Invoices</a>
+              </p>
+            </div>
+          ) : (
+            <form method="POST" id="payment-form">
+              <div class="field">
+                <label for="member_id">Member *</label>
+                {preselectedMember ? (
+                  <>
+                    <input type="hidden" name="member_id" value={preselectedMember.id} />
+                    <input type="text" readonly
+                           value={`${preselectedMember.surname}, ${preselectedMember.first_name}`} />
+                  </>
+                ) : (
+                  <select name="member_id" id="member_id" required onchange={`window.location.href='/admin/payments/new?member_id='+this.value`}>
+                    <option value="">Select member...</option>
+                    {membersWithInvoices.results?.map((m: any) => (
+                      <option value={m.id}>
+                        {m.surname}, {m.first_name} ({m.outstanding_count} invoice{m.outstanding_count > 1 ? 's' : ''})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
 
               {preselectedMember && outstandingInvoices.length > 0 && (
                 <>
-                  <tr>
-                    <td style="padding: 0.75rem 0; vertical-align: top;">
-                      <label class="form-label" for="invoice_id">Invoice *</label>
-                    </td>
-                    <td style="padding: 0.75rem 0;">
-                      {outstandingInvoices.length === 1 ? (
-                        <>
-                          <input type="hidden" name="invoice_id" value={outstandingInvoices[0].id} />
-                          <input type="text" class="form-input" readonly
-                                 value={`${outstandingInvoices[0].invoice_number} - ${formatCurrency(outstandingInvoices[0].total)}`} />
-                        </>
-                      ) : (
-                        <select name="invoice_id" id="invoice_id" class="form-input" required
-                                onchange="window.location.href=`/payments/new?member_id=${preselectedMemberId}&invoice_id=${this.value}`">
-                          {outstandingInvoices.map((inv: any) => (
-                            <option value={inv.id} selected={selectedInvoice?.id === inv.id}>
-                              {inv.invoice_number} - {formatCurrency(inv.total)} ({formatDate(inv.invoice_date)})
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding: 0.75rem 0; vertical-align: top;">
-                      <label class="form-label" for="amount">Amount (£) *</label>
-                    </td>
-                    <td style="padding: 0.75rem 0;">
-                      <input type="number" step="0.01" name="amount" id="amount" class="form-input" required
-                             value={selectedInvoice?.total || ''} />
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding: 0.75rem 0; vertical-align: top;">
-                      <label class="form-label" for="payment_date">Payment Date *</label>
-                    </td>
-                    <td style="padding: 0.75rem 0;">
-                      <input type="date" name="payment_date" id="payment_date" class="form-input" required
-                             value={defaultPaymentDate} />
-                    </td>
-                  </tr>
-
-                  <tr>
-                    <td style="padding: 0.75rem 0; vertical-align: top;">
-                      <label class="form-label" for="payment_method">Payment Method</label>
-                    </td>
-                    <td style="padding: 0.75rem 0;">
-                      <select name="payment_method" id="payment_method" class="form-input">
-                        <option value="">-</option>
-                        {PAYMENT_METHODS.map(pm => (
-                          <option value={pm} selected={preselectedMember?.default_payment_method === pm}>{pm}</option>
+                  <div class="field">
+                    <label for="invoice_id">Invoice *</label>
+                    {outstandingInvoices.length === 1 ? (
+                      <>
+                        <input type="hidden" name="invoice_id" value={outstandingInvoices[0].id} />
+                        <input type="text" readonly
+                               value={`${outstandingInvoices[0].invoice_number} - ${formatCurrency(outstandingInvoices[0].total)}`} />
+                      </>
+                    ) : (
+                      <select name="invoice_id" id="invoice_id" required>
+                        {outstandingInvoices.map((inv: any) => (
+                          <option value={inv.id} selected={selectedInvoice?.id === inv.id}>
+                            {inv.invoice_number} - {formatCurrency(inv.total)} ({formatDate(inv.invoice_date)})
+                          </option>
                         ))}
                       </select>
-                    </td>
-                  </tr>
+                    )}
+                  </div>
 
-                  <tr>
-                    <td colspan="2" style="padding: 0.75rem 0;">
-                      <label class="form-label" for="notes">Notes</label>
-                      <textarea
-                        name="notes"
-                        id="notes"
-                        class="form-input"
-                        rows="2"
-                        style="width: 100%;"
-                        placeholder="Optional notes about this payment..."
-                        onfocus="if(this.value === this.placeholder) this.value = ''"
-                        onblur="if(this.value === '') this.value = ''"
-                      ></textarea>
-                    </td>
-                  </tr>
+                  <div class="field-row two-col">
+                    <div class="field">
+                      <label for="amount">Amount (&pound;) *</label>
+                      <input type="number" step="0.01" name="amount" id="amount" required
+                             value={selectedInvoice?.total || ''} />
+                    </div>
+                    <div class="field">
+                      <label for="payment_date">Payment Date *</label>
+                      <input type="date" name="payment_date" id="payment_date" required
+                             value={defaultPaymentDate} />
+                    </div>
+                  </div>
+
+                  <div class="field">
+                    <label for="payment_method">Payment Method</label>
+                    <select name="payment_method" id="payment_method">
+                      <option value="">-</option>
+                      {PAYMENT_METHODS.map(pm => (
+                        <option value={pm} selected={preselectedMember?.default_payment_method === pm}>{pm}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div class="field">
+                    <label for="notes">Notes</label>
+                    <textarea name="notes" id="notes" rows="2" placeholder="Optional notes about this payment..."></textarea>
+                  </div>
                 </>
               )}
 
               {preselectedMember && outstandingInvoices.length === 0 && (
-                <tr>
-                  <td colspan="2" style="padding: 2rem; text-align: center; color: #666;">
-                    <p>No outstanding invoices for this member.</p>
-                    <p style="margin-top: 1rem;">
-                      <a href={`/invoices/generate?member_id=${preselectedMember.id}`} class="btn btn-primary btn-sm">
-                        Generate Invoice
-                      </a>
-                    </p>
-                  </td>
-                </tr>
+                <div class="empty-state">
+                  <p>No outstanding invoices for this member.</p>
+                  <p style="margin-top: 1rem;">
+                    <a href={`/admin/invoices/generate?member_id=${preselectedMember.id}`} class="btn btn-primary btn-sm">
+                      Generate Invoice
+                    </a>
+                  </p>
+                </div>
               )}
-            </tbody>
-          </table>
-
-          {preselectedMember && outstandingInvoices.length > 0 && (
-            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-              <button type="button" onclick="handleBack()" class="btn btn-secondary">
-                Cancel
-              </button>
-              <button type="submit" class="btn btn-primary">Record Payment</button>
-            </div>
+            </form>
           )}
-        </form>
-      )}
-    </div>
+        </div>
 
-    <!-- Invoice Preview -->
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Invoice Preview</h3>
-        {selectedInvoice && (
-          <span class={`badge ${getInvoiceStatusBadge(selectedInvoice.status)}`}>
-            {selectedInvoice.status.toUpperCase()}
-          </span>
+        <!-- Bottom Actions (mobile) -->
+        {preselectedMember && outstandingInvoices.length > 0 && (
+          <div class="mobile-actions">
+            <button type="button" id="cancel-btn-bottom" class="btn btn-secondary">Cancel</button>
+            <button type="submit" form="payment-form" class="btn btn-primary">Record Payment</button>
+          </div>
         )}
       </div>
 
-      {selectedInvoice ? (
-        <div>
-          <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd;">
-            <p style="margin: 0 0 0.5rem 0;">
-              <strong>Invoice Number:</strong>
-              <a href={`/invoices/${selectedInvoice.id}`} style="font-weight: 600;">
-                {selectedInvoice.invoice_number}
-              </a>
-            </p>
-            <p style="margin: 0 0 0.5rem 0;">
-              <strong>Invoice Date:</strong> {formatDate(selectedInvoice.invoice_date)}
-            </p>
-            <p style="margin: 0;">
-              <strong>Period:</strong> {formatInvoicePeriod(selectedInvoice.period_start, selectedInvoice.period_end)}
-            </p>
+      <!-- Invoice Preview -->
+      <div class="form-column">
+        <div class="m3-card">
+          <div class="preview-header">
+            <h2>Invoice Preview</h2>
+            {selectedInvoice && (
+              <span class={`badge ${getInvoiceStatusBadge(selectedInvoice.status)}`}>
+                {selectedInvoice.status.toUpperCase()}
+              </span>
+            )}
           </div>
 
-          <!-- Line Items -->
-          <table style="width: 100%; font-size: 0.875rem;">
-            <thead>
-              <tr style="background: #f8f9fa;">
-                <th style="text-align: left; padding: 0.5rem;">Description</th>
-                <th style="text-align: right; padding: 0.5rem;">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selectedInvoiceItems.map((item: any) => (
-                <tr>
-                  <td style="padding: 0.5rem; border-bottom: 1px solid #eee;">{item.description}</td>
-                  <td style="padding: 0.5rem; border-bottom: 1px solid #eee; text-align: right;">
-                    {formatCurrency(item.line_total)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style="background: #1e5631; color: white;">
-                <td style="padding: 0.75rem; font-weight: 600;">Total</td>
-                <td style="padding: 0.75rem; text-align: right; font-weight: 700; font-size: 1rem;">
-                  {formatCurrency(selectedInvoice.total)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+          {selectedInvoice ? (
+            <div>
+              <div class="invoice-meta">
+                <p>
+                  <strong>Invoice Number:</strong>
+                  <a href={`/admin/invoices/${selectedInvoice.id}`}>{selectedInvoice.invoice_number}</a>
+                </p>
+                <p>
+                  <strong>Invoice Date:</strong> {formatDate(selectedInvoice.invoice_date)}
+                </p>
+                <p>
+                  <strong>Period:</strong> {formatInvoicePeriod(selectedInvoice.period_start, selectedInvoice.period_end)}
+                </p>
+              </div>
 
-          <div style="margin-top: 1rem;">
-            <a href={`/invoices/${selectedInvoice.id}`} class="btn btn-secondary btn-sm">
-              View Full Invoice
-            </a>
-          </div>
-        </div>
-      ) : preselectedMember ? (
-        <div style="padding: 2rem; text-align: center; color: #666;">
-          {outstandingInvoices.length === 0 ? (
-            <p>No outstanding invoices to display.</p>
+              <!-- Line Items -->
+              <table class="invoice-table">
+                <thead>
+                  <tr>
+                    <th style="text-align: left;">Description</th>
+                    <th style="text-align: right;">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedInvoiceItems.map((item: any) => (
+                    <tr>
+                      <td>{item.description}</td>
+                      <td style="text-align: right;">{formatCurrency(item.line_total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td>Total</td>
+                    <td style="text-align: right;">{formatCurrency(selectedInvoice.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div style="margin-top: 1rem;">
+                <a href={`/admin/invoices/${selectedInvoice.id}`} class="btn btn-secondary btn-sm">
+                  View Full Invoice
+                </a>
+              </div>
+            </div>
+          ) : preselectedMember ? (
+            <div class="empty-state">
+              {outstandingInvoices.length === 0 ? (
+                <p>No outstanding invoices to display.</p>
+              ) : (
+                <p>Select an invoice to see preview.</p>
+              )}
+            </div>
           ) : (
-            <p>Select an invoice to see preview.</p>
+            <div class="empty-state">
+              <p>Select a member to see their outstanding invoices.</p>
+            </div>
           )}
         </div>
-      ) : (
-        <div style="padding: 2rem; text-align: center; color: #666;">
-          <p>Select a member to see their outstanding invoices.</p>
-        </div>
-      )}
-    </div>
-  </div>
-
-  <!-- M3 Unsaved Changes Dialog -->
-  <div id="unsaved-dialog" class="m3-dialog-overlay" style="display: none;">
-    <div class="m3-dialog">
-      <div class="m3-dialog-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/>
-        </svg>
-      </div>
-      <h2 class="m3-dialog-title">Unsaved changes</h2>
-      <p class="m3-dialog-content">You have unsaved changes. Are you sure you want to leave this page?</p>
-      <div class="m3-dialog-actions">
-        <button type="button" id="dialog-cancel" class="m3-btn m3-btn-text">Stay</button>
-        <button type="button" id="dialog-confirm" class="m3-btn m3-btn-filled">Leave</button>
       </div>
     </div>
   </div>
 
   <style>
-    .m3-dialog-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.32);
+    .edit-page {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
       display: flex;
       align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      animation: fadeIn 0.15s ease-out;
+      gap: 1rem;
     }
-    .m3-dialog {
-      background: #fff;
-      border-radius: 28px;
-      padding: 24px;
-      min-width: 280px;
-      max-width: 400px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
-      animation: scaleIn 0.15s ease-out;
-    }
-    .m3-dialog-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: #fef3e0;
-      color: #f59e0b;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
-    }
-    .m3-dialog-title {
-      font-size: 1.25rem;
-      font-weight: 500;
-      margin: 0 0 8px 0;
-      color: #1c1b1f;
-    }
-    .m3-dialog-content {
-      font-size: 0.875rem;
-      color: #49454f;
-      margin: 0 0 24px 0;
-      line-height: 1.5;
-    }
-    .m3-dialog-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-    }
-    .m3-btn {
-      font-size: 0.875rem;
-      font-weight: 500;
-      padding: 10px 24px;
-      border-radius: 20px;
+
+    .back-btn {
+      width: 40px;
+      height: 40px;
       border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 0.2s;
     }
-    .m3-btn-text {
-      background: transparent;
+
+    .back-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 768px) {
+      .header-actions {
+        display: none;
+      }
+    }
+
+    /* Form Grid - two columns */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* M3 Cards */
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 1.25rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: white;
+    }
+
+    .accent-card h2 {
+      color: white;
+    }
+
+    .accent-card label {
+      color: rgba(255,255,255,0.8);
+    }
+
+    .accent-card input,
+    .accent-card select,
+    .accent-card textarea {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.3);
+      color: white;
+    }
+
+    .accent-card input::placeholder {
+      color: rgba(255,255,255,0.5);
+    }
+
+    .accent-card input:focus,
+    .accent-card select:focus,
+    .accent-card textarea:focus {
+      border-color: rgba(255,255,255,0.6);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
+    }
+
+    .accent-card option {
+      color: #333;
+      background: white;
+    }
+
+    .accent-card a {
+      color: white;
+    }
+
+    /* Fields */
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: white;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .field textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    /* Field Rows */
+    .field-row {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .field-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-row .field {
+      margin-bottom: 0;
+    }
+
+    .two-col {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    @media (max-width: 480px) {
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Invoice Preview */
+    .preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .preview-header h2 {
+      margin: 0;
+    }
+
+    .invoice-meta {
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #eee;
+    }
+
+    .invoice-meta p {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.9rem;
+    }
+
+    .invoice-meta p:last-child {
+      margin-bottom: 0;
+    }
+
+    .invoice-meta a {
       color: #1e5631;
+      font-weight: 600;
     }
-    .m3-btn-text:hover {
-      background: rgba(30, 86, 49, 0.08);
+
+    .invoice-table {
+      width: 100%;
+      font-size: 0.875rem;
+      border-collapse: collapse;
     }
-    .m3-btn-filled {
+
+    .invoice-table thead tr {
+      background: #f8f9fa;
+    }
+
+    .invoice-table th,
+    .invoice-table td {
+      padding: 0.5rem 0.75rem;
+    }
+
+    .invoice-table tbody td {
+      border-bottom: 1px solid #eee;
+    }
+
+    .invoice-table tfoot tr {
       background: #1e5631;
-      color: #fff;
+      color: white;
     }
-    .m3-btn-filled:hover {
-      background: #164023;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+
+    .invoice-table tfoot td {
+      padding: 0.75rem;
+      font-weight: 600;
     }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+
+    .invoice-table tfoot td:last-child {
+      font-size: 1rem;
+      font-weight: 700;
     }
-    @keyframes scaleIn {
-      from { transform: scale(0.9); opacity: 0; }
-      to { transform: scale(1); opacity: 1; }
+
+    /* Empty state */
+    .empty-state {
+      padding: 2rem;
+      text-align: center;
+      color: rgba(255,255,255,0.7);
+    }
+
+    .m3-card:not(.accent-card) .empty-state {
+      color: #666;
+    }
+
+    /* Badge */
+    .badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Mobile actions */
+    .mobile-actions {
+      display: none;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      justify-content: flex-end;
+    }
+
+    @media (max-width: 768px) {
+      .mobile-actions {
+        display: flex;
+      }
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.65rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+    }
+
+    .btn-primary {
+      background: #1e5631;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #164424;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
     }
   </style>
 </AdminLayout>
@@ -516,7 +731,7 @@ const membersWithInvoices = await db.prepare(
     invoiceSelect.addEventListener('change', function() {
       const invoiceId = this.value;
       if (invoiceId) {
-        window.location.href = `/payments/new?member_id=${preselectedMemberId}&invoice_id=${invoiceId}`;
+        window.location.href = `/admin/payments/new?member_id=${preselectedMemberId}&invoice_id=${invoiceId}`;
       }
     });
   }
@@ -524,7 +739,7 @@ const membersWithInvoices = await db.prepare(
   // Unsaved changes detection
   const form = document.getElementById('payment-form');
   let initialFormData = null;
-  let pendingNavigation = null;
+  let formSubmitting = false;
 
   function captureInitialState() {
     if (form) {
@@ -532,73 +747,58 @@ const membersWithInvoices = await db.prepare(
     }
   }
 
-  function checkForChanges() {
+  function getFormDataString(formData) {
+    return Array.from(formData.entries()).map(([k, v]) => `${k}=${v}`).sort().join('&');
+  }
+
+  function hasUnsavedChanges() {
     if (!form || !initialFormData) return false;
-    const currentData = new FormData(form);
-
-    for (const [key, value] of currentData.entries()) {
-      const initial = initialFormData.get(key) || '';
-      if (value !== initial) return true;
-    }
-
-    return false;
+    return getFormDataString(initialFormData) !== getFormDataString(new FormData(form));
   }
 
-  function showDialog(onConfirm) {
-    const dialog = document.getElementById('unsaved-dialog');
-    if (dialog) dialog.style.display = 'flex';
-    pendingNavigation = onConfirm;
-  }
-
-  function hideDialog() {
-    const dialog = document.getElementById('unsaved-dialog');
-    if (dialog) dialog.style.display = 'none';
-    pendingNavigation = null;
-  }
-
-  window.handleBack = function() {
-    if (checkForChanges()) {
-      showDialog(() => history.back());
+  function handleBack() {
+    if (!formSubmitting && hasUnsavedChanges()) {
+      m3Confirm('You have unsaved changes. Leave anyway?', {
+        title: 'Unsaved Changes',
+        confirmText: 'Leave',
+        cancelText: 'Stay'
+      }).then(confirmed => {
+        if (confirmed) history.back();
+      });
     } else {
       history.back();
     }
-  };
+  }
 
-  document.getElementById('dialog-cancel')?.addEventListener('click', hideDialog);
+  // Back/cancel buttons
+  document.getElementById('back-btn').addEventListener('click', handleBack);
+  document.getElementById('cancel-btn')?.addEventListener('click', handleBack);
+  document.getElementById('cancel-btn-bottom')?.addEventListener('click', handleBack);
 
-  document.getElementById('dialog-confirm')?.addEventListener('click', () => {
-    hideDialog();
-    if (pendingNavigation) {
-      pendingNavigation();
-    }
+  // Intercept link clicks
+  document.querySelectorAll('a[href]').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      if (!formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        const confirmed = await m3Confirm('You have unsaved changes. Leave anyway?', {
+          title: 'Unsaved Changes',
+          confirmText: 'Leave',
+          cancelText: 'Stay'
+        });
+        if (confirmed) window.location.href = link.href;
+      }
+    });
   });
 
-  document.addEventListener('click', (e) => {
-    const link = e.target.closest('a');
-    if (link && link.href && checkForChanges()) {
-      e.preventDefault();
-      showDialog(() => window.location.href = link.href);
-    }
-  });
-
-  window.addEventListener('popstate', () => {
-    if (checkForChanges()) {
-      history.pushState(null, '', window.location.href);
-      showDialog(() => history.back());
-    }
-  });
-
+  // Handle page unload
   window.addEventListener('beforeunload', (e) => {
-    if (checkForChanges()) {
+    if (!formSubmitting && hasUnsavedChanges()) {
       e.preventDefault();
       e.returnValue = '';
     }
   });
 
-  form?.addEventListener('submit', () => {
-    initialFormData = null;
-  });
+  form?.addEventListener('submit', () => { formSubmitting = true; });
 
   captureInitialState();
-  history.pushState(null, '', window.location.href);
 </script>

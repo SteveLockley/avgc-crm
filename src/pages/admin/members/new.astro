@@ -57,7 +57,6 @@ if (Astro.request.method === 'POST') {
       member.subscription_template = null;
     }
   } else {
-    // Non-zero-cost subscriptions don't use fee templates
     member.subscription_template = null;
   }
 
@@ -94,243 +93,273 @@ const today = new Date().toISOString().split('T')[0];
 ---
 
 <AdminLayout title="New Member">
-  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <button type="button" onclick="handleBack()" class="btn btn-secondary">&larr; Back to Members</button>
+  <div class="edit-page">
+    <!-- Header -->
+    <div class="page-header">
+      <div class="header-left">
+        <button type="button" id="back-btn" class="back-btn">&larr;</button>
+        <div>
+          <h1>New Member</h1>
+          <p class="subtitle">Create a new club member</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="cancel-btn-top" class="btn btn-secondary">Cancel</button>
+        <button type="submit" form="create-form" class="btn btn-primary">Create Member</button>
+      </div>
+    </div>
+
+    {error && <div class="alert alert-error">{error}</div>}
+
+    <form method="POST" id="create-form">
+      <div class="form-grid">
+        <!-- Left Column -->
+        <div class="form-column">
+          <!-- Personal Information -->
+          <div class="m3-card">
+            <div class="card-icon">&#128100;</div>
+            <h2>Personal Information</h2>
+
+            <div class="field-row four-col">
+              <div class="field">
+                <label for="title">Title</label>
+                <select name="title" id="title">
+                  <option value="">-</option>
+                  <option value="Mr">Mr</option>
+                  <option value="Mrs">Mrs</option>
+                  <option value="Ms">Ms</option>
+                  <option value="Miss">Miss</option>
+                  <option value="Dr">Dr</option>
+                  <option value="Prof">Prof</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="first_name">First Name *</label>
+                <input type="text" name="first_name" id="first_name" required />
+              </div>
+              <div class="field">
+                <label for="middle_initials">Initials</label>
+                <input type="text" name="middle_initials" id="middle_initials" />
+              </div>
+              <div class="field">
+                <label for="surname">Surname *</label>
+                <input type="text" name="surname" id="surname" required />
+              </div>
+            </div>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="gender">Gender</label>
+                <select name="gender" id="gender">
+                  <option value="">-</option>
+                  <option value="M">Male</option>
+                  <option value="F">Female</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="date_of_birth">Date of Birth</label>
+                <input type="date" name="date_of_birth" id="date_of_birth" />
+              </div>
+              <div class="field">
+                <label for="age_group">Age Group</label>
+                <select name="age_group" id="age_group">
+                  <option value="">-</option>
+                  {AGE_GROUPS.map(ag => (
+                    <option value={ag}>{ag}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Information -->
+          <div class="m3-card">
+            <div class="card-icon">&#128241;</div>
+            <h2>Contact</h2>
+
+            <div class="field full-width">
+              <label for="email">Email</label>
+              <input type="email" name="email" id="email" />
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="telephone_1">Phone 1</label>
+                <input type="tel" name="telephone_1" id="telephone_1" />
+              </div>
+              <div class="field">
+                <label for="telephone_2">Phone 2</label>
+                <input type="tel" name="telephone_2" id="telephone_2" />
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="address_1">Address Line 1</label>
+                <input type="text" name="address_1" id="address_1" />
+              </div>
+              <div class="field">
+                <label for="address_2">Address Line 2</label>
+                <input type="text" name="address_2" id="address_2" />
+              </div>
+            </div>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="address_3">Town/City</label>
+                <input type="text" name="address_3" id="address_3" />
+              </div>
+              <div class="field">
+                <label for="address_4">County</label>
+                <input type="text" name="address_4" id="address_4" />
+              </div>
+              <div class="field">
+                <label for="address_5">Postcode</label>
+                <input type="text" name="address_5" id="address_5" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Membership -->
+          <div class="m3-card">
+            <div class="card-icon">&#127948;&#65039;</div>
+            <h2>Membership</h2>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="category">Subscription Type *</label>
+                <select name="category" id="category" required>
+                  <option value="">Select subscription type...</option>
+                  {subscriptionTypes.map(sub => (
+                    <option value={sub}>{sub}</option>
+                  ))}
+                </select>
+              </div>
+              <div class="field" id="fee-template-group" style="display: none;">
+                <label for="subscription_template">Fee Template</label>
+                <select name="subscription_template" id="subscription_template">
+                  <option value="">No additional fees</option>
+                  {FEE_TEMPLATES.map(ft => (
+                    <option value={ft}>{ft}</option>
+                  ))}
+                </select>
+                <span class="field-hint">For Life, Honorary, Gratis only</span>
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="home_away">Home/Away</label>
+                <select name="home_away" id="home_away">
+                  <option value="">-</option>
+                  <option value="H" selected>Home</option>
+                  <option value="A">Away</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="home_club">Home Club</label>
+                <input type="text" name="home_club" id="home_club" value="Alnmouth Village" />
+              </div>
+            </div>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="date_joined">Date Joined</label>
+                <input type="date" name="date_joined" id="date_joined" value={today} />
+              </div>
+              <div class="field">
+                <label for="date_expires">Date Expires</label>
+                <input type="date" name="date_expires" id="date_expires" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Golf -->
+          <div class="m3-card">
+            <div class="card-icon">&#9971;</div>
+            <h2>Golf / WHS</h2>
+
+            <div class="field-row three-col">
+              <div class="field">
+                <label for="handicap_index">Handicap Index</label>
+                <input type="number" step="0.1" name="handicap_index" id="handicap_index" />
+              </div>
+              <div class="field">
+                <label for="national_id">CDH Number</label>
+                <input type="text" name="national_id" id="national_id" />
+              </div>
+              <div class="field">
+                <label for="national_id_country">Country</label>
+                <input type="text" name="national_id_country" id="national_id_country" value="England" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column -->
+        <div class="form-column">
+          <!-- Financial -->
+          <div class="m3-card accent-card">
+            <h2>Payment</h2>
+
+            <div class="field">
+              <label for="default_payment_method">Payment Method</label>
+              <select name="default_payment_method" id="default_payment_method">
+                <option value="">-</option>
+                {PAYMENT_METHODS.map(pm => (
+                  <option value={pm}>{pm}</option>
+                ))}
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="send_invoice_by">Invoice By</label>
+              <select name="send_invoice_by" id="send_invoice_by">
+                <option value="Email" selected>Email</option>
+                <option value="Letter">Letter</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Admin -->
+          <div class="m3-card">
+            <h2>Admin</h2>
+
+            <div class="field-row two-col">
+              <div class="field">
+                <label for="pin">PIN</label>
+                <input type="text" name="pin" id="pin" />
+              </div>
+              <div class="field">
+                <label for="locker_number">Locker</label>
+                <input type="text" name="locker_number" id="locker_number" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Consent -->
+          <div class="m3-card">
+            <h2>Consent / GDPR</h2>
+
+            <div class="field">
+              <label for="electronic_communication_consent">Email Consent</label>
+              <select name="electronic_communication_consent" id="electronic_communication_consent">
+                <option value="">-</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Actions (mobile) -->
+      <div class="bottom-actions">
+        <button type="button" id="cancel-btn-bottom" class="btn btn-secondary">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create Member</button>
+      </div>
+    </form>
   </div>
-
-  {error && <div class="alert alert-error">{error}</div>}
-
-  <form method="POST">
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Personal Information</h3>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="title">Title</label>
-          <select name="title" id="title" class="form-input">
-            <option value="">-</option>
-            <option value="Mr">Mr</option>
-            <option value="Mrs">Mrs</option>
-            <option value="Ms">Ms</option>
-            <option value="Miss">Miss</option>
-            <option value="Dr">Dr</option>
-            <option value="Prof">Prof</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="first_name">First Name *</label>
-          <input type="text" name="first_name" id="first_name" class="form-input" required />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="middle_initials">Middle Initials</label>
-          <input type="text" name="middle_initials" id="middle_initials" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="surname">Surname *</label>
-          <input type="text" name="surname" id="surname" class="form-input" required />
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="gender">Gender</label>
-          <select name="gender" id="gender" class="form-input">
-            <option value="">-</option>
-            <option value="M">Male</option>
-            <option value="F">Female</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="date_of_birth">Date of Birth</label>
-          <input type="date" name="date_of_birth" id="date_of_birth" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="age_group">Age Group</label>
-          <select name="age_group" id="age_group" class="form-input">
-            <option value="">-</option>
-            {AGE_GROUPS.map(ag => (
-              <option value={ag}>{ag}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Contact Information</h3>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="email">Email</label>
-        <input type="email" name="email" id="email" class="form-input" />
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="telephone_1">Telephone 1</label>
-          <input type="tel" name="telephone_1" id="telephone_1" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="telephone_2">Telephone 2</label>
-          <input type="tel" name="telephone_2" id="telephone_2" class="form-input" />
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="address_1">Address Line 1</label>
-          <input type="text" name="address_1" id="address_1" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="address_2">Address Line 2</label>
-          <input type="text" name="address_2" id="address_2" class="form-input" />
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="address_3">Town/City</label>
-          <input type="text" name="address_3" id="address_3" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="address_4">County</label>
-          <input type="text" name="address_4" id="address_4" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="address_5">Postcode</label>
-          <input type="text" name="address_5" id="address_5" class="form-input" />
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Membership</h3>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="category">Subscription Type *</label>
-          <select name="category" id="category" class="form-input" required>
-            <option value="">Select subscription type...</option>
-            {subscriptionTypes.map(sub => (
-              <option value={sub}>{sub}</option>
-            ))}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="home_away">Home/Away</label>
-          <select name="home_away" id="home_away" class="form-input">
-            <option value="">-</option>
-            <option value="H" selected>Home</option>
-            <option value="A">Away</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="home_club">Home Club</label>
-          <input type="text" name="home_club" id="home_club" class="form-input" value="Alnmouth Village" />
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="date_joined">Date Joined</label>
-          <input type="date" name="date_joined" id="date_joined" class="form-input" value={today} />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="date_expires">Date Expires</label>
-          <input type="date" name="date_expires" id="date_expires" class="form-input" />
-        </div>
-      </div>
-
-      <div id="fee-template-section" class="form-group" style="display: none;">
-        <label class="form-label" for="subscription_template">Fee Template</label>
-        <select name="subscription_template" id="subscription_template" class="form-input">
-          <option value="">No additional fees</option>
-          {FEE_TEMPLATES.map(ft => (
-            <option value={ft}>{ft}</option>
-          ))}
-        </select>
-        <small style="color: #666; display: block; margin-top: 0.25rem;">
-          For Life/Honorary/Gratis members who still owe EGU, County, or Locker fees
-        </small>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Golf/WHS</h3>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="handicap_index">Handicap Index</label>
-          <input type="number" step="0.1" name="handicap_index" id="handicap_index" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="national_id">CDH Number</label>
-          <input type="text" name="national_id" id="national_id" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="national_id_country">Country</label>
-          <input type="text" name="national_id_country" id="national_id_country" class="form-input" value="England" />
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Payment & Admin</h3>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="default_payment_method">Payment Method</label>
-          <select name="default_payment_method" id="default_payment_method" class="form-input">
-            <option value="">-</option>
-            {PAYMENT_METHODS.map(pm => (
-              <option value={pm}>{pm}</option>
-            ))}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="send_invoice_by">Send Invoice By</label>
-          <select name="send_invoice_by" id="send_invoice_by" class="form-input">
-            <option value="Email" selected>Email</option>
-            <option value="Letter">Letter</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="pin">PIN</label>
-          <input type="text" name="pin" id="pin" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="locker_number">Locker Number</label>
-          <input type="text" name="locker_number" id="locker_number" class="form-input" />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="electronic_communication_consent">Electronic Communication Consent</label>
-        <select name="electronic_communication_consent" id="electronic_communication_consent" class="form-input">
-          <option value="">-</option>
-          <option value="Yes">Yes</option>
-          <option value="No">No</option>
-        </select>
-      </div>
-    </div>
-
-    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
-      <button type="button" onclick="handleBack()" class="btn btn-secondary">Cancel</button>
-      <button type="submit" class="btn btn-primary">Create Member</button>
-    </div>
-  </form>
 
   <!-- M3 Unsaved Changes Dialog -->
   <div id="unsaved-dialog" class="m3-dialog-overlay" style="display: none;">
@@ -350,6 +379,293 @@ const today = new Date().toISOString().split('T')[0];
   </div>
 
   <style>
+    .edit-page {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 768px) {
+      .header-actions {
+        display: none;
+      }
+    }
+
+    /* Alerts */
+    .alert {
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      font-weight: 500;
+    }
+
+    .alert-error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+
+    /* Form Grid */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 1100px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* M3 Cards */
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 1.25rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: white;
+    }
+
+    .accent-card h2 {
+      color: white;
+    }
+
+    .accent-card label {
+      color: rgba(255,255,255,0.8);
+    }
+
+    .accent-card input,
+    .accent-card select,
+    .accent-card textarea {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.3);
+      color: white;
+    }
+
+    .accent-card input::placeholder {
+      color: rgba(255,255,255,0.5);
+    }
+
+    .accent-card input:focus,
+    .accent-card select:focus {
+      border-color: rgba(255,255,255,0.6);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
+    }
+
+    /* Fields */
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: white;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .field-hint {
+      display: block;
+      font-size: 0.75rem;
+      color: #888;
+      margin-top: 0.25rem;
+    }
+
+    .field.full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* Field Rows */
+    .field-row {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .field-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-row .field {
+      margin-bottom: 0;
+    }
+
+    .two-col {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .three-col {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .four-col {
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+    }
+
+    @media (max-width: 768px) {
+      .two-col,
+      .three-col,
+      .four-col {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .two-col,
+      .three-col,
+      .four-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.65rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-primary {
+      background: #1e5631;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #164424;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    /* Bottom Actions (mobile) */
+    .bottom-actions {
+      display: none;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      justify-content: flex-end;
+    }
+
+    @media (max-width: 768px) {
+      .bottom-actions {
+        display: flex;
+      }
+    }
+
+    /* Dialog */
     .m3-dialog-overlay {
       position: fixed;
       top: 0;
@@ -439,7 +755,7 @@ const today = new Date().toISOString().split('T')[0];
     const homeAwayInput = document.getElementById('home_away');
     const categoryInput = document.getElementById('category');
     const dateJoinedInput = document.getElementById('date_joined');
-    const feeTemplateSection = document.getElementById('fee-template-section');
+    const feeTemplateGroup = document.getElementById('fee-template-group');
     const feeTemplateInput = document.getElementById('subscription_template');
     const nationalIdInput = document.getElementById('national_id');
     const lockerInput = document.getElementById('locker_number');
@@ -448,7 +764,7 @@ const today = new Date().toISOString().split('T')[0];
     function updateFeeTemplateVisibility() {
       const category = categoryInput.value;
       const isZeroCost = zeroCostSubscriptions.includes(category);
-      feeTemplateSection.style.display = isZeroCost ? 'block' : 'none';
+      feeTemplateGroup.style.display = isZeroCost ? '' : 'none';
       if (!isZeroCost) {
         feeTemplateInput.value = '';
       }
@@ -521,36 +837,22 @@ const today = new Date().toISOString().split('T')[0];
       let subscriptionType;
       const suffix = homeAway === 'A' ? ' Away' : ' Home';
 
-      // Life: 50+ years
       if (yearsInYear !== null && yearsInYear >= 50) {
         subscriptionType = 'Life';
-      }
-      // Over 80
-      else if (ageOnApril1 >= 80) {
+      } else if (ageOnApril1 >= 80) {
         subscriptionType = 'Over 80' + suffix;
-      }
-      // Senior Loyalty: 65+ with 25+ years
-      else if (ageOnApril1 >= 65 && yearsOfMembership !== null && yearsOfMembership >= 25) {
+      } else if (ageOnApril1 >= 65 && yearsOfMembership !== null && yearsOfMembership >= 25) {
         subscriptionType = 'Senior Loyalty' + suffix;
-      }
-      // Full: 30+
-      else if (ageOnApril1 >= 30) {
+      } else if (ageOnApril1 >= 30) {
         subscriptionType = 'Full' + suffix;
-      }
-      // Under 30: 21-29
-      else if (ageOnApril1 >= 21) {
+      } else if (ageOnApril1 >= 21) {
         subscriptionType = 'Under 30' + suffix;
-      }
-      // Intermediate: 18-20
-      else if (ageOnApril1 >= 18) {
+      } else if (ageOnApril1 >= 18) {
         subscriptionType = 'Intermediate' + suffix;
-      }
-      // Junior: under 18
-      else {
+      } else {
         subscriptionType = 'Junior' + suffix;
       }
 
-      // Find and select the matching option
       const options = categoryInput.options;
       for (let i = 0; i < options.length; i++) {
         if (options[i].value === subscriptionType) {
@@ -583,84 +885,64 @@ const today = new Date().toISOString().split('T')[0];
     updateFeeTemplateVisibility();
 
     // Unsaved changes detection
-    const form = document.querySelector('form');
-    let initialFormData = null;
-    let pendingNavigation = null;
+    const form = document.getElementById('create-form');
+    let initialFormData = new FormData(form);
+    let formSubmitting = false;
 
-    function captureInitialState() {
-      if (form) {
-        initialFormData = new FormData(form);
-      }
+    function getFormDataString(formData) {
+      return Array.from(formData.entries()).map(([k, v]) => `${k}=${v}`).sort().join('&');
     }
 
-    function checkForChanges() {
-      if (!form || !initialFormData) return false;
-      const currentData = new FormData(form);
-
-      for (const [key, value] of currentData.entries()) {
-        const initial = initialFormData.get(key) || '';
-        if (value !== initial) return true;
-      }
-
-      return false;
+    function hasUnsavedChanges() {
+      return getFormDataString(initialFormData) !== getFormDataString(new FormData(form));
     }
 
-    function showDialog(onConfirm) {
-      const dialog = document.getElementById('unsaved-dialog');
-      if (dialog) dialog.style.display = 'flex';
-      pendingNavigation = onConfirm;
-    }
-
-    function hideDialog() {
-      const dialog = document.getElementById('unsaved-dialog');
-      if (dialog) dialog.style.display = 'none';
-      pendingNavigation = null;
-    }
-
-    window.handleBack = function() {
-      if (checkForChanges()) {
-        showDialog(() => history.back());
-      } else {
-        history.back();
-      }
-    };
-
-    document.getElementById('dialog-cancel')?.addEventListener('click', hideDialog);
-
-    document.getElementById('dialog-confirm')?.addEventListener('click', () => {
-      hideDialog();
-      if (pendingNavigation) {
-        pendingNavigation();
-      }
-    });
-
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('a');
-      if (link && link.href && checkForChanges()) {
-        e.preventDefault();
-        showDialog(() => window.location.href = link.href);
-      }
-    });
-
-    window.addEventListener('popstate', () => {
-      if (checkForChanges()) {
-        history.pushState(null, '', window.location.href);
-        showDialog(() => history.back());
-      }
-    });
+    form.addEventListener('submit', () => { formSubmitting = true; });
 
     window.addEventListener('beforeunload', (e) => {
-      if (checkForChanges()) {
+      if (!formSubmitting && hasUnsavedChanges()) {
         e.preventDefault();
         e.returnValue = '';
       }
     });
 
-    form?.addEventListener('submit', () => {
-      initialFormData = null;
+    // Navigation helpers
+    function showDialog(onConfirm) {
+      const dialog = document.getElementById('unsaved-dialog');
+      if (dialog) dialog.style.display = 'flex';
+      window._pendingNav = onConfirm;
+    }
+
+    function hideDialog() {
+      const dialog = document.getElementById('unsaved-dialog');
+      if (dialog) dialog.style.display = 'none';
+      window._pendingNav = null;
+    }
+
+    function navigateBack() {
+      if (hasUnsavedChanges()) {
+        showDialog(() => history.back());
+      } else {
+        history.back();
+      }
+    }
+
+    document.getElementById('back-btn').addEventListener('click', navigateBack);
+    document.getElementById('cancel-btn-top').addEventListener('click', navigateBack);
+    document.getElementById('cancel-btn-bottom').addEventListener('click', navigateBack);
+
+    document.getElementById('dialog-cancel').addEventListener('click', hideDialog);
+    document.getElementById('dialog-confirm').addEventListener('click', () => {
+      hideDialog();
+      if (window._pendingNav) window._pendingNav();
     });
 
-    captureInitialState();
-    history.pushState(null, '', window.location.href);
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('a');
+      if (link && link.href && !formSubmitting && hasUnsavedChanges()) {
+        e.preventDefault();
+        showDialog(() => window.location.href = link.href);
+      }
+    });
   </script>
 </AdminLayout>

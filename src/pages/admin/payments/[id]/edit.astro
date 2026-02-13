@@ -97,308 +97,405 @@ function formatDateForInput(dateStr: string | null): string {
 ---
 
 <AdminLayout title="Edit Payment">
-  <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
-    <button type="button" onclick="handleBack()" class="btn btn-secondary">&larr; Back to Member</button>
-  </div>
-
-  {error && <div class="alert alert-error">{error}</div>}
-  {success && <div class="alert alert-success">{success}</div>}
-
-  <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">Edit Payment for {payment.first_name} {payment.surname}</h3>
+  <div class="edit-page">
+    <!-- Header -->
+    <div class="page-header">
+      <div class="header-left">
+        <button type="button" id="back-btn" class="back-btn">&larr;</button>
+        <div>
+          <h1>Edit Payment</h1>
+          <p class="subtitle">{payment.first_name} {payment.surname}</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button type="submit" form="edit-form" class="btn btn-primary">Save Changes</button>
+      </div>
     </div>
 
-    <form method="POST">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="amount">Amount (£) *</label>
-          <input type="number" step="0.01" name="amount" id="amount" class="form-input" required
-                 value={payment.amount} />
+    {error && <div class="alert alert-error">{error}</div>}
+    {success && <div class="alert alert-success">{success}</div>}
+
+    <form method="POST" id="edit-form">
+      <!-- Payment Details -->
+      <div class="m3-card accent-card">
+        <h2>Payment Details</h2>
+
+        <div class="field-row two-col">
+          <div class="field">
+            <label for="amount">Amount (&pound;) *</label>
+            <input type="number" step="0.01" name="amount" id="amount" required
+                   value={payment.amount} />
+          </div>
+          <div class="field">
+            <label for="payment_date">Payment Date *</label>
+            <input type="date" name="payment_date" id="payment_date" required
+                   value={formatDateForInput(payment.payment_date as string)} />
+          </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="payment_date">Payment Date *</label>
-          <input type="date" name="payment_date" id="payment_date" class="form-input" required
-                 value={formatDateForInput(payment.payment_date as string)} />
+        <div class="field-row three-col">
+          <div class="field">
+            <label for="payment_method">Payment Method</label>
+            <select name="payment_method" id="payment_method">
+              <option value="">-</option>
+              {PAYMENT_METHODS.map(pm => (
+                <option value={pm} selected={payment.payment_method === pm}>{pm}</option>
+              ))}
+            </select>
+          </div>
+          <div class="field">
+            <label for="payment_type">Payment Type</label>
+            <select name="payment_type" id="payment_type">
+              <option value="">-</option>
+              {paymentTypes.map(pt => (
+                <option value={pt.value} selected={payment.payment_type === pt.value}>{pt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div class="field">
+            <label for="reference">Reference</label>
+            <input type="text" name="reference" id="reference"
+                   value={payment.reference || ''} />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="notes">Notes</label>
+          <textarea name="notes" id="notes" rows="2">{payment.notes || ''}</textarea>
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label" for="payment_method">Payment Method</label>
-          <select name="payment_method" id="payment_method" class="form-input">
-            <option value="">-</option>
-            {PAYMENT_METHODS.map(pm => (
-              <option value={pm} selected={payment.payment_method === pm}>{pm}</option>
-            ))}
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="payment_type">Payment Type</label>
-          <select name="payment_type" id="payment_type" class="form-input">
-            <option value="">-</option>
-            {paymentTypes.map(pt => (
-              <option value={pt.value} selected={payment.payment_type === pt.value}>{pt.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="reference">Reference</label>
-          <input type="text" name="reference" id="reference" class="form-input"
-                 value={payment.reference || ''} />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="notes">Notes</label>
-        <textarea name="notes" id="notes" class="form-input" rows="2">{payment.notes || ''}</textarea>
-      </div>
-
-      <div style="display: flex; gap: 1rem; justify-content: space-between;">
+      <!-- Actions -->
+      <div class="actions-bar">
         <form method="POST" style="margin: 0;" id="delete-payment-form">
           <input type="hidden" name="action" value="delete" />
-          <button type="submit" class="btn btn-danger">
-            Delete Payment
-          </button>
+          <button type="submit" class="btn btn-danger">Delete Payment</button>
         </form>
 
-        <div style="display: flex; gap: 1rem;">
-          <button type="button" onclick="handleBack()" class="btn btn-secondary">Cancel</button>
+        <div class="bottom-actions">
+          <button type="button" id="cancel-btn-bottom" class="btn btn-secondary">Cancel</button>
           <button type="submit" class="btn btn-primary">Save Changes</button>
         </div>
       </div>
     </form>
   </div>
 
-  <!-- M3 Unsaved Changes Dialog -->
-  <div id="unsaved-dialog" class="m3-dialog-overlay" style="display: none;">
-    <div class="m3-dialog">
-      <div class="m3-dialog-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor"/>
-        </svg>
-      </div>
-      <h2 class="m3-dialog-title">Unsaved changes</h2>
-      <p class="m3-dialog-content">You have unsaved changes. Are you sure you want to leave this page?</p>
-      <div class="m3-dialog-actions">
-        <button type="button" id="dialog-cancel" class="m3-btn m3-btn-text">Stay</button>
-        <button type="button" id="dialog-confirm" class="m3-btn m3-btn-filled">Leave</button>
-      </div>
-    </div>
-  </div>
-
   <style>
-    .m3-dialog-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.32);
+    .edit-page {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
       display: flex;
       align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      animation: fadeIn 0.15s ease-out;
+      gap: 1rem;
     }
 
-    .m3-dialog {
-      background: #fff;
-      border-radius: 28px;
-      padding: 24px;
-      min-width: 280px;
-      max-width: 400px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
-      animation: scaleIn 0.15s ease-out;
-    }
-
-    .m3-dialog-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: #fef3e0;
-      color: #f59e0b;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
-    }
-
-    .m3-dialog-title {
-      font-size: 1.25rem;
-      font-weight: 500;
-      margin: 0 0 8px 0;
-      color: #1c1b1f;
-    }
-
-    .m3-dialog-content {
-      font-size: 0.875rem;
-      color: #49454f;
-      margin: 0 0 24px 0;
-      line-height: 1.5;
-    }
-
-    .m3-dialog-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-    }
-
-    .m3-btn {
-      font-size: 0.875rem;
-      font-weight: 500;
-      padding: 10px 24px;
-      border-radius: 20px;
+    .back-btn {
+      width: 40px;
+      height: 40px;
       border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 0.2s;
     }
 
-    .m3-btn-text {
-      background: transparent;
-      color: #1e5631;
+    .back-btn:hover {
+      background: #e0e0e0;
     }
 
-    .m3-btn-text:hover {
-      background: rgba(30, 86, 49, 0.08);
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1a1a1a;
     }
 
-    .m3-btn-filled {
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    @media (max-width: 768px) {
+      .header-actions {
+        display: none;
+      }
+    }
+
+    /* M3 Cards */
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 1.25rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .accent-card {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: white;
+    }
+
+    .accent-card h2 {
+      color: white;
+    }
+
+    .accent-card label {
+      color: rgba(255,255,255,0.8);
+    }
+
+    .accent-card input,
+    .accent-card select,
+    .accent-card textarea {
+      background: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.3);
+      color: white;
+    }
+
+    .accent-card input::placeholder {
+      color: rgba(255,255,255,0.5);
+    }
+
+    .accent-card input:focus,
+    .accent-card select:focus,
+    .accent-card textarea:focus {
+      border-color: rgba(255,255,255,0.6);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
+    }
+
+    .accent-card option {
+      color: #333;
+      background: white;
+    }
+
+    /* Fields */
+    .field {
+      margin-bottom: 1rem;
+    }
+
+    .field:last-child {
+      margin-bottom: 0;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      background: white;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .field textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    /* Field Rows */
+    .field-row {
+      display: grid;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .field-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .field-row .field {
+      margin-bottom: 0;
+    }
+
+    .two-col {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .three-col {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    @media (max-width: 768px) {
+      .two-col,
+      .three-col {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .two-col,
+      .three-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Actions */
+    .actions-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 1rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .bottom-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 0.65rem 1.5rem;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-primary {
       background: #1e5631;
-      color: #fff;
+      color: white;
     }
 
-    .m3-btn-filled:hover {
-      background: #164023;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    .btn-primary:hover {
+      background: #164424;
     }
 
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
     }
 
-    @keyframes scaleIn {
-      from { transform: scale(0.9); opacity: 0; }
-      to { transform: scale(1); opacity: 1; }
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    .btn-danger {
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+    }
+
+    .btn-danger:hover {
+      background: #fee2e2;
     }
   </style>
 
   <script define:vars={{ memberId: payment.member_id }}>
-    const form = document.querySelector('form:not([style])');
-    let initialFormData = null;
-    let hasUnsavedChanges = false;
-    let pendingNavigation = null;
+    const form = document.getElementById('edit-form');
+    let initialFormData = new FormData(form);
+    let formSubmitting = false;
 
-    // Capture initial form state
-    function captureInitialState() {
-      if (form) {
-        initialFormData = new FormData(form);
-      }
+    function getFormDataString(formData) {
+      return Array.from(formData.entries()).map(([k, v]) => `${k}=${v}`).sort().join('&');
     }
 
-    // Check if form has changed
-    function checkForChanges() {
-      if (!form || !initialFormData) return false;
-
-      const currentData = new FormData(form);
-
-      for (const [key, value] of currentData.entries()) {
-        if (key === 'action') continue;
-        const initial = initialFormData.get(key) || '';
-        if (value !== initial) return true;
-      }
-
-      for (const [key, value] of initialFormData.entries()) {
-        if (key === 'action') continue;
-        const current = currentData.get(key) || '';
-        if (value !== current) return true;
-      }
-
-      return false;
+    function hasUnsavedChanges() {
+      return getFormDataString(initialFormData) !== getFormDataString(new FormData(form));
     }
 
-    // Show dialog
-    function showDialog(onConfirm) {
-      const dialog = document.getElementById('unsaved-dialog');
-      dialog.style.display = 'flex';
-      pendingNavigation = onConfirm;
-    }
+    form.addEventListener('submit', () => { formSubmitting = true; });
 
-    // Hide dialog
-    function hideDialog() {
-      const dialog = document.getElementById('unsaved-dialog');
-      dialog.style.display = 'none';
-      pendingNavigation = null;
-    }
-
-    // Handle back button click
-    window.handleBack = function() {
-      if (checkForChanges()) {
-        showDialog(() => history.back());
+    function handleBack() {
+      if (!formSubmitting && hasUnsavedChanges()) {
+        m3Confirm('You have unsaved changes. Leave anyway?', {
+          title: 'Unsaved Changes',
+          confirmText: 'Leave',
+          cancelText: 'Stay'
+        }).then(confirmed => {
+          if (confirmed) history.back();
+        });
       } else {
         history.back();
       }
-    };
-
-    // Setup dialog buttons
-    document.getElementById('dialog-cancel').addEventListener('click', hideDialog);
-
-    document.getElementById('dialog-confirm').addEventListener('click', () => {
-      hideDialog();
-      if (pendingNavigation) {
-        hasUnsavedChanges = false;
-        pendingNavigation();
-      }
-    });
-
-    // Track form changes
-    if (form) {
-      form.addEventListener('input', () => {
-        hasUnsavedChanges = checkForChanges();
-      });
-
-      form.addEventListener('change', () => {
-        hasUnsavedChanges = checkForChanges();
-      });
-
-      // Allow form submission
-      form.addEventListener('submit', () => {
-        hasUnsavedChanges = false;
-      });
     }
 
-    // Intercept link clicks
-    document.addEventListener('click', (e) => {
-      const link = e.target.closest('a');
-      if (link && link.href && checkForChanges()) {
-        e.preventDefault();
-        showDialog(() => window.location.href = link.href);
-      }
-    });
+    // Back/cancel buttons
+    document.getElementById('back-btn').addEventListener('click', handleBack);
+    document.getElementById('cancel-btn')?.addEventListener('click', handleBack);
+    document.getElementById('cancel-btn-bottom')?.addEventListener('click', handleBack);
 
-    // Handle browser back/forward
-    window.addEventListener('popstate', (e) => {
-      if (checkForChanges()) {
-        history.pushState(null, '', window.location.href);
-        showDialog(() => history.back());
-      }
+    // Intercept link clicks
+    document.querySelectorAll('a[href]').forEach(link => {
+      link.addEventListener('click', async (e) => {
+        if (!formSubmitting && hasUnsavedChanges()) {
+          e.preventDefault();
+          const confirmed = await m3Confirm('You have unsaved changes. Leave anyway?', {
+            title: 'Unsaved Changes',
+            confirmText: 'Leave',
+            cancelText: 'Stay'
+          });
+          if (confirmed) window.location.href = link.href;
+        }
+      });
     });
 
     // Handle page unload
     window.addEventListener('beforeunload', (e) => {
-      if (checkForChanges()) {
+      if (!formSubmitting && hasUnsavedChanges()) {
         e.preventDefault();
         e.returnValue = '';
       }
     });
-
-    // Initialize
-    captureInitialState();
-    history.pushState(null, '', window.location.href);
 
     // Delete confirmation
     document.getElementById('delete-payment-form')?.addEventListener('submit', async (e) => {
@@ -411,9 +508,14 @@ function formatDateForInput(dateStr: string | null): string {
         danger: true
       });
       if (confirmed) {
-        hasUnsavedChanges = false;
+        formSubmitting = true;
         e.target.submit();
       }
     });
+
+    // Reset initial data after successful save
+    if (document.querySelector('.alert-success')) {
+      initialFormData = new FormData(form);
+    }
   </script>
 </AdminLayout>
