@@ -2,7 +2,9 @@
 import MemberLayout from '../../layouts/MemberLayout.astro';
 
 const member = Astro.locals.member;
+const user = Astro.locals.user;
 const db = Astro.locals.runtime?.env?.DB;
+const isAdmin = !!user;
 
 // Fetch full member details from database
 let memberDetails: any = null;
@@ -18,6 +20,22 @@ if (db && member?.id) {
     ).bind(member.id).first();
   } catch (e) {
     console.error('Error fetching member details:', e);
+  }
+}
+
+// If admin without a member session, try to look up by email
+if (!memberDetails && isAdmin && db && user?.email) {
+  try {
+    memberDetails = await db.prepare(
+      `SELECT m.*,
+              mc.name as category_name,
+              mc.description as category_description
+       FROM members m
+       LEFT JOIN membership_categories mc ON m.category_id = mc.id
+       WHERE m.email = ?`
+    ).bind(user.email).first();
+  } catch (e) {
+    console.error('Error fetching admin member details:', e);
   }
 }
 
@@ -215,6 +233,15 @@ const status = getMembershipStatus(memberDetails);
           </div>
         </div>
       </>
+    ) : isAdmin ? (
+      <div class="info-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <h2>Admin Access</h2>
+        <p>You're signed in as <strong>{user?.name}</strong> ({user?.email}). Your admin email is not linked to a member account, so there are no member details to display.</p>
+        <p>Use the <a href="/admin/members">Members admin</a> to view and manage member records.</p>
+      </div>
     ) : (
       <div class="error-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -383,6 +410,41 @@ const status = getMembershipStatus(memberDetails);
     }
 
     .account-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .info-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .info-state svg {
+      width: 64px;
+      height: 64px;
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .info-state h2 {
+      margin: 0 0 0.5rem 0;
+      color: var(--primary);
+    }
+
+    .info-state p {
+      margin: 0 0 0.5rem 0;
+      color: var(--text-light);
+    }
+
+    .info-state a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .info-state a:hover {
       text-decoration: underline;
     }
 

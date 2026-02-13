@@ -1,0 +1,877 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+const url = new URL(Astro.request.url);
+const action = url.searchParams.get('action');
+const editId = url.searchParams.get('id');
+const filterCategory = url.searchParams.get('category') || 'all';
+
+let documents: any[] = [];
+let editDocument: any = null;
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+const categories = ['AGM', 'Committee', 'General'];
+
+// Handle form submission
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const formAction = formData.get('_action');
+
+  try {
+    if (formAction === 'create' || formAction === 'update') {
+      const title = formData.get('title')?.toString().trim();
+      const category = formData.get('category')?.toString().trim();
+      const documentUrl = formData.get('document_url')?.toString().trim();
+      const documentDate = formData.get('document_date')?.toString() || null;
+      const description = formData.get('description')?.toString().trim() || null;
+      const published = formData.get('published') === 'on' ? 1 : 0;
+      const updatedBy = Astro.locals.user?.email || null;
+
+      if (!title || !category || !documentUrl || !documentDate) {
+        message = 'Title, category, document URL, and date are required.';
+        messageType = 'error';
+      } else if (formAction === 'create') {
+        await db.prepare(
+          `INSERT INTO member_documents (title, category, document_url, document_date, description, published, updated_at, updated_by)
+           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?)`
+        ).bind(title, category, documentUrl, documentDate, description, published, updatedBy).run();
+        message = 'Document created successfully.';
+        messageType = 'success';
+      } else {
+        const id = formData.get('id');
+        await db.prepare(
+          `UPDATE member_documents
+           SET title = ?, category = ?, document_url = ?, document_date = ?, description = ?, published = ?, updated_at = datetime('now'), updated_by = ?
+           WHERE id = ?`
+        ).bind(title, category, documentUrl, documentDate, description, published, updatedBy, id).run();
+        message = 'Document updated successfully.';
+        messageType = 'success';
+      }
+    } else if (formAction === 'delete') {
+      const id = formData.get('id');
+      await db.prepare('DELETE FROM member_documents WHERE id = ?').bind(id).run();
+      message = 'Document deleted successfully.';
+      messageType = 'success';
+    } else if (formAction === 'toggle_publish') {
+      const id = formData.get('id');
+      const currentPublished = formData.get('current_published');
+      const newPublished = currentPublished === '1' ? 0 : 1;
+      await db.prepare(
+        'UPDATE member_documents SET published = ?, updated_at = datetime(\'now\') WHERE id = ?'
+      ).bind(newPublished, id).run();
+      message = newPublished ? 'Document published.' : 'Document unpublished.';
+      messageType = 'success';
+    }
+  } catch (e: any) {
+    message = e.message || 'An error occurred.';
+    messageType = 'error';
+  }
+}
+
+// Fetch documents
+if (db) {
+  try {
+    let query = 'SELECT * FROM member_documents';
+    const params: any[] = [];
+    if (filterCategory !== 'all') {
+      query += ' WHERE category = ?';
+      params.push(filterCategory);
+    }
+    query += ' ORDER BY document_date DESC, created_at DESC';
+
+    const result = params.length
+      ? await db.prepare(query).bind(...params).all()
+      : await db.prepare(query).all();
+    documents = result.results || [];
+
+    if (editId) {
+      editDocument = await db.prepare('SELECT * FROM member_documents WHERE id = ?').bind(editId).first();
+    }
+  } catch (e) {
+    console.error('Error fetching documents:', e);
+  }
+}
+
+const isEditing = action === 'edit' && editDocument;
+const isCreating = action === 'new';
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  return dateStr.split('T')[0];
+}
+
+function formatDisplayDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+---
+
+<AdminLayout title="Member Documents">
+  <div class="docs-admin">
+    {message && (
+      <div class={`alert alert-${messageType}`}>
+        {message}
+      </div>
+    )}
+
+    {(isCreating || isEditing) ? (
+      <div class="editor-section">
+        <div class="editor-header">
+          <a href="/admin/content/documents" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to Documents
+          </a>
+          <h2>{isEditing ? 'Edit Document' : 'New Document'}</h2>
+        </div>
+
+        <form method="POST" class="editor-form" id="document-form">
+          <input type="hidden" name="_action" value={isEditing ? 'update' : 'create'} />
+          {isEditing && <input type="hidden" name="id" value={editDocument.id} />}
+          <input type="hidden" name="document_url" id="document_url" value={editDocument?.document_url || ''} />
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="category">Category *</label>
+              <select id="category" name="category" required>
+                {categories.map(cat => (
+                  <option value={cat} selected={editDocument?.category === cat}>{cat}</option>
+                ))}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="document_date">Document Date *</label>
+              <input
+                type="date"
+                id="document_date"
+                name="document_date"
+                value={formatDate(editDocument?.document_date)}
+                required
+              />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="title">Title *</label>
+            <input
+              type="text"
+              id="title"
+              name="title"
+              value={editDocument?.title || ''}
+              required
+              placeholder="e.g. AGM Minutes 2024"
+            />
+            <span class="form-hint" id="title-hint">Auto-generated for AGM and Committee categories</span>
+          </div>
+
+          <div class="form-group">
+            <label for="file_upload">Upload Document {!isEditing && '*'}</label>
+            <div class="file-upload-area" id="file-upload-area">
+              <input
+                type="file"
+                id="file_upload"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.xlsm,.ppt,.pptx,.ppsx,.pps,.odt,.ods,.odp,.rtf"
+              />
+              <span class="form-hint">PDF or Microsoft Office document. Office files will be converted to PDF automatically.</span>
+            </div>
+            {isEditing && editDocument?.document_url && (
+              <div class="existing-file-info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span>Current file: <a href={editDocument.document_url} target="_blank" rel="noopener noreferrer">View document</a></span>
+                <span class="form-hint">Upload a new file to replace it, or leave empty to keep current.</span>
+              </div>
+            )}
+          </div>
+
+          <div class="upload-progress" id="upload-progress" style="display: none;">
+            <div class="upload-progress-bar">
+              <div class="upload-progress-fill" id="upload-progress-fill"></div>
+            </div>
+            <span class="upload-status" id="upload-status">Uploading to SharePoint...</span>
+          </div>
+
+          <div class="upload-error" id="upload-error" style="display: none;"></div>
+
+          <div class="form-group">
+            <label for="description">Description</label>
+            <textarea
+              id="description"
+              name="description"
+              rows="3"
+              placeholder="Optional description or notes about this document..."
+            >{editDocument?.description || ''}</textarea>
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                name="published"
+                checked={isEditing ? editDocument?.published === 1 : true}
+              />
+              <span>Published (visible to members)</span>
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <a href="/admin/content/documents" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary" id="submit-btn">
+              {isEditing ? 'Save Changes' : 'Upload & Save'}
+            </button>
+          </div>
+        </form>
+
+        <script define:vars={{ isEditing, editDocumentUrl: editDocument?.document_url || '' }}>
+          const form = document.getElementById('document-form');
+          const categorySelect = document.getElementById('category');
+          const dateInput = document.getElementById('document_date');
+          const titleInput = document.getElementById('title');
+          const titleHint = document.getElementById('title-hint');
+          const fileInput = document.getElementById('file_upload');
+          const documentUrlInput = document.getElementById('document_url');
+          const uploadProgress = document.getElementById('upload-progress');
+          const uploadProgressFill = document.getElementById('upload-progress-fill');
+          const uploadStatus = document.getElementById('upload-status');
+          const uploadError = document.getElementById('upload-error');
+          const submitBtn = document.getElementById('submit-btn');
+
+          function formatDateForTitle(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr + 'T00:00:00');
+            return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+          }
+
+          function updateTitle() {
+            const category = categorySelect.value;
+            const dateStr = dateInput.value;
+
+            if (category === 'AGM' || category === 'Committee') {
+              titleInput.readOnly = true;
+              titleInput.classList.add('readonly');
+              titleHint.style.display = 'block';
+              if (dateStr) {
+                const formattedDate = formatDateForTitle(dateStr);
+                titleInput.value = category + ' Minutes - ' + formattedDate;
+              } else {
+                titleInput.value = category + ' Minutes';
+              }
+            } else {
+              titleInput.readOnly = false;
+              titleInput.classList.remove('readonly');
+              titleHint.style.display = 'none';
+              // Don't clear title if editing or if user already typed something for General
+            }
+          }
+
+          categorySelect.addEventListener('change', updateTitle);
+          dateInput.addEventListener('change', updateTitle);
+
+          // Set initial state
+          updateTitle();
+
+          form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const file = fileInput.files[0];
+            const hasExistingUrl = !!documentUrlInput.value;
+
+            // Validate: need either a file or existing URL
+            if (!file && !hasExistingUrl) {
+              uploadError.textContent = 'Please select a file to upload.';
+              uploadError.style.display = 'block';
+              return;
+            }
+
+            // If a file is selected, upload it first
+            if (file) {
+              uploadError.style.display = 'none';
+              uploadProgress.style.display = 'block';
+              uploadProgressFill.style.width = '30%';
+              uploadStatus.textContent = 'Uploading to SharePoint...';
+              submitBtn.disabled = true;
+              submitBtn.textContent = 'Uploading...';
+
+              try {
+                const uploadData = new FormData();
+                uploadData.append('file', file);
+                uploadData.append('category', categorySelect.value);
+                uploadData.append('title', titleInput.value);
+                uploadData.append('document_date', dateInput.value);
+
+                uploadProgressFill.style.width = '50%';
+
+                const response = await fetch('/api/upload-document', {
+                  method: 'POST',
+                  body: uploadData,
+                });
+
+                uploadProgressFill.style.width = '80%';
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                  throw new Error(result.error || 'Upload failed');
+                }
+
+                uploadProgressFill.style.width = '100%';
+                uploadStatus.textContent = 'Upload complete! Saving document...';
+
+                // Set the URL from the upload response
+                documentUrlInput.value = result.url;
+
+              } catch (err) {
+                uploadProgress.style.display = 'none';
+                uploadError.textContent = 'Upload failed: ' + err.message;
+                uploadError.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.textContent = isEditing ? 'Save Changes' : 'Upload & Save';
+                return;
+              }
+            }
+
+            // Now submit the form normally
+            form.submit();
+          });
+        </script>
+      </div>
+    ) : (
+      <div class="list-section">
+        <div class="list-header">
+          <div class="list-header-left">
+            <p>{documents.length} document{documents.length !== 1 ? 's' : ''}</p>
+            <div class="filter-tabs">
+              <a href="/admin/content/documents" class={`filter-tab ${filterCategory === 'all' ? 'active' : ''}`}>All</a>
+              {categories.map(cat => (
+                <a href={`/admin/content/documents?category=${cat}`} class={`filter-tab ${filterCategory === cat ? 'active' : ''}`}>{cat}</a>
+              ))}
+            </div>
+          </div>
+          <a href="/admin/content/documents?action=new" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Document
+          </a>
+        </div>
+
+        {documents.length > 0 ? (
+          <div class="document-list">
+            {documents.map(doc => (
+              <div class="document-item">
+                <div class="document-info">
+                  <h3>{doc.title}</h3>
+                  <div class="document-meta">
+                    <span class={`status-badge ${doc.published ? 'published' : 'draft'}`}>
+                      {doc.published ? 'Published' : 'Draft'}
+                    </span>
+                    <span class="category-badge">{doc.category}</span>
+                    <span class="date">{formatDisplayDate(doc.document_date)}</span>
+                  </div>
+                  {doc.description && <p class="document-desc">{doc.description}</p>}
+                </div>
+                <div class="document-actions">
+                  <a href={doc.document_url} target="_blank" rel="noopener noreferrer" class="action-btn" title="View Document">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                      <polyline points="15 3 21 3 21 9"/>
+                      <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                  </a>
+                  <form method="POST" class="inline-form">
+                    <input type="hidden" name="_action" value="toggle_publish" />
+                    <input type="hidden" name="id" value={doc.id} />
+                    <input type="hidden" name="current_published" value={doc.published} />
+                    <button type="submit" class="action-btn" title={doc.published ? 'Unpublish' : 'Publish'}>
+                      {doc.published ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
+                        </svg>
+                      )}
+                    </button>
+                  </form>
+                  <a href={`/admin/content/documents?action=edit&id=${doc.id}`} class="action-btn" title="Edit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </a>
+                  <form method="POST" class="inline-form" onsubmit="return confirm('Delete this document?')">
+                    <input type="hidden" name="_action" value="delete" />
+                    <input type="hidden" name="id" value={doc.id} />
+                    <button type="submit" class="action-btn delete" title="Delete">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <h3>No Documents Yet</h3>
+            <p>Add your first document to get started.</p>
+            <a href="/admin/content/documents?action=new" class="btn btn-primary">Add Document</a>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</AdminLayout>
+
+<style>
+  .docs-admin {
+    max-width: 1000px;
+  }
+
+  .alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+
+  .alert-success {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  /* Editor */
+  .editor-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-light);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .back-link:hover {
+    color: var(--primary);
+  }
+
+  .back-link svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .editor-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .editor-form {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  @media (min-width: 600px) {
+    .form-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .form-row > .form-group {
+    margin-bottom: 0;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .form-group input[type="text"],
+  .form-group input[type="url"],
+  .form-group input[type="date"],
+  .form-group input[type="email"],
+  .form-group input[type="number"],
+  .form-group textarea,
+  .form-group select {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    background: var(--card-bg, white);
+  }
+
+  .form-group textarea {
+    resize: vertical;
+  }
+
+  .form-group input:focus:not([type="checkbox"]):not([type="file"]),
+  .form-group textarea:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+  }
+
+  .form-hint {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--text-light);
+  }
+
+  .form-group input.readonly {
+    background: var(--surface);
+    color: var(--text-light);
+    cursor: not-allowed;
+  }
+
+  .file-upload-area input[type="file"] {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: var(--card-bg, white);
+    cursor: pointer;
+  }
+
+  .file-upload-area input[type="file"]:hover {
+    border-color: var(--primary);
+  }
+
+  .existing-file-info {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .existing-file-info a {
+    color: var(--primary);
+  }
+
+  .existing-file-info .form-hint {
+    width: 100%;
+    margin-top: 0;
+  }
+
+  .upload-progress {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--surface);
+    border-radius: 8px;
+  }
+
+  .upload-progress-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+
+  .upload-progress-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+  }
+
+  .upload-status {
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .upload-error {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: #fee2e2;
+    color: #991b1b;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+
+  .checkbox-group {
+    margin-top: 1rem;
+  }
+
+  .checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .checkbox-label input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* List */
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .list-header p {
+    margin: 0 0 0.5rem 0;
+    color: var(--text-light);
+  }
+
+  .filter-tabs {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 0.25rem;
+  }
+
+  .filter-tab {
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    text-decoration: none;
+    color: var(--text-light);
+    transition: all 0.2s;
+  }
+
+  .filter-tab:hover {
+    color: var(--text);
+  }
+
+  .filter-tab.active {
+    background: var(--card-bg, white);
+    color: var(--primary);
+    font-weight: 500;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  }
+
+  .document-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .document-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .document-info h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .document-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .document-desc {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .status-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+
+  .status-badge.published {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .status-badge.draft {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .category-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+
+  .document-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card-bg);
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+
+  .action-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .action-btn.delete:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: #fee2e2;
+  }
+
+  .action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .inline-form {
+    display: contents;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--border);
+  }
+
+  /* Empty State */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .empty-state svg {
+    width: 64px;
+    height: 64px;
+    color: var(--text-light);
+    opacity: 0.5;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state h3 {
+    margin: 0 0 0.5rem 0;
+  }
+
+  .empty-state p {
+    margin: 0 0 1.5rem 0;
+    color: var(--text-light);
+  }
+</style>

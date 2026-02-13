@@ -24,8 +24,10 @@ const navItems = [
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{title} | AVGC CRM</title>
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <style>
     * {
       margin: 0;
@@ -73,16 +75,30 @@ const navItems = [
     }
 
     .sidebar-header {
-      padding: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1.25rem 1.5rem;
       border-bottom: 1px solid var(--primary-light);
+      text-decoration: none;
+      color: var(--white);
+      transition: background 0.2s;
     }
 
-    .sidebar-header h1 {
+    .sidebar-header:hover {
+      background: var(--primary-light);
+    }
+
+    .sidebar-logo {
+      flex-shrink: 0;
+    }
+
+    .sidebar-header-text h1 {
       font-size: 1.25rem;
       font-weight: 600;
     }
 
-    .sidebar-header p {
+    .sidebar-header-text p {
       font-size: 0.75rem;
       opacity: 0.8;
       margin-top: 0.25rem;
@@ -276,6 +292,10 @@ const navItems = [
       margin-bottom: 1rem;
     }
 
+    .form-row > .form-group {
+      margin-bottom: 0;
+    }
+
     .form-label {
       display: block;
       margin-bottom: 0.5rem;
@@ -285,21 +305,31 @@ const navItems = [
 
     .form-input {
       width: 100%;
-      padding: 0.5rem;
+      padding: 0.5rem 0.625rem;
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: 6px;
       font-size: 0.875rem;
+      font-family: inherit;
+      background: var(--white);
     }
 
     .form-input:focus {
       outline: none;
       border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
     }
 
     .form-row {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: 1fr;
       gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (min-width: 600px) {
+      .form-row {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
     }
 
     /* Badges */
@@ -605,12 +635,21 @@ const navItems = [
         width: 60px;
       }
 
-      .sidebar-header h1,
-      .sidebar-header p,
+      .sidebar-header-text,
       .nav-item span,
       .nav-website span,
       .user-info {
         display: none;
+      }
+
+      .sidebar-header {
+        justify-content: center;
+        padding: 1rem;
+      }
+
+      .sidebar-logo {
+        width: 36px;
+        height: 36px;
       }
 
       .main {
@@ -627,10 +666,13 @@ const navItems = [
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="sidebar-header">
-        <h1>AVGC CRM</h1>
-        <p>Alnmouth Village Golf Club</p>
-      </div>
+      <a href="https://www.alnmouthvillage.golf" class="sidebar-header">
+        <img src="/logo-white.png" alt="AVGC Crest" class="sidebar-logo" width="44" height="44" />
+        <div class="sidebar-header-text">
+          <h1>Membership</h1>
+          <p>Alnmouth Village Golf Club</p>
+        </div>
+      </a>
 
       <nav class="sidebar-nav">
         {navItems.map(item => (
@@ -644,13 +686,12 @@ const navItems = [
       </nav>
 
       <div class="sidebar-footer">
-        <a href="https://www.alnmouthvillage.golf" class="nav-item nav-website">
+        <a href="/members" class="nav-item nav-website">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="2" y1="12" x2="22" y2="12"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
           </svg>
-          <span>Main Website</span>
+          <span>Members Portal</span>
         </a>
         <div class="user-info">
           <div class="user-name">{user?.name || 'Guest'}</div>

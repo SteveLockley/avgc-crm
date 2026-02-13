@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+Disallow: /admin/
+Disallow: /members/
+Disallow: /api/
+Disallow: /login
+Disallow: /logout
+
+Sitemap: https://www.alnmouthvillage.golf/sitemap.xml

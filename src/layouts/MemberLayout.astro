@@ -42,7 +42,10 @@ const icons: Record<string, string> = {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{title} - Members | Alnmouth Village Golf Club</title>
   {description && <meta name="description" content={description} />}
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -73,11 +76,11 @@ const icons: Record<string, string> = {
 
       <div class="member-info">
         <div class="member-avatar">
-          {member?.firstName?.charAt(0) || 'M'}
+          {member?.firstName?.charAt(0) || (isAdmin ? 'A' : 'M')}
         </div>
         <div class="member-details">
-          <span class="member-name">{member?.firstName} {member?.surname}</span>
-          <span class="member-email">{member?.email}</span>
+          <span class="member-name">{member ? `${member.firstName} ${member.surname}` : (isAdmin ? Astro.locals.user?.name : 'Guest')}</span>
+          <span class="member-email">{member?.email || (isAdmin ? 'Admin' : '')}</span>
         </div>
       </div>
 
@@ -440,14 +443,12 @@ const icons: Record<string, string> = {
       margin-top: 2rem;
       padding: 1.5rem 2rem;
       border-top: 1px solid var(--border);
-      text-align: center;
     }
 
     .member-footer .footer-cards {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      justify-content: center;
       margin-bottom: 0.75rem;
     }
 
@@ -473,7 +474,6 @@ const icons: Record<string, string> = {
     .member-footer .footer-links {
       display: flex;
       gap: 1.5rem;
-      justify-content: center;
       flex-wrap: wrap;
     }
 

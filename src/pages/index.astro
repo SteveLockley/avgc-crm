@@ -1,13 +1,15 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
 import { getAllOpeningHours, groupHoursByTime } from '../lib/opening-hours';
+import { golfCourseSchema } from '../lib/seo';
 
 const db = Astro.locals.runtime?.env?.DB;
 let openingHours: { days: string; time: string }[] = [];
+let hours: Awaited<ReturnType<typeof getAllOpeningHours>> = [];
 
 if (db) {
   try {
-    const hours = await getAllOpeningHours(db, 'Clubhouse');
+    hours = await getAllOpeningHours(db, 'Clubhouse');
     openingHours = groupHoursByTime(hours);
   } catch (e) {
     console.error('Failed to fetch opening hours:', e);
@@ -35,6 +37,9 @@ const clubhouseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upl
   heroSize="fullscreen"
   heroOverlay="medium"
 >
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify(golfCourseSchema(hours))} />
+  </Fragment>
   <div class="content">
     <!-- Introduction -->
     <section class="section intro-section">

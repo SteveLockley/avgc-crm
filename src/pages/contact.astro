@@ -1,16 +1,18 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
 import { getAllOpeningHours, formatWeeklyHours } from '../lib/opening-hours';
+import { localBusinessSchema } from '../lib/seo';
 
 // Get any pre-filled enquiry type from query params
 const enquiryType = Astro.url.searchParams.get('enquiry') || '';
 
 const db = Astro.locals.runtime?.env?.DB;
 let weeklyHours: { day: string; dayShort: string; time: string; isClosed: boolean }[] = [];
+let hours: Awaited<ReturnType<typeof getAllOpeningHours>> = [];
 
 if (db) {
   try {
-    const hours = await getAllOpeningHours(db, 'Clubhouse');
+    hours = await getAllOpeningHours(db, 'Clubhouse');
     weeklyHours = formatWeeklyHours(hours);
   } catch (e) {
     console.error('Failed to fetch opening hours:', e);
@@ -30,6 +32,9 @@ const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/
   heroSize="standard"
   heroOverlay="medium"
 >
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify(localBusinessSchema(hours))} />
+  </Fragment>
   <div class="content">
     <section class="section contact-section">
       <div class="contact-grid">
@@ -260,6 +265,7 @@ const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/
     .form-row {
       display: grid;
       gap: 1rem;
+      margin-bottom: 1.25rem;
     }
 
     @media (min-width: 600px) {
@@ -270,6 +276,10 @@ const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/
 
     .form-group {
       margin-bottom: 1.25rem;
+    }
+
+    .form-row > .form-group {
+      margin-bottom: 0;
     }
 
     .contact-form .form-label {

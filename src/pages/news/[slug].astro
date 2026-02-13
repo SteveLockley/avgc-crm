@@ -1,5 +1,6 @@
 ---
 import PublicLayout from '../../layouts/PublicLayout.astro';
+import { newsArticleSchema } from '../../lib/seo';
 
 const { slug } = Astro.params;
 const db = Astro.locals.runtime?.env?.DB;
@@ -39,7 +40,18 @@ function formatDate(dateStr: string | null): string {
   heroImage={article.image}
   heroTitle={article.title}
   heroSubtitle={formatDate(article.publish_date)}
+  ogType="article"
 >
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={JSON.stringify(newsArticleSchema({
+      title: article.title,
+      excerpt: article.excerpt,
+      image: article.image,
+      slug: article.slug,
+      publishDate: article.publish_date,
+      updatedAt: article.updated_at,
+    }))} />
+  </Fragment>
   <div class="content">
     <section class="section">
       <article class="article">

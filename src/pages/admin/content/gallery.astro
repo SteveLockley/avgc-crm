@@ -488,12 +488,23 @@ const imagesByCategory = images.reduce((acc: Record<string, any[]>, img) => {
 
   .form-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  @media (min-width: 500px) {
+    .form-row {
+      grid-template-columns: 1fr 1fr;
+    }
   }
 
   .form-group {
     margin-bottom: 1rem;
+  }
+
+  .form-row > .form-group {
+    margin-bottom: 0;
   }
 
   .form-group label {
@@ -503,7 +514,10 @@ const imagesByCategory = images.reduce((acc: Record<string, any[]>, img) => {
     font-size: 0.9rem;
   }
 
-  .form-group input,
+  .form-group input[type="text"],
+  .form-group input[type="url"],
+  .form-group input[type="date"],
+  .form-group input[type="number"],
   .form-group textarea,
   .form-group select {
     width: 100%;
@@ -514,7 +528,7 @@ const imagesByCategory = images.reduce((acc: Record<string, any[]>, img) => {
     font-family: inherit;
   }
 
-  .form-group input:focus,
+  .form-group input:focus:not([type="checkbox"]),
   .form-group textarea:focus,
   .form-group select:focus {
     outline: none;

@@ -8,5 +8,5 @@ export default defineConfig({
       enabled: true
     }
   }),
-  site: 'https://alnmouthvillage.golf'
+  site: 'https://www.alnmouthvillage.golf'
 });

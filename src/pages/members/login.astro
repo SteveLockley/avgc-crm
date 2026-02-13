@@ -1,7 +1,12 @@
 ---
 import PublicLayout from '../../layouts/PublicLayout.astro';
 
-// Check if already logged in
+// Admins authenticated via Cloudflare Access bypass member login
+if (Astro.locals.user) {
+  return Astro.redirect('/members');
+}
+
+// Check if already logged in as member
 const sessionToken = Astro.cookies.get('avgc_member_session')?.value;
 if (sessionToken) {
   const db = Astro.locals.runtime?.env?.DB;

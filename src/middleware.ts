@@ -91,6 +91,20 @@ export const onRequest = defineMiddleware(async (context, next) => {
         } catch (e) { /* ignore */ }
       }
     }
+    // Also check cross-subdomain admin cookie as fallback
+    if (!cfEmail) {
+      const adminToken = context.cookies.get('avgc_admin_token')?.value;
+      if (adminToken) {
+        try {
+          const parts = adminToken.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            cfEmail = payload.email;
+          }
+        } catch (e) { /* ignore invalid token */ }
+      }
+    }
+
     if (cfEmail) {
       const namePart = cfEmail.split('@')[0];
       const name = namePart
@@ -98,6 +112,23 @@ export const onRequest = defineMiddleware(async (context, next) => {
         .map((part: string) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
         .join(' ');
       context.locals.user = { email: cfEmail, name, role: 'admin' };
+
+      // Set cross-subdomain cookie so admin auth works on www subdomain too
+      const cfToken = context.request.headers.get('Cf-Access-Jwt-Assertion')
+        || context.cookies.get('CF_Authorization')?.value
+        || context.cookies.get('avgc_admin_token')?.value;
+      if (cfToken) {
+        try {
+          context.cookies.set('avgc_admin_token', cfToken, {
+            domain: 'alnmouthvillage.golf',
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax' as const,
+            maxAge: 60 * 60 * 8, // 8 hours
+          });
+        } catch (e) { /* ignore cookie errors in dev */ }
+      }
     }
   }
 
@@ -176,7 +207,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
         return next();
       }
 
-      return new Response('Unauthorized - Cloudflare Access required', { status: 401 });
+      // Redirect to CRM subdomain where Cloudflare Access will handle Azure AD login
+      const crmUrl = new URL(context.url.pathname + context.url.search, 'https://crm.alnmouthvillage.golf');
+      return context.redirect(crmUrl.toString());
     }
 
     return next();

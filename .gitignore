@@ -32,6 +32,12 @@ migrations/003_import_members.sql
 # OS
 .DS_Store
 Thumbs.db
+nul
+
+# Local files not for repo
+flyover.mp4
+picture links.txt
+policies/
 
 # Logs
 *.log

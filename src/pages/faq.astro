@@ -1,5 +1,6 @@
 ---
 import PublicLayout from '../layouts/PublicLayout.astro';
+import { faqPageSchema } from '../lib/seo';
 
 const db = Astro.locals.runtime?.env?.DB;
 
@@ -35,6 +36,13 @@ const categoryOrder = ['general', 'visitors', 'members'];
 const sortedCategories = Object.keys(faqByCategory).sort(
   (a, b) => categoryOrder.indexOf(a) - categoryOrder.indexOf(b)
 );
+
+const allFaqs = sortedCategories.flatMap(cat =>
+  faqByCategory[cat].map((faq: any) => ({
+    question: faq.question,
+    answer: faq.answer.replace(/<[^>]*>/g, ''),
+  }))
+);
 ---
 
 <PublicLayout
@@ -43,6 +51,11 @@ const sortedCategories = Object.keys(faqByCategory).sort(
   heroTitle="Frequently Asked Questions"
   heroSubtitle="Find answers to common questions"
 >
+  {allFaqs.length > 0 && (
+    <Fragment slot="head">
+      <script type="application/ld+json" set:html={JSON.stringify(faqPageSchema(allFaqs))} />
+    </Fragment>
+  )}
   <div class="content">
     <section class="section">
       {sortedCategories.length > 0 ? (

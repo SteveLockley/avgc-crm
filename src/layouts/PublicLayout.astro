@@ -10,6 +10,8 @@ interface Props {
   heroSubtitle?: string;
   heroSize?: 'standard' | 'large' | 'fullscreen';
   heroOverlay?: 'light' | 'medium' | 'dark';
+  ogImage?: string;
+  ogType?: string;
 }
 
 const {
@@ -20,9 +22,16 @@ const {
   heroTitle,
   heroSubtitle,
   heroSize = 'standard',
-  heroOverlay = 'medium'
+  heroOverlay = 'medium',
+  ogImage,
+  ogType,
 } = Astro.props;
 const currentPath = Astro.url.pathname;
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const pageTitle = `${title} | Alnmouth Village Golf Club`;
+const pageDescription = description || 'Welcome to Alnmouth Village Golf Club - a stunning links course on the Northumberland coast, established 1869.';
+const ogImageUrl = ogImage || heroImage || 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2019/08/DSC_0178.jpg';
+const resolvedOgType = ogType || 'website';
 
 const navItems = [
   { href: '/', label: 'Home' },
@@ -48,13 +57,34 @@ const isAdmin = !!Astro.locals.user;
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title} | Alnmouth Village Golf Club</title>
-  <meta name="description" content={description || 'Welcome to Alnmouth Village Golf Club - a stunning links course on the Northumberland coast, established 1869.'}>
-  <link rel="icon" type="image/png" href="/favicon.png">
-  <link rel="apple-touch-icon" href="/favicon.png">
+  <title>{pageTitle}</title>
+  <meta name="description" content={pageDescription}>
+  <link rel="canonical" href={canonicalURL.href} />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content={pageTitle} />
+  <meta property="og:description" content={pageDescription} />
+  <meta property="og:type" content={resolvedOgType} />
+  <meta property="og:url" content={canonicalURL.href} />
+  <meta property="og:image" content={ogImageUrl} />
+  <meta property="og:site_name" content="Alnmouth Village Golf Club" />
+  <meta property="og:locale" content="en_GB" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={pageTitle} />
+  <meta name="twitter:description" content={pageDescription} />
+  <meta name="twitter:image" content={ogImageUrl} />
+
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="alternate" type="application/rss+xml" title="Alnmouth Village Golf Club News" href="/rss.xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <slot name="head" />
 </head>
 <body class={isLargeHero ? 'has-large-hero' : ''}>
   <!-- Header -->

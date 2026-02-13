@@ -326,6 +326,7 @@ function formatDate(dateStr: string | null): string {
     display: grid;
     grid-template-columns: 1fr;
     gap: 1rem;
+    margin-bottom: 1rem;
   }
 
   @media (min-width: 600px) {
@@ -338,6 +339,10 @@ function formatDate(dateStr: string | null): string {
     margin-bottom: 1rem;
   }
 
+  .form-row > .form-group {
+    margin-bottom: 0;
+  }
+
   .form-group label {
     display: block;
     margin-bottom: 0.5rem;
@@ -345,7 +350,11 @@ function formatDate(dateStr: string | null): string {
     font-size: 0.9rem;
   }
 
-  .form-group input,
+  .form-group input[type="text"],
+  .form-group input[type="url"],
+  .form-group input[type="date"],
+  .form-group input[type="email"],
+  .form-group input[type="number"],
   .form-group textarea {
     width: 100%;
     padding: 0.625rem 0.875rem;
@@ -360,7 +369,7 @@ function formatDate(dateStr: string | null): string {
     font-family: monospace;
   }
 
-  .form-group input:focus,
+  .form-group input:focus:not([type="checkbox"]),
   .form-group textarea:focus {
     outline: none;
     border-color: var(--primary);

@@ -13,8 +13,27 @@ export interface OpeningHours {
   notes: string | null;
 }
 
+export type Season = 'Winter' | 'Summer';
+
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Determine current season based on month.
+ * Summer = April (3) through September (8)
+ * Winter = October (9) through March (2)
+ */
+export function getCurrentSeason(date?: Date): Season {
+  const month = (date || new Date()).getMonth();
+  return (month >= 3 && month <= 8) ? 'Summer' : 'Winter';
+}
+
+/**
+ * Get display label for a season
+ */
+export function getSeasonLabel(season: Season): string {
+  return season === 'Summer' ? 'Summer (Apr - Sep)' : 'Winter (Oct - Mar)';
+}
 
 /**
  * Get opening hours for a location, optionally for a specific date
@@ -26,39 +45,51 @@ export async function getOpeningHours(
 ): Promise<OpeningHours[]> {
   const targetDate = date || new Date();
   const dayOfWeek = targetDate.getDay();
-  const dateStr = targetDate.toISOString().split('T')[0];
+  const season = getCurrentSeason(targetDate);
 
-  // Get hours that match the date/period and day
   const hours = await db.prepare(`
     SELECT * FROM opening_hours
     WHERE location = ?
-    AND (period_start IS NULL OR period_start <= ?)
-    AND (period_end IS NULL OR period_end >= ?)
+    AND period_name = ?
     AND (day_of_week IS NULL OR day_of_week = ?)
     ORDER BY sort_order, day_of_week
-  `).bind(location, dateStr, dateStr, dayOfWeek).all<OpeningHours>();
+  `).bind(location, season, dayOfWeek).all<OpeningHours>();
 
   return hours.results || [];
 }
 
 /**
- * Get all opening hours for a location (all days)
+ * Get all opening hours for a location (all days, current season)
  */
 export async function getAllOpeningHours(
   db: D1Database,
   location: string = 'Clubhouse'
 ): Promise<OpeningHours[]> {
-  const today = new Date();
-  const dateStr = today.toISOString().split('T')[0];
+  const season = getCurrentSeason();
 
-  // Get hours for the current period
   const hours = await db.prepare(`
     SELECT * FROM opening_hours
     WHERE location = ?
-    AND (period_start IS NULL OR period_start <= ?)
-    AND (period_end IS NULL OR period_end >= ?)
+    AND period_name = ?
     ORDER BY sort_order, day_of_week
-  `).bind(location, dateStr, dateStr).all<OpeningHours>();
+  `).bind(location, season).all<OpeningHours>();
+
+  return hours.results || [];
+}
+
+/**
+ * Get opening hours for a specific season (for admin page)
+ */
+export async function getHoursBySeason(
+  db: D1Database,
+  season: Season,
+  location: string = 'Clubhouse'
+): Promise<OpeningHours[]> {
+  const hours = await db.prepare(`
+    SELECT * FROM opening_hours
+    WHERE location = ? AND period_name = ?
+    ORDER BY day_of_week
+  `).bind(location, season).all<OpeningHours>();
 
   return hours.results || [];
 }
