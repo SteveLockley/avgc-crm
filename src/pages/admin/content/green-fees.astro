@@ -8,6 +8,7 @@ interface GreenFee {
   category: string;
   label: string;
   badge: string | null;
+  price_9_holes: number | null;
   price_18_holes: number | null;
   price_day_ticket: number | null;
   price_weekday: number | null;
@@ -45,6 +46,7 @@ if (Astro.request.method === 'POST' && db) {
       for (const id of feeIds) {
         const label = formData.get(`label_${id}`)?.toString() || '';
         const badge = formData.get(`badge_${id}`)?.toString() || '';
+        const price9 = parseInt(formData.get(`price_9_${id}`)?.toString() || '0') * 100;
         const price18 = parseInt(formData.get(`price_18_${id}`)?.toString() || '0') * 100;
         const priceDay = parseInt(formData.get(`price_day_${id}`)?.toString() || '0') * 100;
         const priceWeekday = parseInt(formData.get(`price_weekday_${id}`)?.toString() || '0') * 100;
@@ -53,12 +55,12 @@ if (Astro.request.method === 'POST' && db) {
 
         await db.prepare(
           `UPDATE green_fees SET
-            label = ?, badge = ?, price_18_holes = ?, price_day_ticket = ?,
+            label = ?, badge = ?, price_9_holes = ?, price_18_holes = ?, price_day_ticket = ?,
             price_weekday = ?, price_weekend = ?, is_featured = ?, updated_at = datetime('now')
            WHERE id = ?`
         ).bind(
           label, badge || null,
-          price18 || null, priceDay || null,
+          price9 || null, price18 || null, priceDay || null,
           priceWeekday || null, priceWeekend || null,
           isFeatured, id
         ).run();
@@ -195,9 +197,33 @@ function toPounds(pence: number | null): string {
                     <input type="number" name={`price_weekend_${fee.id}`} value={toPounds(fee.price_weekend)} class="form-input price-input" min="0" />
                   </div>
                 </div>
+                <input type="hidden" name={`price_9_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_18_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_day_${fee.id}`} value="0" />
+              </div>
+            ) : fee.category === 'weekly' ? (
+              <div class="price-inputs price-inputs-single">
+                <div class="form-group">
+                  <label>Price</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_day_${fee.id}`} value={toPounds(fee.price_day_ticket)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
+                <input type="hidden" name={`price_9_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_18_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_weekday_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_weekend_${fee.id}`} value="0" />
               </div>
             ) : (
-              <div class="price-inputs">
+              <div class="price-inputs price-inputs-three">
+                <div class="form-group">
+                  <label>9 Holes</label>
+                  <div class="price-input-wrapper">
+                    <span class="currency">£</span>
+                    <input type="number" name={`price_9_${fee.id}`} value={toPounds(fee.price_9_holes)} class="form-input price-input" min="0" />
+                  </div>
+                </div>
                 <div class="form-group">
                   <label>18 Holes</label>
                   <div class="price-input-wrapper">
@@ -212,6 +238,8 @@ function toPounds(pence: number | null): string {
                     <input type="number" name={`price_day_${fee.id}`} value={toPounds(fee.price_day_ticket)} class="form-input price-input" min="0" />
                   </div>
                 </div>
+                <input type="hidden" name={`price_weekday_${fee.id}`} value="0" />
+                <input type="hidden" name={`price_weekend_${fee.id}`} value="0" />
               </div>
             )}
 
@@ -221,20 +249,6 @@ function toPounds(pence: number | null): string {
                 <span>Featured (highlighted)</span>
               </label>
             </div>
-
-            <!-- Hidden fields for twilight prices when not twilight -->
-            {fee.category !== 'twilight' && (
-              <>
-                <input type="hidden" name={`price_weekday_${fee.id}`} value="0" />
-                <input type="hidden" name={`price_weekend_${fee.id}`} value="0" />
-              </>
-            )}
-            {fee.category === 'twilight' && (
-              <>
-                <input type="hidden" name={`price_18_${fee.id}`} value="0" />
-                <input type="hidden" name={`price_day_${fee.id}`} value="0" />
-              </>
-            )}
           </div>
         ))}
       </div>
@@ -389,9 +403,15 @@ function toPounds(pence: number | null): string {
       gap: 1.5rem;
     }
 
-    @media (min-width: 900px) {
+    @media (min-width: 768px) {
       .fees-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1200px) {
+      .fees-grid {
+        grid-template-columns: repeat(4, 1fr);
       }
     }
 
@@ -443,6 +463,14 @@ function toPounds(pence: number | null): string {
       grid-template-columns: 1fr 1fr;
       gap: 1rem;
       margin-bottom: 1rem;
+    }
+
+    .price-inputs-three {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .price-inputs-single {
+      grid-template-columns: 1fr;
     }
 
     .price-input-wrapper {

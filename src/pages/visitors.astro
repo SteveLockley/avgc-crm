@@ -9,6 +9,7 @@ interface GreenFee {
   category: string;
   label: string;
   badge: string;
+  price_9_holes: number | null;
   price_18_holes: number | null;
   price_day_ticket: number | null;
   price_weekday: number | null;
@@ -142,8 +143,18 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
                       <span class="price">{formatPrice(fee.price_weekend)}</span>
                     </div>
                   </>
+                ) : fee.category === 'weekly' ? (
+                  <div class="fee-row single-price">
+                    <span class="price price-large">{formatPrice(fee.price_day_ticket)}</span>
+                  </div>
                 ) : (
                   <>
+                    {fee.price_9_holes && (
+                      <div class="fee-row">
+                        <span>9 Holes</span>
+                        <span class="price">{formatPrice(fee.price_9_holes)}</span>
+                      </div>
+                    )}
                     <div class="fee-row">
                       <span>18 Holes</span>
                       <span class="price">{formatPrice(fee.price_18_holes)}</span>
@@ -204,6 +215,17 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
                 <div class="fee-row">
                   <span>Weekend</span>
                   <span class="price">&pound;35</span>
+                </div>
+              </div>
+            </div>
+            <div class="fee-card">
+              <div class="fee-header">
+                <h3>Weekly Ticket</h3>
+                <span class="fee-badge">7 days</span>
+              </div>
+              <div class="fee-prices">
+                <div class="fee-row single-price">
+                  <span class="price price-large">&pound;120</span>
                 </div>
               </div>
             </div>
@@ -573,13 +595,19 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
       display: grid;
       grid-template-columns: 1fr;
       gap: 1.5rem;
-      max-width: 900px;
+      max-width: 1100px;
       margin: 0 auto;
     }
 
-    @media (min-width: 768px) {
+    @media (min-width: 640px) {
       .fees-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .fees-grid {
+        grid-template-columns: repeat(4, 1fr);
       }
     }
 
@@ -631,6 +659,16 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
 
     .fee-row:last-child {
       border-bottom: none;
+    }
+
+    .fee-row.single-price {
+      justify-content: center;
+      padding: 1.25rem 0;
+      border-bottom: none;
+    }
+
+    .price-large {
+      font-size: 2.25rem;
     }
 
     .price {
