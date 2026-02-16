@@ -155,14 +155,18 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
                         <span class="price">{formatPrice(fee.price_9_holes)}</span>
                       </div>
                     )}
-                    <div class="fee-row">
-                      <span>18 Holes</span>
-                      <span class="price">{formatPrice(fee.price_18_holes)}</span>
-                    </div>
-                    <div class="fee-row">
-                      <span>Day Ticket</span>
-                      <span class="price">{formatPrice(fee.price_day_ticket)}</span>
-                    </div>
+                    {fee.price_18_holes && (
+                      <div class="fee-row">
+                        <span>18 Holes</span>
+                        <span class="price">{formatPrice(fee.price_18_holes)}</span>
+                      </div>
+                    )}
+                    {fee.price_day_ticket && (
+                      <div class="fee-row">
+                        <span>Day Ticket</span>
+                        <span class="price">{formatPrice(fee.price_day_ticket)}</span>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -177,44 +181,28 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
               </div>
               <div class="fee-prices">
                 <div class="fee-row">
-                  <span>18 Holes</span>
-                  <span class="price">&pound;45</span>
+                  <span>9 Holes</span>
+                  <span class="price">&pound;25</span>
                 </div>
                 <div class="fee-row">
-                  <span>Day Ticket</span>
-                  <span class="price">&pound;55</span>
+                  <span>18 Holes</span>
+                  <span class="price">&pound;35</span>
                 </div>
               </div>
             </div>
             <div class="fee-card featured">
               <div class="fee-header">
                 <h3>Weekend</h3>
-                <span class="fee-badge">Sat - Sun</span>
+                <span class="fee-badge">Sat & Sun</span>
               </div>
               <div class="fee-prices">
                 <div class="fee-row">
-                  <span>18 Holes</span>
-                  <span class="price">&pound;55</span>
-                </div>
-                <div class="fee-row">
-                  <span>Day Ticket</span>
-                  <span class="price">&pound;70</span>
-                </div>
-              </div>
-            </div>
-            <div class="fee-card">
-              <div class="fee-header">
-                <h3>Twilight</h3>
-                <span class="fee-badge">After 2pm</span>
-              </div>
-              <div class="fee-prices">
-                <div class="fee-row">
-                  <span>Weekday</span>
+                  <span>9 Holes</span>
                   <span class="price">&pound;30</span>
                 </div>
                 <div class="fee-row">
-                  <span>Weekend</span>
-                  <span class="price">&pound;35</span>
+                  <span>18 Holes</span>
+                  <span class="price">&pound;40</span>
                 </div>
               </div>
             </div>
@@ -240,13 +228,13 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
           <li>Society and group rates available on request</li>
           {additionalFees.length > 0 ? (
             additionalFees.map(fee => (
-              <li>{fee.name}{fee.description ? ` - ${fee.description}` : ''} - {formatPrice(fee.price)}</li>
+              <li>{fee.name} - {fee.description || formatPrice(fee.price)}</li>
             ))
           ) : (
             <>
-              <li>Buggies available for hire - &pound;25 per round</li>
-              <li>Trolley hire - &pound;5</li>
-              <li>Club hire - &pound;15</li>
+              <li>Visitor Buggy Hire - 18 Holes &pound;30 / 9 Holes &pound;25</li>
+              <li>Member Buggy Hire - 18 Holes &pound;15 / 9 Holes &pound;10</li>
+              <li>Push Trolley Hire - 18 Holes &pound;6 / 9 Holes &pound;4</li>
             </>
           )}
         </ul>
@@ -595,19 +583,13 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
       display: grid;
       grid-template-columns: 1fr;
       gap: 1.5rem;
-      max-width: 1100px;
+      max-width: 900px;
       margin: 0 auto;
     }
 
-    @media (min-width: 640px) {
+    @media (min-width: 768px) {
       .fees-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    @media (min-width: 1024px) {
-      .fees-grid {
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
       }
     }
 
