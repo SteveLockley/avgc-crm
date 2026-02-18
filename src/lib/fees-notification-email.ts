@@ -1,0 +1,468 @@
+// HTML email template for annual membership fees notification
+// Sent to all members to advise of fees for the coming year
+
+function escapeHtml(text: string): string {
+  const htmlEntities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return text.replace(/[&<>"']/g, (char) => htmlEntities[char] || char);
+}
+
+function formatCurrency(amount: number): string {
+  return '&pound;' + amount.toFixed(2);
+}
+
+export function generateFeesNotificationSubject(year: number): string {
+  return `AVGC ${year} Membership fees`;
+}
+
+export function generateFeesNotificationEmail(year: number): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AVGC ${year} Membership Fees</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <!-- Main container -->
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #1e5631; padding: 30px; border-radius: 8px 8px 0 0;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">
+                Alnmouth Village Golf Club
+              </h1>
+              <p style="margin: 5px 0 0 0; color: rgba(255,255,255,0.8); font-size: 14px;">
+                Membership Fees ${year}/${year + 1}
+              </p>
+            </td>
+          </tr>
+
+          <!-- Opening -->
+          <tr>
+            <td style="padding: 30px 30px 0 30px;">
+              <p style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
+                Dear Member,
+              </p>
+              <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                Please find below the membership fees and renewal information for the ${year}/${year + 1} season.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Membership Subscriptions -->
+          <tr>
+            <td style="padding: 20px 30px 0 30px;">
+              <h2 style="margin: 0 0 5px 0; color: #1e5631; font-size: 18px;">
+                Membership Subscriptions
+              </h2>
+              <p style="margin: 0 0 15px 0; font-size: 13px; color: #666;">
+                Annual subscription fees for the ${year}/${year + 1} membership year
+              </p>
+            </td>
+          </tr>
+
+          <!-- April Renewals Table -->
+          <tr>
+            <td style="padding: 0 30px;">
+              <h3 style="margin: 0 0 10px 0; color: #333; font-size: 15px;">
+                April Renewals <span style="font-weight: 400; color: #666; font-size: 13px;">&mdash; 1st April ${year} to 31st March ${year + 1}</span>
+              </h3>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; margin-bottom: 20px;">
+                <thead>
+                  <tr style="background-color: #f8f9fa;">
+                    <th style="padding: 12px; text-align: left; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Category
+                    </th>
+                    <th style="padding: 12px; text-align: right; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Annual Fee
+                    </th>
+                    <th style="padding: 12px; text-align: center; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Direct Debit
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Full</strong>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(432)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Under 30</strong>
+                      <span style="font-size: 12px; color: #666;"> (ages 21&ndash;29)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(324)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Senior Loyalty</strong>
+                      <span style="font-size: 12px; color: #666;"> (65+ with 25+ years membership)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(318)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Out Of County</strong>
+                      <span style="font-size: 12px; color: #666;"> (less than 100 miles)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(300)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Out Of County</strong>
+                      <span style="font-size: 12px; color: #666;"> (100 miles or more)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(228)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Twilight</strong>
+                      <span style="font-size: 12px; color: #666;"> (after 3pm, Apr&ndash;Sep)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(207)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Over 80</strong>
+                      <span style="font-size: 12px; color: #666;"> (age 80+)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(186)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Intermediate</strong>
+                      <span style="font-size: 12px; color: #666;"> (ages 18&ndash;20)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(139)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Social</strong>
+                      <span style="font-size: 12px; color: #666;"> (non-playing, NE65/NE66 postcodes)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(50)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #999;">
+                      &mdash;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Junior</strong>
+                      <span style="font-size: 12px; color: #666;"> (under 18)</span>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(50)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #999;">
+                      &mdash;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Junior Academy</strong>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(40)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; font-size: 14px; color: #999;">
+                      &mdash;
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; font-size: 14px; color: #333;">
+                      <strong>Junior (Member's Family)</strong>
+                    </td>
+                    <td style="padding: 10px 12px; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(20)}
+                    </td>
+                    <td style="padding: 10px 12px; text-align: center; font-size: 14px; color: #999;">
+                      &mdash;
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- October Renewals Table -->
+          <tr>
+            <td style="padding: 0 30px;">
+              <h3 style="margin: 0 0 10px 0; color: #333; font-size: 15px;">
+                October Renewals <span style="font-weight: 400; color: #666; font-size: 13px;">&mdash; 1st October ${year} to 31st March ${year + 1}</span>
+              </h3>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; margin-bottom: 20px;">
+                <thead>
+                  <tr style="background-color: #f8f9fa;">
+                    <th style="padding: 12px; text-align: left; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Category
+                    </th>
+                    <th style="padding: 12px; text-align: right; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Annual Fee
+                    </th>
+                    <th style="padding: 12px; text-align: center; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Direct Debit
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; font-size: 14px; color: #333;">
+                      <strong>Winter</strong>
+                      <span style="font-size: 12px; color: #666;"> (Oct&ndash;Mar)</span>
+                    </td>
+                    <td style="padding: 10px 12px; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(240)}
+                    </td>
+                    <td style="padding: 10px 12px; text-align: center; font-size: 14px; color: #1e5631;">
+                      &#10003;
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Additional Fees -->
+          <tr>
+            <td style="padding: 0 30px;">
+              <h2 style="margin: 0 0 5px 0; color: #1e5631; font-size: 18px;">
+                Additional Fees
+              </h2>
+              <p style="margin: 0 0 15px 0; font-size: 13px; color: #666;">
+                These fees are charged in addition to your subscription where applicable
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; margin-bottom: 20px;">
+                <thead>
+                  <tr style="background-color: #f8f9fa;">
+                    <th style="padding: 12px; text-align: left; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Fee
+                    </th>
+                    <th style="padding: 12px; text-align: right; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Amount
+                    </th>
+                    <th style="padding: 12px; text-align: left; font-size: 13px; font-weight: 600; color: #333; border-bottom: 2px solid #1e5631;">
+                      Applies To
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>England Golf Affiliation</strong>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(12)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 13px; color: #666;">
+                      Home playing members with CDH number
+                    </td>
+                  </tr>
+                  <tr style="background-color: #f8f9fa;">
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 14px; color: #333;">
+                      <strong>Northumberland County</strong>
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(6.5)}
+                    </td>
+                    <td style="padding: 10px 12px; border-bottom: 1px solid #e0e0e0; font-size: 13px; color: #666;">
+                      Home playing members (not Out Of County)
+                    </td>
+                  </tr>
+                  <tr style="background-color: #ffffff;">
+                    <td style="padding: 10px 12px; font-size: 14px; color: #333;">
+                      <strong>Locker Rental</strong>
+                    </td>
+                    <td style="padding: 10px 12px; text-align: right; font-size: 14px; color: #333;">
+                      ${formatCurrency(10)}
+                    </td>
+                    <td style="padding: 10px 12px; font-size: 13px; color: #666;">
+                      Members with an allocated locker
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Direct Debit Notice -->
+          <tr>
+            <td style="padding: 0 30px;">
+              <div style="border: 2px solid #1e5631; border-radius: 6px; overflow: hidden; margin-bottom: 20px;">
+                <div style="background-color: #1e5631; padding: 12px 15px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                    <tr>
+                      <td>
+                        <h3 style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 600;">
+                          Important Information for Direct Debit Members
+                        </h3>
+                      </td>
+                      <td align="right">
+                        <img src="https://www.bacs.co.uk/media/wxojztsn/directdebitlogo.jpg" alt="Direct Debit Logo" width="100" style="display: block;" />
+                      </td>
+                    </tr>
+                  </table>
+                </div>
+                <div style="padding: 15px; background-color: #ffffff;">
+                  <p style="margin: 0 0 12px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                    If you currently pay by Direct Debit, your subscription will automatically renew on
+                    <strong>1st April ${year}</strong> (or 1st October for Winter members). You do not need
+                    to take any action if you wish to continue your membership.
+                  </p>
+                  <p style="margin: 0 0 12px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                    A separate email with your personal payment schedule will be sent to you in advance,
+                    detailing the amount and dates of each monthly collection.
+                  </p>
+                  <div style="background: #fff8e1; border-left: 4px solid #f9a825; padding: 12px 15px; border-radius: 0 6px 6px 0;">
+                    <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                      <strong>If you wish to cancel your membership</strong>, you must notify the club
+                      in writing <strong>before 1st March ${year}</strong> to prevent your Direct Debit
+                      from being collected. After this date, you will be liable for the full annual
+                      subscription. You can also cancel your Direct Debit at any time by contacting
+                      your bank directly.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Payment Methods -->
+          <tr>
+            <td style="padding: 0 30px 20px 30px;">
+              <h2 style="margin: 0 0 15px 0; color: #1e5631; font-size: 18px;">
+                Payment Methods
+              </h2>
+              <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                Membership subscriptions can be paid by any of the following methods:
+              </p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; vertical-align: top; width: 30px;">&#8226;</td>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; line-height: 1.5;">
+                    <strong>Direct Debit</strong> &mdash; Spread the cost over 12 monthly payments
+                    (available for subscriptions of &pound;125 or more)
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; vertical-align: top;">&#8226;</td>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; line-height: 1.5;">
+                    <strong>Bank Transfer (BACS)</strong> &mdash; Pay in full by bank transfer
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; vertical-align: top;">&#8226;</td>
+                  <td style="padding: 8px 0; font-size: 14px; color: #333; line-height: 1.5;">
+                    <strong>Over the Till</strong> &mdash; Pay at the clubhouse
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 15px 0 0 0; font-size: 14px; color: #333; line-height: 1.6;">
+                If you would like to switch to paying by Direct Debit, or have any questions about your
+                subscription, please contact us at
+                <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Closing -->
+          <tr>
+            <td style="padding: 0 30px 30px 30px;">
+              <div style="border-top: 1px solid #e0e0e0; padding-top: 20px;">
+                <p style="margin: 0 0 10px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  We look forward to seeing you on the course and in the clubhouse throughout the coming season.
+                </p>
+                <p style="margin: 0; font-size: 14px; color: #333;">
+                  Kind regards,<br>
+                  <strong>The Committee and Management</strong><br>
+                  Alnmouth Village Golf Club
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td style="font-size: 13px; color: #666; line-height: 1.6;">
+                    <p style="margin: 0;"><strong>Alnmouth Village Golf Club</strong></p>
+                    <p style="margin: 5px 0 0 0;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
+                    <p style="margin: 5px 0 0 0;">Tel: 01665 830231 | Email: <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
+                    <p style="margin: 10px 0 0 0;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+
+        <!-- Disclaimer -->
+        <p style="margin: 20px 0 0 0; font-size: 12px; color: #999; text-align: center; max-width: 600px; line-height: 1.5;">
+          This email was sent to all members of Alnmouth Village Golf Club.
+          If you have any questions, please contact
+          <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #999;">subscriptions@AlnmouthVillage.Golf</a>.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
