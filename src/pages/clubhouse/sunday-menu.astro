@@ -1,0 +1,201 @@
+---
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import '../../styles/document.css';
+
+const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg';
+---
+
+<PublicLayout
+  title="Sunday Lunch Menu"
+  description="Sunday lunch menu at Alnmouth Village Golf Club. Starters, mains, and desserts served every Sunday in our clubhouse with stunning sea views."
+  heroImage={heroImage}
+  heroTitle="Sunday Lunch"
+  heroSubtitle="Served every Sunday in the clubhouse"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <!-- Brief intro (hidden on print) -->
+    <section class="page-intro">
+      <p class="intro-text">
+        Join us every Sunday for a delicious lunch in the clubhouse, with panoramic views
+        across the links to the Northumberland coast. Members receive a 15% discount.
+      </p>
+    </section>
+
+    <!-- Printable document -->
+    <article class="club-document">
+      <header class="doc-header">
+        <img src="/favicon-large.PNG" alt="Alnmouth Village Golf Club crest" class="doc-crest" />
+        <h1 class="doc-club-name">Alnmouth Village Golf Club</h1>
+        <p class="doc-club-tagline">The Oldest Nine Hole Links in England &middot; Est. 1869</p>
+        <p class="doc-club-motto">Per Mare Per Terras</p>
+      </header>
+
+      <h2 class="doc-title">Sunday Lunch Menu</h2>
+      <p class="doc-subtitle">Served every Sunday, 12 noon &ndash; 3pm</p>
+
+      <!-- Course deal banner -->
+      <div class="doc-banner">
+        Any 2 Courses for &pound;20 <span>&middot;</span> All 3 Courses for &pound;24
+      </div>
+
+      <!-- Starters -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Starters</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Homemade Soup of the Day</span>
+          <span class="menu-item-price">&pound;5.50</span>
+          <span class="menu-item-desc">Served with crusty bread &amp; butter</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Prawn Cocktail</span>
+          <span class="menu-item-price">&pound;7.00</span>
+          <span class="menu-item-desc">North Atlantic prawns in Marie Rose sauce on a bed of crisp lettuce</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Chicken Liver P&acirc;t&eacute;</span>
+          <span class="menu-item-price">&pound;6.50</span>
+          <span class="menu-item-desc">With red onion chutney &amp; toasted ciabatta</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Garlic Mushrooms</span>
+          <span class="menu-item-price">&pound;6.00</span>
+          <span class="menu-item-desc">Saut&eacute;ed in garlic butter, served on toasted sourdough</span>
+        </div>
+      </section>
+
+      <!-- Main Courses -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Main Courses</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Roast Sirloin of Beef</span>
+          <span class="menu-item-price">&pound;14.50</span>
+          <span class="menu-item-small">Small Portion &pound;11.00</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Roast Leg of Lamb</span>
+          <span class="menu-item-price">&pound;14.00</span>
+          <span class="menu-item-small">Small Portion &pound;10.50</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Roast Chicken Supreme</span>
+          <span class="menu-item-price">&pound;13.00</span>
+          <span class="menu-item-small">Small Portion &pound;10.00</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Roast Loin of Pork</span>
+          <span class="menu-item-price">&pound;13.00</span>
+          <span class="menu-item-small">Small Portion &pound;10.00</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Pan-Fried Sea Bass</span>
+          <span class="menu-item-price">&pound;15.00</span>
+          <span class="menu-item-desc">With lemon &amp; caper butter</span>
+          <span class="menu-item-small">Small Portion &pound;11.50</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Vegetable Wellington</span>
+          <span class="menu-item-price">&pound;12.00</span>
+          <span class="menu-item-desc">Seasonal vegetables in puff pastry with red pepper coulis</span>
+          <span class="menu-item-small">Small Portion &pound;9.50</span>
+        </div>
+
+        <p class="doc-note" style="margin-top: 0.75rem;">
+          All mains served with roast potatoes, seasonal vegetables &amp; gravy.
+        </p>
+      </section>
+
+      <!-- Desserts -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Desserts</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Sticky Toffee Pudding</span>
+          <span class="menu-item-price">&pound;6.50</span>
+          <span class="menu-item-desc">With butterscotch sauce &amp; vanilla ice cream</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Lemon Posset</span>
+          <span class="menu-item-price">&pound;6.00</span>
+          <span class="menu-item-desc">With shortbread biscuit</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Chocolate Brownie</span>
+          <span class="menu-item-price">&pound;6.50</span>
+          <span class="menu-item-desc">Warm, with clotted cream</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Cheese &amp; Biscuits</span>
+          <span class="menu-item-price">&pound;7.00</span>
+          <span class="menu-item-desc">Selection of British cheeses with chutney &amp; crackers</span>
+        </div>
+      </section>
+
+      <!-- Sides -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Sides</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Extra Roast Potatoes</span>
+          <span class="menu-item-price">&pound;2.50</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Seasonal Vegetables</span>
+          <span class="menu-item-price">&pound;3.00</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Cauliflower Cheese</span>
+          <span class="menu-item-price">&pound;3.50</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Yorkshire Pudding</span>
+          <span class="menu-item-price">&pound;1.50</span>
+        </div>
+      </section>
+
+      <!-- Notes -->
+      <div class="doc-section">
+        <p class="doc-note"><strong>Amen Corner Supplement:</strong> Upgrade any main to include a starter and dessert for just &pound;24 (saving up to &pound;6).</p>
+        <p class="doc-note"><strong>Members&rsquo; Discount:</strong> 15% off the total bill for all club members. Please show your membership card.</p>
+        <p class="doc-note">Please inform your server of any allergies or dietary requirements. We are happy to accommodate where possible.</p>
+      </div>
+
+      <footer class="doc-footer">
+        <p>Alnmouth Village Golf Club &middot; Marine Road, Alnmouth NE66 2RZ</p>
+        <p>01665 830370 &middot; www.alnmouthvillage.golf</p>
+      </footer>
+    </article>
+  </div>
+
+  <style>
+    .page-intro {
+      max-width: 680px;
+      margin: 0 auto 1rem;
+      text-align: center;
+      padding-top: 2rem;
+    }
+
+    .page-intro .intro-text {
+      font-size: 1.05rem;
+      color: var(--text-light);
+      line-height: 1.8;
+    }
+  </style>
+</PublicLayout>

@@ -1,0 +1,276 @@
+/*
+ * document.css — Reusable branded document styles
+ * Used for menus, notices, policies, and other printable club documents.
+ * Black & white palette, mobile-first, print-optimised.
+ */
+
+/* ── Document container ────────────────────────────────── */
+.club-document {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+  background: #fff;
+  color: #111;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.6;
+}
+
+/* ── Document header / crest block ─────────────────────── */
+.doc-header {
+  text-align: center;
+  padding-bottom: 1.75rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid #111;
+}
+
+.doc-crest {
+  width: 80px;
+  height: auto;
+  margin: 0 auto 1rem;
+  display: block;
+}
+
+.doc-club-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0 0 0.35rem;
+  color: #111;
+}
+
+.doc-club-tagline {
+  font-size: 0.85rem;
+  color: #444;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.15rem;
+}
+
+.doc-club-motto {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: #666;
+  margin: 0.25rem 0 0;
+}
+
+/* ── Title & subtitle ──────────────────────────────────── */
+.doc-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.75rem;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 0.5rem;
+  color: #111;
+}
+
+.doc-subtitle {
+  text-align: center;
+  font-size: 0.95rem;
+  color: #444;
+  margin: 0 0 2rem;
+}
+
+/* ── Section headings ──────────────────────────────────── */
+.doc-section {
+  margin-bottom: 1.75rem;
+}
+
+.doc-section-title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #ccc;
+  margin-bottom: 1rem;
+  color: #111;
+}
+
+/* ── Menu items (name ... price) ───────────────────────── */
+.menu-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted #ccc;
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item-name {
+  font-weight: 500;
+  color: #111;
+}
+
+.menu-item-desc {
+  font-size: 0.85rem;
+  color: #555;
+  grid-column: 1 / -1;
+  padding-top: 0.15rem;
+  line-height: 1.5;
+}
+
+.menu-item-price {
+  font-weight: 600;
+  white-space: nowrap;
+  color: #111;
+}
+
+.menu-item-small {
+  grid-column: 1 / -1;
+  text-align: right;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: #555;
+  padding-top: 0.1rem;
+}
+
+/* ── Banner / deal callout ─────────────────────────────── */
+.doc-banner {
+  text-align: center;
+  padding: 1rem 1.25rem;
+  margin: 2rem 0;
+  border: 2px solid #111;
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  color: #111;
+}
+
+.doc-banner span {
+  display: inline-block;
+  margin: 0 0.5rem;
+}
+
+/* ── Notes ─────────────────────────────────────────────── */
+.doc-note {
+  font-size: 0.88rem;
+  color: #444;
+  margin-bottom: 0.75rem;
+  line-height: 1.6;
+}
+
+.doc-note strong {
+  color: #111;
+}
+
+/* ── Footer ────────────────────────────────────────────── */
+.doc-footer {
+  text-align: center;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #111;
+  font-size: 0.82rem;
+  color: #666;
+}
+
+.doc-footer p {
+  margin: 0.25rem 0;
+}
+
+/* ── Responsive tweaks ─────────────────────────────────── */
+@media (min-width: 640px) {
+  .club-document {
+    padding: 3rem 2.5rem;
+  }
+
+  .doc-club-name {
+    font-size: 1.65rem;
+  }
+
+  .doc-title {
+    font-size: 2rem;
+  }
+}
+
+/* ── Print stylesheet ──────────────────────────────────── */
+@media print {
+  /* Hide site chrome */
+  .header,
+  #header,
+  .mobile-nav,
+  #mobile-nav,
+  .hero,
+  .footer,
+  .faq-bot,
+  .faq-bot-trigger,
+  .menu-btn {
+    display: none !important;
+  }
+
+  /* Reset page layout */
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .main {
+    padding: 0 !important;
+  }
+
+  .content {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  /* Page margins for A4 */
+  @page {
+    margin: 15mm;
+    size: A4;
+  }
+
+  /* Document fills the page */
+  .club-document {
+    max-width: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .doc-header {
+    padding-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .doc-crest {
+    width: 60px;
+  }
+
+  /* Avoid breaking inside sections */
+  .doc-section {
+    page-break-inside: avoid;
+  }
+
+  .doc-banner {
+    page-break-inside: avoid;
+  }
+
+  /* No background colours */
+  * {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* Ensure borders print */
+  .doc-header,
+  .doc-footer,
+  .doc-section-title,
+  .doc-banner {
+    border-color: #000 !important;
+  }
+
+  .menu-item {
+    border-color: #999 !important;
+  }
+
+  /* Hide the non-document wrapper content */
+  .page-intro {
+    display: none !important;
+  }
+}
