@@ -12,6 +12,7 @@ export const GET: APIRoute = async ({ locals }) => {
 
   const year = new Date().getFullYear();
 
+  // Get DD members from CRM
   const members = await env.DB.prepare(
     `SELECT m.id, m.title, m.first_name, m.surname, m.category, m.email,
             m.direct_debit_member_id, m.locker_number, m.national_id,
@@ -28,8 +29,33 @@ export const GET: APIRoute = async ({ locals }) => {
     return new Response(JSON.stringify({ error: 'No DD members found' }), { status: 404 });
   }
 
+  // Load DD membership types from the latest consolidation
+  const ddMembershipTypes = new Map<number, string>();
+  const latestConsolidation = await env.DB.prepare(
+    `SELECT matched_json FROM dd_consolidation ORDER BY imported_at DESC LIMIT 1`
+  ).first<{ matched_json: string | null }>();
+
+  if (latestConsolidation?.matched_json) {
+    try {
+      const matched = JSON.parse(latestConsolidation.matched_json) as Array<{
+        crmId: number;
+        ddMembershipType?: string;
+      }>;
+      for (const m of matched) {
+        if (m.ddMembershipType) {
+          ddMembershipTypes.set(m.crmId, m.ddMembershipType);
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
   const rows: string[] = [];
-  rows.push('Name,DD Subscription ID,First Monthly Payment,Subsequent Monthly Payment,First Payment Date');
+  rows.push('Name,Membership Number,CRM Membership Type,DD Membership Type,DD Subscription ID,First Monthly Payment,Subsequent Monthly Payment,First Payment Date');
+
+  // CSV-escape fields that might contain commas
+  const escapeCsv = (val: string) => val.includes(',') ? `"${val}"` : val;
 
   for (const m of members.results) {
     const schedule = calculateDDSchedule(
@@ -51,15 +77,15 @@ export const GET: APIRoute = async ({ locals }) => {
     );
 
     const name = `${m.first_name} ${m.surname}`;
+    const membershipNumber = (m.club_number || m.pin || '') as string;
+    const crmType = (m.category || '') as string;
+    const ddType = ddMembershipTypes.get(m.id as number) || '';
     const ddId = m.direct_debit_member_id || '';
     const firstPayment = schedule.initialCollectionTotal.toFixed(2);
     const monthlyPayment = schedule.monthlyPayment.toFixed(2);
     const firstDate = `1st April ${year}`;
 
-    // CSV-escape fields that might contain commas
-    const escapeCsv = (val: string) => val.includes(',') ? `"${val}"` : val;
-
-    rows.push(`${escapeCsv(name)},${escapeCsv(String(ddId))},${firstPayment},${monthlyPayment},${firstDate}`);
+    rows.push(`${escapeCsv(name)},${escapeCsv(String(membershipNumber))},${escapeCsv(crmType)},${escapeCsv(ddType)},${escapeCsv(String(ddId))},${firstPayment},${monthlyPayment},${firstDate}`);
   }
 
   const csv = rows.join('\n');
