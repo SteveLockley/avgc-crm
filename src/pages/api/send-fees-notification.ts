@@ -13,14 +13,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return new Response(JSON.stringify({ error: 'Database not available' }), { status: 500 });
   }
 
-  let body: { testEmail?: string };
+  let body: { testEmail?: string; year?: number };
   try {
     body = await request.json();
   } catch {
     body = {};
   }
 
-  const year = new Date().getFullYear();
+  const year = body.year || new Date().getFullYear();
   const subject = generateFeesNotificationSubject(year);
   const html = generateFeesNotificationEmail(year);
 

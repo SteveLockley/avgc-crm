@@ -419,6 +419,22 @@ export function generateFeesNotificationEmail(year: number): string {
             </td>
           </tr>
 
+          <!-- Junior Membership Promotion -->
+          <tr>
+            <td style="padding: 0 30px;">
+              <div style="background: #e8f5e9; border-radius: 6px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin: 0 0 10px 0; color: #1e5631; font-size: 16px;">
+                  Junior Membership for Members' Families
+                </h3>
+                <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  Did you know that children of existing members can join the club for just
+                  <strong>&pound;20 per year</strong>? Junior membership includes access to the course, coaching
+                  opportunities, and a great introduction to the game. Contact the club for details.
+                </p>
+              </div>
+            </td>
+          </tr>
+
           <!-- Closing -->
           <tr>
             <td style="padding: 0 30px 30px 30px;">

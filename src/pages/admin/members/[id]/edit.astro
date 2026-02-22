@@ -19,6 +19,11 @@ const subscriptionTypesResult = await db.prepare(
 ).all();
 const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
 
+const potentialPayersResult = await db.prepare(
+  `SELECT id, first_name, surname FROM members WHERE default_payment_method = 'Clubwise Direct Debit' AND id != ? ORDER BY surname, first_name`
+).bind(id).all();
+const potentialPayers = (potentialPayersResult.results || []) as Array<{ id: number; first_name: string; surname: string }>;
+
 const isZeroCostSubscription = (category: string | null): boolean => {
   if (!category) return false;
   return ZERO_COST_SUBSCRIPTIONS.some(zc => category === zc);
@@ -38,7 +43,8 @@ if (Astro.request.method === 'POST') {
     'default_payment_method', 'account_balance', 'competition_fee_purse',
     'locker_number', 'additional_locker', 'send_invoice_by',
     'account_notes', 'notes', 'officer_title', 'pin', 'club_number',
-    'electronic_communication_consent', 'parental_consent'
+    'electronic_communication_consent', 'parental_consent',
+    'family_payer_id'
   ];
 
   for (const field of fields) {
@@ -51,6 +57,7 @@ if (Astro.request.method === 'POST') {
   if (updates.handicap_index) updates.handicap_index = parseFloat(updates.handicap_index) || null;
   if (updates.account_balance) updates.account_balance = parseFloat(updates.account_balance) || 0;
   if (updates.competition_fee_purse) updates.competition_fee_purse = parseFloat(updates.competition_fee_purse) || 0;
+  updates.family_payer_id = updates.family_payer_id ? parseInt(updates.family_payer_id) || null : null;
 
   const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   const values = Object.values(updates);
@@ -338,6 +345,17 @@ function formatDateForInput(dateStr: string | null): string {
                 <option value="Letter" selected={member.send_invoice_by === 'Letter'}>Letter</option>
               </select>
             </div>
+
+            <div class="field">
+              <label for="family_payer_id">Family DD Payer</label>
+              <select name="family_payer_id" id="family_payer_id">
+                <option value="">None</option>
+                {potentialPayers.map(p => (
+                  <option value={p.id} selected={member.family_payer_id === p.id}>{p.surname}, {p.first_name}</option>
+                ))}
+              </select>
+              <span class="field-hint">Primary DD payer for family memberships</span>
+            </div>
           </div>
 
           <!-- Admin -->
@@ -554,19 +572,19 @@ function formatDateForInput(dateStr: string | null): string {
     .accent-card input,
     .accent-card select,
     .accent-card textarea {
-      background: rgba(255,255,255,0.15);
+      background: white;
       border-color: rgba(255,255,255,0.3);
-      color: white;
+      color: #333;
     }
 
     .accent-card input::placeholder {
-      color: rgba(255,255,255,0.5);
+      color: #999;
     }
 
     .accent-card input:focus,
     .accent-card select:focus {
-      border-color: rgba(255,255,255,0.6);
-      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.2);
     }
 
     /* Fields */
@@ -592,6 +610,7 @@ function formatDateForInput(dateStr: string | null): string {
     .field select,
     .field textarea {
       width: 100%;
+      box-sizing: border-box;
       padding: 0.65rem 0.85rem;
       border: 1px solid #ddd;
       border-radius: 10px;

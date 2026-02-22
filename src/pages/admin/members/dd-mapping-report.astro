@@ -1,0 +1,745 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatCurrency } from '../../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get latest DD consolidation
+const lastConsolidation = await db.prepare(
+  `SELECT * FROM dd_consolidation ORDER BY imported_at DESC LIMIT 1`
+).first();
+
+let matched: any[] = [];
+if (lastConsolidation?.matched_json) {
+  try {
+    matched = JSON.parse(lastConsolidation.matched_json as string);
+  } catch {}
+}
+
+// Get current CRM members with DD payment method
+const ddMembersResult = await db.prepare(
+  `SELECT id, first_name, surname, category, home_away, family_payer_id, address_1, address_5,
+          default_payment_method
+   FROM members
+   WHERE default_payment_method = 'Clubwise Direct Debit'
+   ORDER BY surname, first_name`
+).all();
+const ddMembers = (ddMembersResult.results || []) as any[];
+
+// Get payment items for fee lookup
+const paymentItemsResult = await db.prepare(
+  `SELECT name, fee FROM payment_items WHERE category = 'Subscription' AND active = 1`
+).all();
+const feeByCategory = new Map<string, number>();
+for (const pi of (paymentItemsResult.results || []) as any[]) {
+  feeByCategory.set(pi.name, pi.fee);
+}
+
+// Build CRM member lookup by id
+const crmById = new Map<number, any>();
+for (const m of ddMembers) {
+  crmById.set(m.id, m);
+}
+
+// ── Section 1: CRM Category Summary (split by Home/Away) ──
+
+// Get EGU and County fees for first month calculation
+const eguFeeResult = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'England Golf' AND active = 1`
+).first();
+const countyFeeResult = await db.prepare(
+  `SELECT fee FROM payment_items WHERE name = 'Northumberland County' AND active = 1`
+).first();
+const eguFee = (eguFeeResult?.fee as number) || 0;
+const countyFee = (countyFeeResult?.fee as number) || 0;
+const unionFees = eguFee + countyFee;
+
+interface CRMCategoryInfo {
+  category: string;
+  homeAway: string;
+  ddCount: number;
+  annualFee: number | null;
+  expectedMonthly: number | null;
+  firstMonth: number | null;
+  ddTypes: Set<string>;
+}
+
+const crmCategoryMap = new Map<string, CRMCategoryInfo>();
+for (const m of matched) {
+  const cat = m.crmCategory || 'Uncategorised';
+  const crmMember = crmById.get(m.crmId);
+  const ha = crmMember?.home_away || '';
+  const haLabel = ha === 'H' ? 'Home' : ha === 'A' ? 'Away' : 'Other';
+  const key = `${cat}|${haLabel}`;
+
+  if (!crmCategoryMap.has(key)) {
+    const subFee = feeByCategory.get(cat) ?? null;
+    const isHome = haLabel === 'Home';
+    // Home annual = subscription + union fees; Away annual = subscription only
+    const annualFee = subFee !== null ? (isHome ? subFee + unionFees : subFee) : null;
+    // Monthly = subscription / 12 only (union fees paid in first month, not spread)
+    const monthly = subFee !== null ? Math.floor((subFee / 12) * 100) / 100 : null;
+    // First month = union fees (Home only) + first month membership (absorbs rounding)
+    const firstMonth = subFee !== null && monthly !== null
+      ? (isHome ? unionFees : 0) + (subFee - (monthly * 11))
+      : null;
+    crmCategoryMap.set(key, {
+      category: cat,
+      homeAway: haLabel,
+      ddCount: 0,
+      annualFee,
+      expectedMonthly: monthly,
+      firstMonth: firstMonth !== null ? Math.round(firstMonth * 100) / 100 : null,
+      ddTypes: new Set(),
+    });
+  }
+  const info = crmCategoryMap.get(key)!;
+  info.ddCount++;
+  if (m.ddMembershipType) info.ddTypes.add(m.ddMembershipType);
+}
+
+const crmCategories = Array.from(crmCategoryMap.values()).sort((a, b) => {
+  if (a.category !== b.category) return a.category.localeCompare(b.category);
+  return a.homeAway.localeCompare(b.homeAway);
+});
+
+// ── Section 3: Inconsistencies ──
+interface Inconsistency {
+  crmId: number;
+  name: string;
+  crmCategory: string;
+  homeAway: string;
+  ddType: string;
+  ddFee: string;
+  issue: string;
+}
+
+// Collect issues per member, then merge into one row each
+const issuesByMember = new Map<number, { base: Omit<Inconsistency, 'issue'>; issues: string[] }>();
+
+for (const m of matched) {
+  const cat = (m.crmCategory || '').toLowerCase();
+  const ddType = (m.ddMembershipType || '').toLowerCase();
+  const ddFee = parseFloat(m.ddFee) || 0;
+  const crmMember = crmById.get(m.crmId);
+  const ha = crmMember?.home_away || '';
+  const haLabel = ha === 'H' ? 'Home' : ha === 'A' ? 'Away' : ha === 'V' ? 'Visitor' : 'Not set';
+  const isAway = ha === 'A';
+  const ddIsAway = ddType.includes('away');
+
+  const addIssue = (issue: string) => {
+    if (!issuesByMember.has(m.crmId)) {
+      issuesByMember.set(m.crmId, {
+        base: { crmId: m.crmId, name: m.crmName, crmCategory: m.crmCategory, homeAway: haLabel, ddType: m.ddMembershipType, ddFee: m.ddFee },
+        issues: []
+      });
+    }
+    issuesByMember.get(m.crmId)!.issues.push(issue);
+  };
+
+  if (cat === 'life' && ddFee > 0) addIssue('Life member on paid DD');
+  if (cat === 'over 80' && ddType.includes('full')) addIssue('Over 80 on Full rate DD type');
+  if (cat === 'senior loyalty' && ddType.includes('full') && !ddType.includes('senior')) addIssue('Senior Loyalty on Full rate DD type');
+  if (cat === 'full' && ddType.includes('under 30')) addIssue('Full category on Under 30s DD type');
+  if (cat === 'full' && ddType.includes('country')) addIssue('Full category on Country tier DD type');
+  if (m.ddStatus && m.ddStatus.toLowerCase() === 'frozen') addIssue('Frozen status in DD');
+  if (isAway && !ddIsAway) addIssue('CRM Away member not on Away DD type');
+  if (!isAway && ddIsAway) addIssue(`CRM ${haLabel} member on Away DD type`);
+  if (!isAway && ha && cat.includes('away')) addIssue(`CRM ${haLabel} but category includes Away`);
+}
+
+
+// Flatten to one row per member with combined issues
+const inconsistencies: Inconsistency[] = Array.from(issuesByMember.values()).map(({ base, issues }) => ({
+  ...base,
+  issue: issues.join(' + ')
+}));
+
+// ── Section 4: Family Groupings ──
+// Start with members on "family" DD types, then add any linked payers/dependants
+
+// Query ALL family relationships from the DB (not just DD members)
+const allFamilyResult = await db.prepare(
+  `SELECT id, first_name, surname, family_payer_id FROM members WHERE family_payer_id IS NOT NULL`
+).all();
+const allDependants = (allFamilyResult.results || []) as Array<{ id: number; first_name: string; surname: string; family_payer_id: number }>;
+
+// Build a set of payer IDs (members that others point to)
+const payerIds = new Set<number>();
+const dependantsByPayer = new Map<number, Array<{ id: number; first_name: string; surname: string }>>();
+for (const d of allDependants) {
+  payerIds.add(d.family_payer_id);
+  if (!dependantsByPayer.has(d.family_payer_id)) dependantsByPayer.set(d.family_payer_id, []);
+  dependantsByPayer.get(d.family_payer_id)!.push(d);
+}
+
+// Query all family-related members with full details for display
+const allFamilyRelatedResult = await db.prepare(
+  `SELECT id, first_name, surname, category, family_payer_id, address_5
+   FROM members
+   WHERE family_payer_id IS NOT NULL
+      OR id IN (SELECT DISTINCT family_payer_id FROM members WHERE family_payer_id IS NOT NULL)`
+).all();
+const allFamilyRelatedMembers = (allFamilyRelatedResult.results || []) as Array<{
+  id: number; first_name: string; surname: string; category: string | null;
+  family_payer_id: number | null; address_5: string | null;
+}>;
+
+// Also query all member names for display
+const allMembersForLookup = await db.prepare(
+  `SELECT id, first_name, surname FROM members`
+).all();
+const memberNameById = new Map<number, string>();
+for (const m of (allMembersForLookup.results || []) as any[]) {
+  memberNameById.set(m.id, `${m.first_name} ${m.surname}`);
+}
+
+interface FamilyGroup {
+  key: string;
+  label: string;
+  postcode: string;
+  members: Array<{
+    crmId: number;
+    name: string;
+    crmCategory: string;
+    ddFee: string;
+    role: 'payer' | 'dependant' | 'unlinked';
+    roleDetail: string;
+  }>;
+}
+
+// Build set of all member IDs involved in family relationships
+const familyRelatedIds = new Set<number>();
+for (const d of allDependants) {
+  familyRelatedIds.add(d.id);
+  familyRelatedIds.add(d.family_payer_id);
+}
+
+// Include members who are on a "family" DD type OR have a family_payer_id relationship
+const familyMembers = matched.filter(m => {
+  const isFamilyDdType = (m.ddMembershipType || '').toLowerCase().includes('family');
+  const hasRelationship = familyRelatedIds.has(m.crmId);
+  return isFamilyDdType || hasRelationship;
+});
+
+// Group by family_payer_id relationship first
+const familyGroupMap = new Map<string, FamilyGroup>();
+
+for (const m of familyMembers) {
+  const crmMember = crmById.get(m.crmId);
+  const memberId = m.crmId as number;
+
+  let groupKey: string;
+  let role: 'payer' | 'dependant' | 'unlinked';
+  let roleDetail: string;
+
+  if (crmMember?.family_payer_id) {
+    // This member is a dependant
+    groupKey = `payer-${crmMember.family_payer_id}`;
+    role = 'dependant';
+    roleDetail = `Payer: ${memberNameById.get(crmMember.family_payer_id) || `ID ${crmMember.family_payer_id}`}`;
+  } else if (payerIds.has(memberId)) {
+    // This member is a payer (others point to them)
+    groupKey = `payer-${memberId}`;
+    role = 'payer';
+    const deps = dependantsByPayer.get(memberId) || [];
+    roleDetail = `Payer (${deps.length} dependant${deps.length !== 1 ? 's' : ''})`;
+  } else {
+    // Unlinked - fall back to surname + postcode grouping
+    const surname = m.crmName?.split(' ').pop() || '';
+    const postcode = m.ddPostcode || '';
+    groupKey = `unlinked-${surname.toLowerCase()}|${postcode.toLowerCase()}`;
+    role = 'unlinked';
+    roleDetail = 'Not linked';
+  }
+
+  if (!familyGroupMap.has(groupKey)) {
+    // Determine group label
+    let label: string;
+    let postcode = m.ddPostcode || '';
+    if (groupKey.startsWith('payer-')) {
+      const payerId = parseInt(groupKey.replace('payer-', ''));
+      label = memberNameById.get(payerId)?.split(' ').pop() || 'Unknown';
+      label += ' Family';
+    } else {
+      label = m.crmName?.split(' ').pop() || 'Unknown';
+    }
+    familyGroupMap.set(groupKey, { key: groupKey, label, postcode, members: [] });
+  }
+
+  familyGroupMap.get(groupKey)!.members.push({
+    crmId: m.crmId,
+    name: m.crmName,
+    crmCategory: m.crmCategory || '-',
+    ddFee: m.ddFee,
+    role,
+    roleDetail,
+  });
+}
+
+// Second pass: add family-related CRM members NOT in the DD consolidation matched data
+const matchedCrmIds = new Set(matched.map((m: any) => m.crmId as number));
+for (const fm of allFamilyRelatedMembers) {
+  if (matchedCrmIds.has(fm.id)) continue; // Already added from matched data
+
+  let groupKey: string;
+  let role: 'payer' | 'dependant' | 'unlinked';
+  let roleDetail: string;
+
+  if (fm.family_payer_id) {
+    groupKey = `payer-${fm.family_payer_id}`;
+    role = 'dependant';
+    roleDetail = `Payer: ${memberNameById.get(fm.family_payer_id) || `ID ${fm.family_payer_id}`}`;
+  } else if (payerIds.has(fm.id)) {
+    groupKey = `payer-${fm.id}`;
+    role = 'payer';
+    const deps = dependantsByPayer.get(fm.id) || [];
+    roleDetail = `Payer (${deps.length} dependant${deps.length !== 1 ? 's' : ''})`;
+  } else {
+    continue; // No relationship, skip
+  }
+
+  if (!familyGroupMap.has(groupKey)) {
+    let label: string;
+    if (groupKey.startsWith('payer-')) {
+      const payerId = parseInt(groupKey.replace('payer-', ''));
+      label = memberNameById.get(payerId)?.split(' ').pop() || 'Unknown';
+      label += ' Family';
+    } else {
+      label = fm.surname;
+    }
+    familyGroupMap.set(groupKey, { key: groupKey, label, postcode: fm.address_5 || '', members: [] });
+  }
+
+  familyGroupMap.get(groupKey)!.members.push({
+    crmId: fm.id,
+    name: `${fm.first_name} ${fm.surname}`,
+    crmCategory: fm.category || '-',
+    ddFee: '0.00',
+    role,
+    roleDetail,
+  });
+}
+
+const familyGroups = Array.from(familyGroupMap.values())
+  .filter(g => g.members.length > 0)
+  .sort((a, b) => b.members.length - a.members.length);
+
+const importedAt = lastConsolidation?.imported_at
+  ? new Date(lastConsolidation.imported_at as string).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  : null;
+---
+
+<AdminLayout title="DD Mapping Report">
+  <div class="report-page">
+    <div class="page-header">
+      <div class="header-left">
+        <button type="button" onclick="history.back()" class="back-btn">&larr;</button>
+        <div>
+          <h1>DD Mapping Report</h1>
+          {importedAt && <p class="subtitle">Based on consolidation from {importedAt}</p>}
+          {!lastConsolidation && <p class="subtitle warning">No DD consolidation data found. Upload a ClubWise CSV on the DD Consolidation page first.</p>}
+        </div>
+      </div>
+      <div class="header-actions">
+        <a href="/admin/members/direct-debit" class="btn btn-secondary">DD Consolidation</a>
+        <a href="/admin/members" class="btn btn-secondary">Members</a>
+      </div>
+    </div>
+
+    {lastConsolidation && (
+      <>
+        <!-- CRM Category Summary -->
+        <div class="m3-card">
+          <h2>CRM Category Summary</h2>
+          <p class="section-desc">Annual = subscription fee. Monthly = annual / 12 (floored). Home first month includes EGU ({formatCurrency(eguFee)}) + County ({formatCurrency(countyFee)}). Away first month = subscription only.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>CRM Category</th>
+                  <th>H/A</th>
+                  <th class="num">On DD</th>
+                  <th class="num">Annual Fee</th>
+                  <th class="num">Monthly</th>
+                  <th class="num">First Month</th>
+                  <th>DD Types</th>
+                </tr>
+              </thead>
+              <tbody>
+                {crmCategories.map(cc => (
+                  <tr>
+                    <td class="type-name">{cc.category}</td>
+                    <td><span class={`badge ${cc.homeAway === 'Home' ? 'badge-yes' : cc.homeAway === 'Away' ? 'badge-away' : 'badge-no'}`}>{cc.homeAway}</span></td>
+                    <td class="num">{cc.ddCount}</td>
+                    <td class="num">{cc.annualFee !== null ? formatCurrency(cc.annualFee) : '-'}</td>
+                    <td class="num">{cc.expectedMonthly !== null ? formatCurrency(cc.expectedMonthly) : '-'}</td>
+                    <td class="num">{cc.firstMonth !== null ? formatCurrency(cc.firstMonth) : '-'}</td>
+                    <td>
+                      {Array.from(cc.ddTypes).map(dt => (
+                        <span class="cat-tag">{dt}</span>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 3: Inconsistencies -->
+        <div class="m3-card">
+          <h2>Inconsistencies <span class="count-badge">{inconsistencies.length}</span></h2>
+          <p class="section-desc">Members where CRM category doesn't align with DD membership type.</p>
+          {inconsistencies.length > 0 ? (
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>CRM Category</th>
+                    <th>H/A</th>
+                    <th>DD Type</th>
+                    <th class="num">DD Fee</th>
+                    <th>Issue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inconsistencies.map(inc => (
+                    <tr>
+                      <td><a href={`/admin/members/${inc.crmId}`} class="member-link">{inc.name}</a></td>
+                      <td>{inc.crmCategory}</td>
+                      <td><span class={`badge ${inc.homeAway === 'Home' ? 'badge-yes' : inc.homeAway === 'Away' ? 'badge-away' : 'badge-warn'}`}>{inc.homeAway}</span></td>
+                      <td>{inc.ddType}</td>
+                      <td class="num">{inc.ddFee}</td>
+                      <td><span class="issue-tag">{inc.issue}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div class="empty-state">No inconsistencies found</div>
+          )}
+        </div>
+
+        <!-- Section 4: Family Groupings -->
+        <div class="m3-card">
+          <h2>Family Groupings <span class="count-badge">{familyGroups.length} families</span></h2>
+          <p class="section-desc">Members on "Family" DD types grouped by family payer relationships. Shows payer, dependant, or unlinked status.</p>
+          {familyGroups.length > 0 ? (
+            <div class="family-groups">
+              {familyGroups.map(fg => (
+                <div class="family-group">
+                  <h3>{fg.label} <span class="family-meta">{fg.postcode} &middot; {fg.members.length} member{fg.members.length !== 1 ? 's' : ''}</span></h3>
+                  <div class="table-wrap">
+                    <table class="compact">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>CRM Category</th>
+                          <th class="num">DD Fee</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fg.members.map(fm => (
+                          <tr>
+                            <td><a href={`/admin/members/${fm.crmId}`} class="member-link">{fm.name}</a></td>
+                            <td>{fm.crmCategory}</td>
+                            <td class="num">{fm.ddFee}</td>
+                            <td>
+                              {fm.role === 'payer'
+                                ? <span class="badge badge-payer">{fm.roleDetail}</span>
+                                : fm.role === 'dependant'
+                                ? <span class="badge badge-yes">{fm.roleDetail}</span>
+                                : <span class="badge badge-warn">{fm.roleDetail}</span>
+                              }
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div class="empty-state">No family DD memberships found in last consolidation</div>
+          )}
+        </div>
+      </>
+    )}
+  </div>
+
+  <style>
+    .report-page {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      background: #f0f0f0;
+      border-radius: 12px;
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: #e0e0e0;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .subtitle.warning {
+      color: #92400e;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    .m3-card {
+      background: white;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+
+    .m3-card h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .section-desc {
+      margin: 0 0 1.25rem 0;
+      font-size: 0.85rem;
+      color: #888;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    table.compact {
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      border-bottom: 2px solid #e5e5e5;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+
+    .num {
+      text-align: right;
+    }
+
+    .type-name {
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .cat-tag {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      margin: 0.1rem 0.2rem;
+    }
+
+    .cat-count {
+      color: #666;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .badge-yes {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .badge-no {
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+
+    .badge-warn {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .badge-payer {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    .badge-away {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
+    .count-badge {
+      display: inline-block;
+      padding: 0.1rem 0.5rem;
+      background: #fee2e2;
+      color: #991b1b;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      vertical-align: middle;
+    }
+
+    .issue-tag {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      background: #fef2f2;
+      color: #991b1b;
+      border-radius: 6px;
+      font-size: 0.8rem;
+    }
+
+    .member-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .member-link:hover {
+      text-decoration: underline;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: #999;
+      font-size: 0.9rem;
+    }
+
+    .family-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .family-group {
+      border: 1px solid #e5e5e5;
+      border-radius: 12px;
+      padding: 1rem;
+    }
+
+    .family-group h3 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .family-meta {
+      font-weight: 400;
+      color: #888;
+      font-size: 0.85rem;
+    }
+
+    .btn {
+      padding: 0.6rem 1.25rem;
+      border-radius: 10px;
+      font-weight: 500;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+      font-size: 0.9rem;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+      border: none;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    @media (max-width: 768px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+
+      .header-actions {
+        width: 100%;
+      }
+
+      th, td {
+        padding: 0.4rem 0.5rem;
+        font-size: 0.8rem;
+      }
+    }
+  </style>
+</AdminLayout>

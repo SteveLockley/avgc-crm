@@ -128,6 +128,143 @@ function normalizeName(name: string | null): string {
   return name.toLowerCase().trim().replace(/[^a-z]/g, '');
 }
 
+// Common name variants - each group contains names that should match each other
+const nameVariantGroups: string[][] = [
+  ['steve', 'steven', 'stephen'],
+  ['mike', 'michael', 'mick'],
+  ['dave', 'david'],
+  ['rob', 'robert', 'bob', 'bobby', 'robbie'],
+  ['jim', 'james', 'jamie', 'jimmy'],
+  ['bill', 'william', 'will', 'billy', 'willy'],
+  ['tom', 'thomas', 'tommy'],
+  ['tony', 'anthony'],
+  ['chris', 'christopher'],
+  ['matt', 'matthew'],
+  ['dan', 'daniel', 'danny'],
+  ['nick', 'nicholas', 'nicky'],
+  ['pat', 'patrick', 'paddy'],
+  ['pete', 'peter'],
+  ['phil', 'philip', 'phillip'],
+  ['rick', 'richard', 'dick', 'richie', 'dicky'],
+  ['ron', 'ronald', 'ronnie'],
+  ['tim', 'timothy', 'timmy'],
+  ['neil', 'neill', 'neal'],
+  ['mac', 'kevin'],
+  ['ed', 'edward', 'ted', 'teddy', 'eddie', 'edmond', 'edmund'],
+  ['john', 'jon', 'johnny', 'jonathan', 'jonny'],
+  ['andy', 'andrew', 'drew'],
+  ['alex', 'alexander'],
+  ['ben', 'benjamin'],
+  ['sam', 'samuel', 'sammy'],
+  ['joe', 'joseph'],
+  ['jack', 'john'],
+  ['charlie', 'charles'],
+  ['harry', 'harold', 'henry'],
+  ['fred', 'frederick', 'freddie'],
+  ['geoff', 'geoffrey', 'jeff', 'jeffrey'],
+  ['greg', 'gregory'],
+  ['ken', 'kenneth', 'kenny'],
+  ['larry', 'laurence', 'lawrence'],
+  ['liz', 'elizabeth', 'beth', 'betty', 'lizzie'],
+  ['sue', 'susan', 'susie', 'suzanne'],
+  ['kate', 'katherine', 'catherine', 'cath', 'kath', 'kathy', 'cathy'],
+  ['maggie', 'margaret', 'meg', 'peggy'],
+  ['jenny', 'jennifer', 'jen'],
+  ['sally', 'sarah'],
+  ['debbie', 'deborah', 'deb'],
+  ['vicky', 'victoria', 'vic'],
+  ['tina', 'christina', 'christine'],
+  ['pam', 'pamela'],
+  ['val', 'valerie'],
+  ['di', 'diana', 'diane'],
+  ['dot', 'dorothy'],
+  ['rog', 'roger'],
+  ['gaz', 'gary', 'gareth'],
+  ['baz', 'barry'],
+  ['terry', 'terence'],
+  ['bernie', 'bernard'],
+  ['doug', 'douglas'],
+  ['stu', 'stuart', 'stewart'],
+  ['sim', 'simon'],
+  ['ray', 'raymond'],
+  ['stan', 'stanley'],
+  ['len', 'leonard', 'lenny'],
+  ['norm', 'norman'],
+  ['don', 'donald'],
+  ['al', 'alan', 'allan', 'allen'],
+  ['mart', 'martin', 'marty'],
+  ['nige', 'nigel'],
+  ['trev', 'trevor'],
+  ['col', 'colin'],
+  ['mal', 'malcolm'],
+  ['ian', 'iain'],
+  ['marc', 'mark', 'marcus'],
+  ['brian', 'bryan'],
+  ['sean', 'shaun', 'shawn'],
+  ['tracey', 'tracy'],
+  ['hilary', 'hillary'],
+  ['ann', 'anne', 'anna', 'annie'],
+  ['jo', 'joanne', 'joanna', 'joan'],
+  ['max', 'maxwell', 'maximilian'],
+  ['bruce', 'brucie'],
+  ['eric', 'erik'],
+  ['carl', 'karl'],
+  ['ross', 'rossie'],
+  ['les', 'leslie', 'lesley'],
+  ['rob', 'robin'],
+  ['walt', 'walter'],
+  ['alf', 'alfred'],
+  ['archie', 'archibald'],
+  ['russ', 'russell'],
+  ['clive', 'cliff', 'clifford'],
+];
+
+// Build lookup: normalized name -> set of variant names
+const nameVariantMap = new Map<string, Set<string>>();
+for (const group of nameVariantGroups) {
+  const allNames = new Set(group);
+  for (const name of group) {
+    if (!nameVariantMap.has(name)) {
+      nameVariantMap.set(name, new Set());
+    }
+    for (const variant of allNames) {
+      nameVariantMap.get(name)!.add(variant);
+    }
+  }
+}
+
+// Check if two normalized names are variants of each other
+function namesAreVariants(a: string, b: string): boolean {
+  if (a === b) return true;
+  const variants = nameVariantMap.get(a);
+  return variants ? variants.has(b) : false;
+}
+
+// Fuzzy surname match - strips spaces, hyphens, apostrophes then compares
+function surnamesFuzzyMatch(a: string, b: string): boolean {
+  if (a === b) return true;
+  // Already normalized (lowercase, alpha only), but also check with
+  // Levenshtein distance of 1 for minor typos (e.g. MacConnachie vs MacConachie)
+  if (a.length > 3 && b.length > 3 && Math.abs(a.length - b.length) <= 1) {
+    let diffs = 0;
+    let ai = 0, bi = 0;
+    while (ai < a.length && bi < b.length) {
+      if (a[ai] !== b[bi]) {
+        diffs++;
+        if (diffs > 1) return false;
+        if (a.length > b.length) ai++;
+        else if (b.length > a.length) bi++;
+        else { ai++; bi++; }
+      } else {
+        ai++; bi++;
+      }
+    }
+    diffs += (a.length - ai) + (b.length - bi);
+    return diffs <= 1;
+  }
+  return false;
+}
+
 // Parse BRS name format "Surname, FirstName [MiddleInitials]"
 function parseBrsName(name: string): { surname: string; firstName: string } {
   const parts = name.split(',').map(p => p.trim());
@@ -231,14 +368,27 @@ if (Astro.request.method === 'POST') {
             if (crm) {
               matchedCrmIds.add(crm.id);
 
-              // Check if names match
+              // Check if names match (ignoring middle names, handling reversed names)
               const brsNormalizedSurname = normalizeName(brs.parsedSurname);
               const brsNormalizedFirst = normalizeName(brs.parsedFirstName);
               const crmNormalizedSurname = normalizeName(crm.surname);
-              const crmNormalizedFirst = normalizeName(crm.first_name);
+              // CRM first_name may include middle names - take first word only
+              const crmNormalizedFirst = normalizeName(crm.first_name.split(/\s+/)[0]);
 
-              const nameMatch = brsNormalizedSurname === crmNormalizedSurname &&
-                               brsNormalizedFirst === crmNormalizedFirst;
+              const surnameMatch = surnamesFuzzyMatch(brsNormalizedSurname, crmNormalizedSurname);
+              const firstMatch = namesAreVariants(brsNormalizedFirst, crmNormalizedFirst);
+              // Also check if BRS first name matches any word in CRM first name
+              // (handles "Kathleen Lorna" in BRS matching "Lorna" in CRM)
+              const crmFirstWords = crm.first_name.split(/\s+/).map(w => normalizeName(w));
+              const anyWordMatch = crmFirstWords.some(w => namesAreVariants(brsNormalizedFirst, w));
+              // Check if BRS name is initials matching CRM first name start (e.g. "MJ" → "Malcolm")
+              const initialsMatch = brsNormalizedFirst.length <= 2 &&
+                crmNormalizedFirst.startsWith(brsNormalizedFirst[0]);
+              const directMatch = surnameMatch && (firstMatch || anyWordMatch || initialsMatch);
+              // Also match if first/last names are swapped
+              const swappedMatch = surnamesFuzzyMatch(brsNormalizedSurname, crmNormalizedFirst) &&
+                                  namesAreVariants(brsNormalizedFirst, crmNormalizedSurname);
+              const nameMatch = directMatch || swappedMatch;
 
               result.matched.push({
                 brsUsername: brs.username,
@@ -581,9 +731,12 @@ if (result) {
         </h3>
         {result.brsNotInCrm.length > 0 ? (
           <>
-            <p style="color: #856404; font-size: 0.875rem; margin-bottom: 0.5rem;">
-              These BRS members have no matching PIN in the CRM. They may need to be added or their PIN corrected.
-            </p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <p style="color: #856404; font-size: 0.875rem; margin: 0;">
+                These BRS members have no matching PIN in the CRM. They may need to be added or their PIN corrected.
+              </p>
+              <button type="button" class="btn btn-secondary btn-sm" id="export-brs-not-in-crm">Export CSV</button>
+            </div>
             <div class="max-height-table">
               <table class="result-table">
                 <thead>
@@ -685,4 +838,23 @@ if (result) {
       Export this file from BRS: Admin → Members → Export Member List
     </p>
   </div>
+
+  {result && result.brsNotInCrm.length > 0 && (
+    <script define:vars={{ brsNotInCrm: result.brsNotInCrm }}>
+      document.getElementById('export-brs-not-in-crm')?.addEventListener('click', () => {
+        const rows = [['BRS Username', 'Name', 'BRS Membership']];
+        for (const m of brsNotInCrm) {
+          rows.push([m.brsUsername, m.brsName, m.brsMembership]);
+        }
+        const csv = rows.map(r => r.map(v => '"' + (v || '').replace(/"/g, '""') + '"').join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'brs-not-in-crm.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    </script>
+  )}
 </AdminLayout>

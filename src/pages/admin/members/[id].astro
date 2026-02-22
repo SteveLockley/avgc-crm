@@ -19,6 +19,19 @@ const subscriptions = await db.prepare(
   `SELECT * FROM subscription_history WHERE member_id = ? ORDER BY start_date DESC`
 ).bind(id).all();
 
+// Family payer relationship
+let familyPayer: { id: number; first_name: string; surname: string } | null = null;
+if (member.family_payer_id) {
+  familyPayer = await db.prepare(
+    'SELECT id, first_name, surname FROM members WHERE id = ?'
+  ).bind(member.family_payer_id).first() as any;
+}
+
+const dependantsResult = await db.prepare(
+  'SELECT id, first_name, surname, category FROM members WHERE family_payer_id = ? ORDER BY surname, first_name'
+).bind(id).all();
+const dependants = (dependantsResult.results || []) as Array<{ id: number; first_name: string; surname: string; category: string }>;
+
 const expired = isExpired(member.date_expires as string);
 const expiring = expiresSoon(member.date_expires as string);
 const statusText = expired ? 'Expired' : expiring ? 'Expiring Soon' : 'Active';
@@ -210,6 +223,28 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
               <span class="info-label">Invoice By</span>
               <span class="info-value">{member.send_invoice_by || 'Email'}</span>
             </div>
+            {familyPayer && (
+              <div class="info-item">
+                <span class="info-label">Family Payer</span>
+                <span class="info-value">
+                  <a href={`/admin/members/${familyPayer.id}`} class="family-link">{familyPayer.first_name} {familyPayer.surname}</a>
+                </span>
+              </div>
+            )}
+            {dependants.length > 0 && (
+              <div class="info-item">
+                <span class="info-label">Dependants</span>
+                <span class="info-value">
+                  {dependants.map((d, i) => (
+                    <span>
+                      <a href={`/admin/members/${d.id}`} class="family-link">{d.first_name} {d.surname}</a>
+                      {d.category && <span class="secondary"> ({d.category})</span>}
+                      {i < dependants.length - 1 && <br />}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -487,8 +522,14 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
       text-decoration: none;
     }
 
-    .email-link:hover {
+    .email-link:hover,
+    .family-link:hover {
       text-decoration: underline;
+    }
+
+    .family-link {
+      color: #a7f3d0;
+      text-decoration: none;
     }
 
     /* Mini Badges */

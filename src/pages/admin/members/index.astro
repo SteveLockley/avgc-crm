@@ -9,6 +9,7 @@ const url = Astro.url;
 const search = url.searchParams.get('search') || '';
 const subscriptionType = url.searchParams.get('subscription_type') || '';
 const eguCategory = url.searchParams.get('egu_category') || '';
+const paymentMethod = url.searchParams.get('payment_method') || '';
 const filter = url.searchParams.get('filter') || '';
 const page = parseInt(url.searchParams.get('page') || '1');
 const sortBy = url.searchParams.get('sort') || 'surname';
@@ -74,6 +75,13 @@ if (subscriptionType) {
   params.push(subscriptionType);
 }
 
+if (paymentMethod === 'none') {
+  whereClause += ' AND (default_payment_method IS NULL OR default_payment_method = \'\')';
+} else if (paymentMethod) {
+  whereClause += ' AND default_payment_method = ?';
+  params.push(paymentMethod);
+}
+
 if (filter === 'expiring') {
   whereClause += ` AND date_expires BETWEEN date('now') AND date('now', '+30 days')`;
 } else if (filter === 'expired') {
@@ -127,6 +135,7 @@ function buildQueryString(pageNum: number): string {
   if (search) params.set('search', search);
   if (subscriptionType) params.set('subscription_type', subscriptionType);
   if (eguCategory) params.set('egu_category', eguCategory);
+  if (paymentMethod) params.set('payment_method', paymentMethod);
   if (filter) params.set('filter', filter);
   if (sortBy !== 'surname') params.set('sort', sortBy);
   if (sortDir !== 'asc') params.set('dir', sortDir);
@@ -140,6 +149,7 @@ function buildFilterQueryString(): string {
   if (search) params.set('search', search);
   if (subscriptionType) params.set('subscription_type', subscriptionType);
   if (eguCategory) params.set('egu_category', eguCategory);
+  if (paymentMethod) params.set('payment_method', paymentMethod);
   if (filter) params.set('filter', filter);
   return params.toString() ? `?${params.toString()}` : '';
 }
@@ -179,15 +189,29 @@ function getSortIndicator(column: string): string {
       <span class="member-count">{totalCount} members</span>
     </div>
     <div class="header-actions">
-      <a href="/admin/members/subscription-review" class="btn btn-secondary">Subscription Review</a>
-      <a href="/admin/members/direct-debit" class="btn btn-secondary">DD Consolidation</a>
-      <a href="/admin/members/brs" class="btn btn-secondary">BRS</a>
-      <a href="/admin/members/egu" class="btn btn-secondary">EGU</a>
-      <a href="/admin/members/handicapmaster" class="btn btn-secondary">HandicapMaster</a>
-      <a href="/admin/members/import" class="btn btn-secondary">Import</a>
-      <a href={`/admin/members/export${buildFilterQueryString()}`} class="btn btn-secondary">Export</a>
-      <a href={`/admin/members/email${buildFilterQueryString()}`} class="btn btn-secondary">Email All</a>
+      <a href="/admin/members/subscription-renewals" class="btn btn-primary">Subscription Renewals</a>
       <a href="/admin/members/new" class="btn btn-primary">+ Add Member</a>
+      <div class="dropdown">
+        <button class="btn btn-secondary dropdown-toggle" id="actions-dropdown-btn">
+          Actions
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="dropdown-menu" id="actions-dropdown-menu">
+          <a href="/admin/members/subscription-review" class="dropdown-item">Subscription Review</a>
+          <a href="/admin/members/direct-debit" class="dropdown-item">DD Consolidation</a>
+          <a href="/admin/members/dd-mapping-report" class="dropdown-item">DD Mapping</a>
+          <div class="dropdown-divider"></div>
+          <a href="/admin/members/brs" class="dropdown-item">BRS</a>
+          <a href="/admin/members/egu" class="dropdown-item">EGU</a>
+          <a href="/admin/members/handicapmaster" class="dropdown-item">HandicapMaster</a>
+          <div class="dropdown-divider"></div>
+          <a href="/admin/members/import" class="dropdown-item">Import</a>
+          <a href={`/admin/members/export${buildFilterQueryString()}`} class="dropdown-item">Export</a>
+          <a href={`/admin/members/email${buildFilterQueryString()}`} class="dropdown-item">Email All</a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -437,7 +461,60 @@ function getSortIndicator(column: string): string {
     .header-actions {
       display: flex;
       gap: 0.5rem;
-      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    /* Dropdown */
+    .dropdown {
+      position: relative;
+    }
+
+    .dropdown-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      cursor: pointer;
+    }
+
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      margin-top: 0.375rem;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      min-width: 200px;
+      z-index: 100;
+      padding: 0.375rem 0;
+      overflow: hidden;
+    }
+
+    .dropdown-menu.open {
+      display: block;
+    }
+
+    .dropdown-item {
+      display: block;
+      padding: 0.625rem 1rem;
+      color: #333;
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .dropdown-item:hover {
+      background: #f0f7f2;
+      color: #1e5631;
+    }
+
+    .dropdown-divider {
+      height: 1px;
+      background: #f0f0f0;
+      margin: 0.25rem 0;
     }
 
     /* Filter Card */
@@ -902,6 +979,21 @@ function getSortIndicator(column: string): string {
       }
     }
   </style>
+
+  <script is:inline>
+    // Dropdown toggle
+    const dropdownBtn = document.getElementById('actions-dropdown-btn');
+    const dropdownMenu = document.getElementById('actions-dropdown-menu');
+
+    dropdownBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdownMenu.classList.toggle('open');
+    });
+
+    document.addEventListener('click', () => {
+      dropdownMenu.classList.remove('open');
+    });
+  </script>
 
   <script is:inline define:vars={{ sortBy, sortDir }}>
     // Store current sort in localStorage for persistence

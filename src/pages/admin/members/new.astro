@@ -64,6 +64,7 @@ if (Astro.request.method === 'POST') {
   member.account_balance = 0;
   member.competition_fee_purse = 0;
   member.home_club = member.home_club || 'Alnmouth Village';
+  member.default_payment_method = member.default_payment_method || 'Over the Till';
 
   const columns = Object.keys(member);
   const placeholders = columns.map(() => '?').join(', ');
@@ -307,7 +308,7 @@ const today = new Date().toISOString().split('T')[0];
               <select name="default_payment_method" id="default_payment_method">
                 <option value="">-</option>
                 {PAYMENT_METHODS.map(pm => (
-                  <option value={pm}>{pm}</option>
+                  <option value={pm} selected={pm === 'Over the Till'}>{pm}</option>
                 ))}
               </select>
             </div>

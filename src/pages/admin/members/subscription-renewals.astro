@@ -1,0 +1,619 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { isEmailConfigured, getEmailConfigStatus } from '../../../lib/email';
+
+const db = Astro.locals.runtime.env.DB;
+const env = Astro.locals.runtime.env;
+const user = Astro.locals.user;
+
+const currentYear = new Date().getFullYear();
+
+// Check email config
+const emailConfigured = isEmailConfigured(env);
+const emailStatus = getEmailConfigStatus(env);
+
+// Count members in each group
+const allWithEmail = await db.prepare(
+  `SELECT COUNT(*) as count FROM members WHERE email IS NOT NULL AND email <> ''`
+).first<{ count: number }>();
+
+const ddPayers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE default_payment_method = 'Clubwise Direct Debit'
+     AND email IS NOT NULL AND email <> ''`
+).first<{ count: number }>();
+
+const bacsPayers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE default_payment_method IN ('BACS', 'Over the Till', 'Standing Order', 'Cheque')
+     AND LOWER(category) NOT LIKE '%social%'
+     AND email IS NOT NULL AND email <> ''`
+).first<{ count: number }>();
+
+const socialMembers = await db.prepare(
+  `SELECT COUNT(*) as count FROM members
+   WHERE LOWER(category) LIKE '%social%'
+     AND email IS NOT NULL AND email <> ''`
+).first<{ count: number }>();
+
+const adminEmail = user?.email || '';
+---
+
+<AdminLayout title="Subscription Renewals">
+  <div class="page-header">
+    <div class="header-left">
+      <a href="/admin/members" class="back-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Members
+      </a>
+      <h1>Subscription Renewals</h1>
+    </div>
+    <div class="header-right">
+      <label class="year-label">
+        Year
+        <input type="number" id="renewal-year" value={currentYear} min="2024" max="2030" class="year-input" />
+      </label>
+    </div>
+  </div>
+
+  {!emailConfigured && (
+    <div class="alert alert-warning">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      Email is not configured. {emailStatus.details}
+    </div>
+  )}
+
+  <!-- Inbox Status -->
+  <div class="inbox-card" id="inbox-card">
+    <div class="inbox-content">
+      <a href="#" id="owa-link" target="_blank" class="btn btn-secondary inbox-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+          <polyline points="22,6 12,13 2,6"/>
+        </svg>
+        Open Inbox
+      </a>
+      <div class="inbox-stats">
+        <span class="inbox-stat" id="unread-stat">
+          <span class="stat-num" id="unread-count">-</span> Unread
+        </span>
+        <span class="inbox-stat bounced" id="bounced-stat">
+          <span class="stat-num" id="bounced-count">-</span> Bounced
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Cards -->
+  <div class="batch-cards">
+
+    <!-- 1. General Fees Notice -->
+    <div class="batch-card" id="batch-fees">
+      <div class="batch-header">
+        <div class="batch-number">1</div>
+        <div class="batch-info">
+          <h3>General Fees Notice</h3>
+          <p>All members with email ({allWithEmail?.count || 0} members)</p>
+        </div>
+        <div class="batch-status" id="status-fees">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-fees" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-fees"></div></div>
+        <span class="progress-text" id="text-fees"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('fees', true)" {!emailConfigured && 'disabled'}>
+          Send Test
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('fees', false)" {!emailConfigured && 'disabled'}>
+          Send to All
+        </button>
+      </div>
+    </div>
+
+    <!-- 2. DD Renewal Notices -->
+    <div class="batch-card" id="batch-dd">
+      <div class="batch-header">
+        <div class="batch-number">2</div>
+        <div class="batch-info">
+          <h3>DD Renewal Notices</h3>
+          <p>Clubwise Direct Debit payers ({ddPayers?.count || 0} members)</p>
+        </div>
+        <div class="batch-status" id="status-dd">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-dd" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-dd"></div></div>
+        <span class="progress-text" id="text-dd"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('dd', true)" {!emailConfigured && 'disabled'}>
+          Send Test
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('dd', false)" {!emailConfigured && 'disabled'}>
+          Send to All
+        </button>
+      </div>
+    </div>
+
+    <!-- 3. BACS / Other Payment Renewal -->
+    <div class="batch-card" id="batch-bacs">
+      <div class="batch-header">
+        <div class="batch-number">3</div>
+        <div class="batch-info">
+          <h3>BACS / Other Payment Renewal</h3>
+          <p>BACS, OTT, Standing Order, Cheque ({bacsPayers?.count || 0} members)</p>
+        </div>
+        <div class="batch-status" id="status-bacs">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-bacs" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-bacs"></div></div>
+        <span class="progress-text" id="text-bacs"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('bacs', true)" {!emailConfigured && 'disabled'}>
+          Send Test
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('bacs', false)" {!emailConfigured && 'disabled'}>
+          Send to All
+        </button>
+        <a href="/documents/dd-mandate-form.pdf" target="_blank" class="btn btn-secondary btn-sm dd-mandate-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          DD Mandate Form
+        </a>
+      </div>
+    </div>
+
+    <!-- 4. Social Membership Renewal -->
+    <div class="batch-card" id="batch-social">
+      <div class="batch-header">
+        <div class="batch-number">4</div>
+        <div class="batch-info">
+          <h3>Social Membership Renewal</h3>
+          <p>Social members ({socialMembers?.count || 0} members)</p>
+        </div>
+        <div class="batch-status" id="status-social">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-social" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-social"></div></div>
+        <span class="progress-text" id="text-social"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('social', true)" {!emailConfigured && 'disabled'}>
+          Send Test
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('social', false)" {!emailConfigured && 'disabled'}>
+          Send to All
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <style>
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-link {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      color: #666;
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .back-link:hover { color: #1e5631; }
+
+    .back-link svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .year-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #666;
+    }
+
+    .year-input {
+      width: 90px;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .year-input:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    /* Alert */
+    .alert {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .alert-warning {
+      background: #fff3e0;
+      color: #e65100;
+      border: 1px solid #ffcc80;
+    }
+
+    /* Inbox Card */
+    .inbox-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .inbox-content {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .inbox-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .inbox-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .inbox-stats {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .inbox-stat {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      font-size: 0.9rem;
+      color: #666;
+    }
+
+    .stat-num {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #1a1a1a;
+    }
+
+    .inbox-stat.bounced .stat-num {
+      color: #c62828;
+    }
+
+    /* Batch Cards */
+    .batch-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .batch-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      padding: 1.25rem;
+    }
+
+    .batch-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .batch-number {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .batch-info {
+      flex: 1;
+    }
+
+    .batch-info h3 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .batch-info p {
+      margin: 0.125rem 0 0 0;
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .batch-status {
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: #f0f0f0;
+      color: #666;
+      white-space: nowrap;
+    }
+
+    .batch-status.sending {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+
+    .batch-status.done {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .batch-status.error {
+      background: #ffebee;
+      color: #c62828;
+    }
+
+    .batch-progress {
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-bar {
+      height: 6px;
+      background: #e8e8e8;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 0.375rem;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #1e5631, #2d7a45);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+
+    .progress-text {
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    .batch-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .dd-mandate-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      margin-left: auto;
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .batch-header {
+        flex-wrap: wrap;
+      }
+
+      .batch-actions {
+        flex-direction: column;
+      }
+
+      .dd-mandate-link {
+        margin-left: 0;
+      }
+    }
+  </style>
+
+  <script is:inline define:vars={{ adminEmail }}>
+    const ENDPOINTS = {
+      fees: '/api/send-fees-notification',
+      dd: '/api/send-dd-renewal',
+      bacs: '/api/send-bacs-renewal',
+      social: '/api/send-social-renewal',
+    };
+
+    function getYear() {
+      return parseInt(document.getElementById('renewal-year').value) || new Date().getFullYear();
+    }
+
+    // Load inbox status
+    async function loadInboxStatus() {
+      try {
+        const res = await fetch('/api/inbox-status');
+        const data = await res.json();
+        document.getElementById('unread-count').textContent = data.unreadCount ?? '-';
+        document.getElementById('bounced-count').textContent = data.bouncedCount ?? '-';
+        if (data.owaLink) {
+          document.getElementById('owa-link').href = data.owaLink;
+        }
+      } catch (e) {
+        // Silently fail - inbox status is non-critical
+      }
+    }
+    loadInboxStatus();
+
+    async function sendBatch(type, isTest) {
+      const year = getYear();
+      const endpoint = ENDPOINTS[type];
+      if (!endpoint) return;
+
+      const statusEl = document.getElementById('status-' + type);
+      const progressEl = document.getElementById('progress-' + type);
+      const fillEl = document.getElementById('fill-' + type);
+      const textEl = document.getElementById('text-' + type);
+
+      if (isTest) {
+        // Test mode - send to admin email
+        statusEl.textContent = 'Sending test...';
+        statusEl.className = 'batch-status sending';
+
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ testEmail: adminEmail, year }),
+          });
+          const data = await res.json();
+
+          if (data.success || data.sentTo) {
+            statusEl.textContent = 'Test sent';
+            statusEl.className = 'batch-status done';
+            const msg = data.sampleMember
+              ? `Test sent to ${adminEmail} using ${data.sampleMember}'s data`
+              : `Test sent to ${adminEmail}`;
+            await m3Alert(msg, { title: 'Test Email Sent', type: 'success' });
+          } else {
+            statusEl.textContent = 'Test failed';
+            statusEl.className = 'batch-status error';
+            await m3Alert(data.error || 'Unknown error', { title: 'Test Failed', type: 'error' });
+          }
+        } catch (e) {
+          statusEl.textContent = 'Error';
+          statusEl.className = 'batch-status error';
+          await m3Alert(e.message, { title: 'Error', type: 'error' });
+        }
+
+        return;
+      }
+
+      // Bulk mode - confirm first
+      const typeLabels = {
+        fees: 'general fees notification',
+        dd: 'DD renewal notice',
+        bacs: 'BACS/OTT renewal notice',
+        social: 'Social renewal notice',
+      };
+
+      const confirmed = await m3Confirm(
+        `This will send the ${typeLabels[type]} to ALL eligible members for ${year}. This cannot be undone.`,
+        {
+          title: 'Send to All?',
+          type: 'warning',
+          confirmText: 'Send to All',
+          cancelText: 'Cancel',
+        }
+      );
+
+      if (!confirmed) return;
+
+      statusEl.textContent = 'Sending...';
+      statusEl.className = 'batch-status sending';
+      progressEl.style.display = 'block';
+      fillEl.style.width = '10%';
+      textEl.textContent = 'Sending emails...';
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ year }),
+        });
+        const data = await res.json();
+
+        fillEl.style.width = '100%';
+
+        if (data.sent !== undefined) {
+          const total = data.total || (data.sent + data.failed);
+          textEl.textContent = `${data.sent} sent, ${data.failed || 0} failed of ${total}`;
+
+          if (data.failed > 0) {
+            statusEl.textContent = `Done (${data.failed} errors)`;
+            statusEl.className = 'batch-status error';
+          } else {
+            statusEl.textContent = 'Done';
+            statusEl.className = 'batch-status done';
+          }
+        } else if (data.error) {
+          textEl.textContent = data.error;
+          statusEl.textContent = 'Error';
+          statusEl.className = 'batch-status error';
+        } else {
+          statusEl.textContent = 'Done';
+          statusEl.className = 'batch-status done';
+          textEl.textContent = 'Complete';
+        }
+      } catch (e) {
+        fillEl.style.width = '100%';
+        fillEl.style.background = '#c62828';
+        textEl.textContent = e.message;
+        statusEl.textContent = 'Error';
+        statusEl.className = 'batch-status error';
+      }
+    }
+  </script>
+</AdminLayout>

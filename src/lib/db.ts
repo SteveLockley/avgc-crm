@@ -49,6 +49,7 @@ export interface Member {
   user_field_3: string | null;
   account_id: string | null;
   direct_debit_member_id: string | null;
+  family_payer_id: number | null;
   created_at: string;
   updated_at: string;
 }

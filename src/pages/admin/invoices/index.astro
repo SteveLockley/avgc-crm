@@ -338,6 +338,13 @@ function buildQueryString(pageNum: number): string {
           </svg>
           Delete Selected
         </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="bulk-resend-btn" disabled onclick="resendSelected()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          Resend Selected
+        </button>
         <span id="selected-count" class="selected-count">0 selected</span>
       </div>
 
@@ -1286,21 +1293,28 @@ function buildQueryString(pageNum: number): string {
     const selectedCount = document.getElementById('selected-count');
     const selectedIdsInput = document.getElementById('selected-invoice-ids') as HTMLInputElement;
     const deleteBtn = document.getElementById('bulk-delete-btn') as HTMLButtonElement;
+    const resendBtn = document.getElementById('bulk-resend-btn') as HTMLButtonElement;
 
     function updateSelection() {
       const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
       const deletableSelected = Array.from(selected).filter(cb =>
         cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
       );
+      const resendableSelected = Array.from(selected).filter(cb =>
+        cb.dataset.status === 'sent'
+      );
 
       if (selectedCount) {
-        selectedCount.textContent = `${selected.length} selected (${deletableSelected.length} deletable)`;
+        selectedCount.textContent = `${selected.length} selected (${deletableSelected.length} deletable, ${resendableSelected.length} resendable)`;
       }
       if (selectedIdsInput) {
         selectedIdsInput.value = Array.from(selected).map(cb => cb.value).join(',');
       }
       if (deleteBtn) {
         deleteBtn.disabled = deletableSelected.length === 0;
+      }
+      if (resendBtn) {
+        resendBtn.disabled = resendableSelected.length === 0;
       }
     }
 
@@ -1337,5 +1351,56 @@ function buildQueryString(pageNum: number): string {
         (e.target as HTMLFormElement).submit();
       }
     });
+
+    // Resend selected invoices
+    async function resendSelected() {
+      const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
+      const resendableIds = Array.from(selected)
+        .filter(cb => cb.dataset.status === 'sent')
+        .map(cb => parseInt(cb.value));
+
+      if (resendableIds.length === 0) return;
+
+      const confirmed = await (window as any).m3Confirm(
+        `Resend ${resendableIds.length} invoice(s) to their respective members?`,
+        {
+          title: 'Resend Invoices?',
+          type: 'warning',
+          confirmText: 'Resend',
+          cancelText: 'Cancel',
+        }
+      );
+
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch('/api/resend-invoices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceIds: resendableIds }),
+        });
+        const data = await response.json();
+
+        if (data.sent > 0) {
+          await (window as any).m3Alert(
+            `${data.sent} invoice(s) resent successfully${data.failed > 0 ? `, ${data.failed} failed` : ''}.`,
+            { title: 'Resend Complete', type: data.failed > 0 ? 'warning' : 'success' }
+          );
+        } else {
+          await (window as any).m3Alert(
+            data.error || 'No invoices were resent.',
+            { title: 'Resend Failed', type: 'error' }
+          );
+        }
+      } catch (error: any) {
+        await (window as any).m3Alert(
+          'Resend failed: ' + error.message,
+          { title: 'Error', type: 'error' }
+        );
+      }
+    }
+
+    // Expose to window for onclick
+    (window as any).resendSelected = resendSelected;
   </script>
 </AdminLayout>

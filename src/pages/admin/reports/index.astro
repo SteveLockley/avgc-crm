@@ -121,14 +121,13 @@ const recentJoins = await db.prepare(`
   WHERE date_joined >= date('now', '-30 days')
 `).first();
 
-// Payment method breakdown
+// Payment method breakdown (including members with no payment method)
 const paymentMethodStats = await db.prepare(`
   SELECT
-    default_payment_method,
+    COALESCE(default_payment_method, 'Not Set') as default_payment_method,
     COUNT(*) as count
   FROM members
-  WHERE default_payment_method IS NOT NULL
-  GROUP BY default_payment_method
+  GROUP BY COALESCE(default_payment_method, 'Not Set')
   ORDER BY count DESC
 `).all();
 
@@ -445,12 +444,18 @@ const handicapStats = await db.prepare(`
         </div>
         <div class="card-content">
           <div class="method-list">
-            {paymentMethodStats.results?.map((pm) => (
-              <div class="method-item">
-                <span class="method-name">{pm.default_payment_method}</span>
-                <span class="method-count">{pm.count} members</span>
-              </div>
-            ))}
+            {paymentMethodStats.results?.map((pm) => {
+              const methodValue = pm.default_payment_method as string;
+              const filterParam = methodValue === 'Not Set'
+                ? '/admin/members?payment_method=none'
+                : `/admin/members?payment_method=${encodeURIComponent(methodValue)}`;
+              return (
+                <a href={filterParam} class="method-item method-link">
+                  <span class="method-name">{methodValue}</span>
+                  <span class="method-count">{pm.count} members</span>
+                </a>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -837,12 +842,22 @@ const handicapStats = await db.prepare(`
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.625rem 0;
+      padding: 0.625rem 0.75rem;
       border-bottom: 1px solid #f0f0f0;
+      border-radius: 8px;
     }
 
     .method-item:last-child {
       border-bottom: none;
+    }
+
+    .method-link {
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+
+    .method-link:hover {
+      background: #f0f7f0;
     }
 
     .method-name {
