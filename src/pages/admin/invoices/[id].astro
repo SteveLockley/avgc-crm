@@ -57,12 +57,12 @@ if (Astro.request.method === 'POST') {
       `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
 
-    // Decrement member's balance — debt is now settled
+    // Decrement member's balance and set renewal date
     await db.prepare(
-      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      `UPDATE members SET account_balance = account_balance - ?, date_renewed = date('now') WHERE id = ?`
     ).bind(invoice.total, invoice.member_id).run();
 
-    success = 'Invoice marked as paid and member balance adjusted';
+    success = 'Invoice marked as paid, renewal date updated, and member balance adjusted';
 
     // Refresh invoice data
     const refreshed = await db.prepare(
@@ -156,7 +156,15 @@ if (Astro.request.method === 'POST') {
       ).bind(invoice.total, invoice.member_id).run();
     }
 
-    // Delete invoice items first
+    // Delete associated payment line items and payments
+    await db.prepare(
+      `DELETE FROM payment_line_items WHERE payment_id IN (SELECT id FROM payments WHERE invoice_id = ?)`
+    ).bind(id).run();
+    await db.prepare(
+      `DELETE FROM payments WHERE invoice_id = ?`
+    ).bind(id).run();
+
+    // Delete invoice items
     await db.prepare(
       `DELETE FROM invoice_items WHERE invoice_id = ?`
     ).bind(id).run();
@@ -166,6 +174,11 @@ if (Astro.request.method === 'POST') {
       `DELETE FROM invoices WHERE id = ?`
     ).bind(id).run();
 
+    // Nullify the member's renewal date
+    await db.prepare(
+      `UPDATE members SET date_renewed = NULL WHERE id = ?`
+    ).bind(invoice.member_id).run();
+
     // Log action
     await db.prepare(
       `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
@@ -173,7 +186,7 @@ if (Astro.request.method === 'POST') {
     ).bind(user?.email || 'system', id, JSON.stringify({ invoice_number: invoice.invoice_number })).run();
 
     // Redirect to invoices list
-    return Astro.redirect('/invoices?deleted=1');
+    return Astro.redirect('/admin/invoices?deleted=1');
   }
 
   // Log action

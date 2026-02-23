@@ -63,7 +63,7 @@ const payments = await db.prepare(
    JOIN members m ON p.member_id = m.id
    LEFT JOIN invoices i ON p.invoice_id = i.id
    WHERE ${whereClause}
-   ORDER BY p.payment_date DESC, p.created_at DESC
+   ORDER BY m.surname, m.first_name, p.payment_date DESC
    LIMIT ? OFFSET ?`
 ).bind(...params, perPage, offset).all();
 

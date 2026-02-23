@@ -89,11 +89,11 @@ const totalPages = Math.ceil(totalCount / perPage);
 
 // Get invoices
 const invoices = await db.prepare(
-  `SELECT i.*, m.first_name, m.surname, m.email, m.pin
+  `SELECT i.*, m.first_name, m.surname, m.email, m.pin, m.default_payment_method
    FROM invoices i
    JOIN members m ON i.member_id = m.id
    WHERE ${whereClause}
-   ORDER BY i.created_at DESC
+   ORDER BY m.surname, m.first_name, i.created_at DESC
    LIMIT ? OFFSET ?`
 ).bind(...params, perPage, offset).all();
 
@@ -205,32 +205,6 @@ function buildQueryString(pageNum: number): string {
       </div>
     </a>
 
-    <a href="/admin/invoices?status=draft" class="stat-card stat-draft">
-      <div class="stat-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-        </svg>
-      </div>
-      <div class="stat-content">
-        <span class="stat-value">{statusCountMap['draft'] || 0}</span>
-        <span class="stat-label">Draft</span>
-      </div>
-    </a>
-
-    <a href="/admin/invoices?status=sent" class="stat-card stat-sent">
-      <div class="stat-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="22" y1="2" x2="11" y2="13"/>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-        </svg>
-      </div>
-      <div class="stat-content">
-        <span class="stat-value">{statusCountMap['sent'] || 0}</span>
-        <span class="stat-label">Sent</span>
-      </div>
-    </a>
-
     <a href="/admin/invoices?status=paid" class="stat-card stat-paid">
       <div class="stat-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -241,6 +215,20 @@ function buildQueryString(pageNum: number): string {
       <div class="stat-content">
         <span class="stat-value">{statusCountMap['paid'] || 0}</span>
         <span class="stat-label">Paid</span>
+      </div>
+    </a>
+
+    <a href="/admin/invoices?status=cancelled" class="stat-card stat-cancelled">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{statusCountMap['cancelled'] || 0}</span>
+        <span class="stat-label">Cancelled</span>
       </div>
     </a>
   </div>
@@ -264,9 +252,8 @@ function buildQueryString(pageNum: number): string {
           <label class="filter-label">Status</label>
           <select name="status" class="filter-select">
             <option value="">All Statuses</option>
-            {INVOICE_STATUSES.map(s => (
-              <option value={s} selected={status === s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-            ))}
+            <option value="paid" selected={status === 'paid'}>Paid</option>
+            <option value="cancelled" selected={status === 'cancelled'}>Cancelled</option>
           </select>
         </div>
 
@@ -360,6 +347,7 @@ function buildQueryString(pageNum: number): string {
               <th>Period</th>
               <th>Date</th>
               <th>Status</th>
+              <th>Payment Method</th>
               <th class="text-right">Total</th>
               <th class="actions-col">Actions</th>
             </tr>
@@ -395,6 +383,7 @@ function buildQueryString(pageNum: number): string {
                     {invoice.status}
                   </span>
                 </td>
+                <td class="method-cell">{invoice.default_payment_method || '—'}</td>
                 <td class="text-right amount-cell">
                   {formatCurrency(invoice.total)}
                 </td>
@@ -414,13 +403,22 @@ function buildQueryString(pageNum: number): string {
                         </svg>
                       </a>
                     )}
+                    <button type="button" class="action-btn danger" title="Delete" onclick={`deleteInvoice(${invoice.id}, '${invoice.invoice_number}')`}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M10 11v6"/>
+                        <path d="M14 11v6"/>
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                      </svg>
+                    </button>
                   </div>
                 </td>
               </tr>
             ))}
             {(!invoices.results || invoices.results.length === 0) && (
               <tr>
-                <td colspan="8" class="empty-row">
+                <td colspan="9" class="empty-row">
                   <div class="empty-state">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -500,19 +498,20 @@ function buildQueryString(pageNum: number): string {
           </svg>
           Invoice Settings
         </a>
-        <a href="/admin/invoices?status=draft" class="action-link">
+        <a href="/admin/invoices?status=paid" class="action-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
           </svg>
-          View Draft Invoices
+          View Paid Invoices
         </a>
-        <a href="/admin/invoices?status=sent" class="action-link">
+        <a href="/admin/invoices?status=cancelled" class="action-link">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
           </svg>
-          View Sent Invoices
+          View Cancelled Invoices
         </a>
       </div>
     </div>
@@ -590,7 +589,7 @@ function buildQueryString(pageNum: number): string {
     /* Stats Row */
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 1rem;
       margin-bottom: 1.5rem;
     }
@@ -630,9 +629,8 @@ function buildQueryString(pageNum: number): string {
       color: #fff;
     }
 
-    .stat-draft .stat-icon { background: linear-gradient(135deg, #6c757d 0%, #868e96 100%); }
-    .stat-sent .stat-icon { background: linear-gradient(135deg, #0d6efd 0%, #3d8bfd 100%); }
     .stat-paid .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+    .stat-cancelled .stat-icon { background: linear-gradient(135deg, #c62828 0%, #e53935 100%); }
 
     .stat-content {
       display: flex;
@@ -1055,6 +1053,18 @@ function buildQueryString(pageNum: number): string {
       background: #164024;
     }
 
+    .action-btn.danger {
+      color: #999;
+      cursor: pointer;
+      border: none;
+      font: inherit;
+    }
+
+    .action-btn.danger:hover {
+      background: #ffebee;
+      color: #c62828;
+    }
+
     .action-btn svg {
       width: 16px;
       height: 16px;
@@ -1191,7 +1201,7 @@ function buildQueryString(pageNum: number): string {
 
     .quick-actions {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 0.75rem;
     }
 
@@ -1402,5 +1412,30 @@ function buildQueryString(pageNum: number): string {
 
     // Expose to window for onclick
     (window as any).resendSelected = resendSelected;
+
+    async function deleteInvoice(invoiceId: number, invoiceNumber: string) {
+      const confirmed = await (window as any).m3Confirm(
+        `Delete invoice ${invoiceNumber} and all associated payments? This will also clear the member's renewal date. This cannot be undone.`,
+        { title: 'Delete Invoice?', type: 'warning', confirmText: 'Delete', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch('/api/delete-invoice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          window.location.reload();
+        } else {
+          await (window as any).m3Alert(data.error || 'Delete failed', { title: 'Error', type: 'error' });
+        }
+      } catch (e: any) {
+        await (window as any).m3Alert(e.message, { title: 'Error', type: 'error' });
+      }
+    }
+    (window as any).deleteInvoice = deleteInvoice;
   </script>
 </AdminLayout>

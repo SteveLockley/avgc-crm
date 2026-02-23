@@ -231,8 +231,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       }
 
-      // For DD invoices: create payment record + payment line items
+      // For DD invoices: create payment record + payment line items + set renewal date
       if (isDD) {
+        await env.DB.prepare(
+          `UPDATE members SET date_renewed = ? WHERE id = ?`
+        ).bind(periodStart, member.id).run();
+
         const paymentResult = await env.DB.prepare(
           `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
            VALUES (?, ?, ?, ?, 'Clubwise Direct Debit', 'subscription', ?, 'Auto-recorded from DD renewal', 'renewal-batch')`
