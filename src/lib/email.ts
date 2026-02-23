@@ -204,16 +204,17 @@ export async function sendEmail(
       ],
     };
 
-    // Always set the from field with the club display name
-    // When using service account and sending from a different address (shared mailbox),
-    // or when using client credentials, ensure the sender shows as "Alnmouth Village Golf Club"
+    // Always set the from and sender fields with the club display name
+    // Both fields are set to maximise compatibility across email clients
     if (!options.useServiceAccountMailbox) {
-      message.from = {
+      const clubSender = {
         emailAddress: {
           name: 'Alnmouth Village Golf Club',
           address: sharedMailbox,
         },
       };
+      message.from = clubSender;
+      message.sender = clubSender;
     }
 
     const response = await fetch(
