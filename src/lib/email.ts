@@ -204,11 +204,13 @@ export async function sendEmail(
       ],
     };
 
-    // If using service account and sending from a different address (shared mailbox),
-    // set the "from" field to the shared mailbox (unless useServiceAccountMailbox is true for testing)
-    if (useServiceAccount && !options.useServiceAccountMailbox && sharedMailbox.toLowerCase() !== env.AZURE_SERVICE_USER!.toLowerCase()) {
+    // Always set the from field with the club display name
+    // When using service account and sending from a different address (shared mailbox),
+    // or when using client credentials, ensure the sender shows as "Alnmouth Village Golf Club"
+    if (!options.useServiceAccountMailbox) {
       message.from = {
         emailAddress: {
+          name: 'Alnmouth Village Golf Club',
           address: sharedMailbox,
         },
       };
