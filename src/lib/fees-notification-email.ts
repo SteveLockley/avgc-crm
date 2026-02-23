@@ -55,7 +55,16 @@ export function generateFeesNotificationEmail(year: number): string {
                 Dear Member,
               </p>
               <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
-                Please find below the membership fees and renewal information for the ${year}/${year + 1} season.
+                The club can confirm that the Annual Subscriptions have been agreed for the next playing year ${year}/${year + 1}. A small (around 7%) increase has been agreed upon in order to cover ever increasing running costs for both the Golf Course and the Club House.
+              </p>
+              <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                We hope you can understand that in order to keep our course in such condition we are accustomed to, and provide a high level of service within the clubhouse we must raise our annual fees slightly.
+              </p>
+              <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                We thank you for being a part of such a historic club and would love for you to rejoin us for next season.
+              </p>
+              <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
+                Please see below the Annual Membership Fees for the ${year}/${year + 1} season.
               </p>
             </td>
           </tr>
