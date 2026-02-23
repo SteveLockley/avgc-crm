@@ -92,6 +92,14 @@ const contentSections = [
     icon: 'pound',
     count: stats.greenFees,
     countLabel: 'fee rates'
+  },
+  {
+    title: 'Google Business Profile',
+    description: 'Manage Google Business listing, special hours, and sync status',
+    href: '/admin/content/google-business',
+    icon: 'map-pin',
+    count: null,
+    countLabel: ''
   }
 ];
 
@@ -103,6 +111,7 @@ const icons: Record<string, string> = {
   'folder': '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   'clock': '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   'pound': '<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'map-pin': '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
   'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'
 };
 ---
@@ -125,7 +134,9 @@ const icons: Record<string, string> = {
             <h2>{section.title}</h2>
             <p>{section.description}</p>
             <div class="card-footer">
-              <span class="card-count">{section.count} {section.countLabel}</span>
+              {section.count !== null && (
+                <span class="card-count">{section.count} {section.countLabel}</span>
+              )}
               <span class="card-link">
                 Manage
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

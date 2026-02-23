@@ -102,6 +102,49 @@ const outstandingBalances = await db.prepare(`
   FROM members
 `).first();
 
+// Monthly subscription revenue (Apr-Mar membership year)
+// Use the membership year that contains "now" - if before April, use previous year
+const now = new Date();
+const membershipYearStart = now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear();
+const membershipYearEnd = membershipYearStart + 1;
+const aprStart = `${membershipYearStart}-04-01`;
+const marEnd = `${membershipYearEnd}-03-31`;
+
+const monthlySubRevenue = await db.prepare(`
+  SELECT
+    strftime('%Y-%m', p.payment_date) as month,
+    SUM(pli.amount) as total
+  FROM payment_line_items pli
+  JOIN payments p ON pli.payment_id = p.id
+  JOIN invoices i ON p.invoice_id = i.id
+  WHERE pli.description LIKE '%subscription%'
+    AND p.payment_date >= ?
+    AND p.payment_date <= ?
+  GROUP BY strftime('%Y-%m', p.payment_date)
+  ORDER BY month
+`).bind(aprStart, marEnd).all();
+
+// Build full 12-month array (Apr-Mar) with zero-fill for months with no data
+const MONTH_LABELS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+const subRevenueMap: Record<string, number> = {};
+for (const row of (monthlySubRevenue.results || []) as any[]) {
+  subRevenueMap[row.month] = row.total;
+}
+
+const subRevenueData: { label: string; key: string; value: number }[] = [];
+for (let i = 0; i < 12; i++) {
+  const monthNum = ((3 + i) % 12) + 1; // Apr=4, May=5, ..., Mar=3
+  const yr = monthNum <= 3 ? membershipYearEnd : membershipYearStart;
+  const key = `${yr}-${String(monthNum).padStart(2, '0')}`;
+  subRevenueData.push({
+    label: MONTH_LABELS[i],
+    key,
+    value: subRevenueMap[key] || 0,
+  });
+}
+const maxSubRevenue = Math.max(...subRevenueData.map(d => d.value), 1);
+const totalSubRevenue = subRevenueData.reduce((sum, d) => sum + d.value, 0);
+
 // Age group breakdown
 const ageStats = await db.prepare(`
   SELECT
@@ -327,6 +370,40 @@ const handicapStats = await db.prepare(`
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Subscription Revenue Chart -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span>Subscription Revenue</span>
+          </div>
+          <span class="card-badge">{membershipYearStart}/{membershipYearEnd}</span>
+        </div>
+        <div class="card-content">
+          <div class="chart-total">
+            Total: <strong>{formatCurrency(totalSubRevenue)}</strong>
+          </div>
+          <div class="bar-chart">
+            {subRevenueData.map((d) => (
+              <div class="bar-col">
+                <div class="bar-value">{d.value > 0 ? formatCurrency(d.value) : ''}</div>
+                <div class="bar-track">
+                  <div class="bar-fill" style={`height: ${maxSubRevenue > 0 ? (d.value / maxSubRevenue) * 100 : 0}%`}></div>
+                </div>
+                <div class="bar-label">{d.label}</div>
+              </div>
+            ))}
+          </div>
+          {totalSubRevenue === 0 && (
+            <div class="empty-row" style="text-align: center; color: #999; padding: 1rem;">No subscription payments recorded for this period</div>
+          )}
         </div>
       </div>
 
@@ -908,6 +985,69 @@ const handicapStats = await db.prepare(`
       width: 20px;
       height: 20px;
       flex-shrink: 0;
+    }
+
+    /* Bar Chart */
+    .chart-total {
+      font-size: 0.9rem;
+      color: #666;
+      margin-bottom: 1rem;
+      text-align: right;
+    }
+
+    .chart-total strong {
+      color: #1e5631;
+      font-size: 1.1rem;
+    }
+
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 220px;
+    }
+
+    .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+    }
+
+    .bar-value {
+      font-size: 0.6rem;
+      color: #666;
+      font-weight: 600;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      min-height: 14px;
+    }
+
+    .bar-track {
+      flex: 1;
+      width: 100%;
+      max-width: 48px;
+      display: flex;
+      align-items: flex-end;
+      background: #f0f0f0;
+      border-radius: 4px 4px 0 0;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      width: 100%;
+      background: linear-gradient(180deg, #1e5631 0%, #2d7a45 100%);
+      border-radius: 4px 4px 0 0;
+      min-height: 2px;
+      transition: height 0.3s ease;
+    }
+
+    .bar-label {
+      font-size: 0.75rem;
+      color: #666;
+      font-weight: 500;
+      margin-top: 6px;
     }
 
     /* Responsive */

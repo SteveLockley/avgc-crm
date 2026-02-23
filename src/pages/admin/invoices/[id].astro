@@ -56,7 +56,13 @@ if (Astro.request.method === 'POST') {
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
-    success = 'Invoice marked as paid';
+
+    // Decrement member's balance — debt is now settled
+    await db.prepare(
+      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+    ).bind(invoice.total, invoice.member_id).run();
+
+    success = 'Invoice marked as paid and member balance adjusted';
 
     // Refresh invoice data
     const refreshed = await db.prepare(
@@ -68,25 +74,54 @@ if (Astro.request.method === 'POST') {
     await db.prepare(
       `UPDATE invoices SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
-    success = 'Invoice cancelled';
+
+    // Decrement member's outstanding balance by the invoice total
+    await db.prepare(
+      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+    ).bind(invoice.total, invoice.member_id).run();
+
+    success = 'Invoice cancelled and member balance adjusted';
 
     const refreshed = await db.prepare(
       `SELECT * FROM invoices WHERE id = ?`
     ).bind(id).first<Invoice>();
     if (refreshed) Object.assign(invoice, refreshed);
 
+    // Refresh member data too
+    const refreshedMember = await db.prepare(
+      `SELECT * FROM members WHERE id = ?`
+    ).bind(invoice.member_id).first<Member>();
+    if (refreshedMember) Object.assign(member, refreshedMember);
+
   } else if (action === 'revert_draft') {
+    // Re-add the invoice total to the member's balance since it's outstanding again
+    await db.prepare(
+      `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+    ).bind(invoice.total, invoice.member_id).run();
+
     await db.prepare(
       `UPDATE invoices SET status = 'draft', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
-    success = 'Invoice reverted to draft';
+    success = 'Invoice reverted to draft and member balance adjusted';
 
     const refreshed = await db.prepare(
       `SELECT * FROM invoices WHERE id = ?`
     ).bind(id).first<Invoice>();
     if (refreshed) Object.assign(invoice, refreshed);
 
+    const refreshedMember = await db.prepare(
+      `SELECT * FROM members WHERE id = ?`
+    ).bind(invoice.member_id).first<Member>();
+    if (refreshedMember) Object.assign(member, refreshedMember);
+
   } else if (action === 'delete') {
+    // If deleting a non-cancelled invoice, decrement the member's balance
+    if (invoice.status !== 'cancelled') {
+      await db.prepare(
+        `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      ).bind(invoice.total, invoice.member_id).run();
+    }
+
     // Delete invoice items first
     await db.prepare(
       `DELETE FROM invoice_items WHERE invoice_id = ?`

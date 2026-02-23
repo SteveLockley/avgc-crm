@@ -5,7 +5,7 @@
 import type { APIRoute } from 'astro';
 
 const SHARED_MAILBOX = 'subscriptions@AlnmouthVillage.Golf';
-const OWA_LINK = `https://outlook.office365.com/mail/subscriptions@AlnmouthVillage.Golf/`;
+const OWA_LINK = `https://outlook.office365.com/mail/`;
 
 async function getGraphToken(env: any): Promise<string> {
   // Use ROPC if service account is configured, otherwise client credentials
