@@ -158,15 +158,6 @@ function buildQueryString(pageNum: number): string {
         </svg>
         Settings
       </a>
-      <a href="/admin/invoices/generate" class="btn btn-primary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="12" y1="18" x2="12" y2="12"/>
-          <line x1="9" y1="15" x2="15" y2="15"/>
-        </svg>
-        Generate Invoices
-      </a>
     </div>
   </div>
 
@@ -425,7 +416,6 @@ function buildQueryString(pageNum: number): string {
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p>No invoices found</p>
-                    <a href="/admin/invoices/generate" class="btn btn-primary btn-sm">Generate Invoices</a>
                   </div>
                 </td>
               </tr>
@@ -470,52 +460,6 @@ function buildQueryString(pageNum: number): string {
     )}
   </div>
 
-  <!-- Quick Actions -->
-  <div class="quick-actions-card">
-    <div class="card-header">
-      <div class="card-title">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-        </svg>
-        <span>Quick Actions</span>
-      </div>
-    </div>
-    <div class="card-content">
-      <div class="quick-actions">
-        <a href="/admin/invoices/generate" class="action-link primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="12" y1="18" x2="12" y2="12"/>
-            <line x1="9" y1="15" x2="15" y2="15"/>
-          </svg>
-          Generate New Invoices
-        </a>
-        <a href="/admin/invoices/settings" class="action-link">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-          Invoice Settings
-        </a>
-        <a href="/admin/invoices?status=paid" class="action-link">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-            <polyline points="22 4 12 14.01 9 11.01"/>
-          </svg>
-          View Paid Invoices
-        </a>
-        <a href="/admin/invoices?status=cancelled" class="action-link">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="15" y1="9" x2="9" y2="15"/>
-            <line x1="9" y1="9" x2="15" y2="15"/>
-          </svg>
-          View Cancelled Invoices
-        </a>
-      </div>
-    </div>
-  </div>
 
   <style>
     /* Page Header */
@@ -1162,89 +1106,7 @@ function buildQueryString(pageNum: number): string {
       color: #fff;
     }
 
-    /* Quick Actions Card */
-    .quick-actions-card {
-      background: #fff;
-      border-radius: 16px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      border: 1px solid #e8e8e8;
-      overflow: hidden;
-    }
-
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1rem 1.25rem;
-      border-bottom: 1px solid #f0f0f0;
-      background: #fafafa;
-    }
-
-    .card-title {
-      display: flex;
-      align-items: center;
-      gap: 0.625rem;
-      font-weight: 600;
-      color: #1a1a1a;
-      font-size: 1rem;
-    }
-
-    .card-title svg {
-      width: 20px;
-      height: 20px;
-      color: #1e5631;
-    }
-
-    .card-content {
-      padding: 1.25rem;
-    }
-
-    .quick-actions {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
-    }
-
-    .action-link {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.875rem 1rem;
-      background: #f8f9fa;
-      border-radius: 10px;
-      color: #333;
-      text-decoration: none;
-      font-weight: 500;
-      font-size: 0.9rem;
-      transition: all 0.2s ease;
-    }
-
-    .action-link:hover {
-      background: #f0f0f0;
-    }
-
-    .action-link.primary {
-      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
-      color: #fff;
-    }
-
-    .action-link.primary:hover {
-      background: linear-gradient(135deg, #164024 0%, #246339 100%);
-    }
-
-    .action-link svg {
-      width: 20px;
-      height: 20px;
-      flex-shrink: 0;
-    }
-
     /* Responsive */
-    @media (max-width: 1200px) {
-      .quick-actions {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
     @media (max-width: 900px) {
       .stats-row {
         grid-template-columns: repeat(2, 1fr);
@@ -1269,10 +1131,6 @@ function buildQueryString(pageNum: number): string {
 
       .filter-actions {
         justify-content: flex-end;
-      }
-
-      .quick-actions {
-        grid-template-columns: 1fr;
       }
     }
 
