@@ -379,7 +379,7 @@ export function generateFeesNotificationEmail(year: number): string {
                   <div style="background: #fff8e1; border-left: 4px solid #f9a825; padding: 12px 15px; border-radius: 0 6px 6px 0;">
                     <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
                       <strong>If you wish to cancel your membership</strong>, you must notify the club
-                      in writing <strong>before 1st March ${year}</strong> to prevent your Direct Debit
+                      in writing <strong>before 14th March ${year}</strong> to prevent your Direct Debit
                       from being collected. After this date, you will be liable for the full annual
                       subscription. You can also cancel your Direct Debit at any time by contacting
                       your bank directly.

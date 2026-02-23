@@ -499,7 +499,7 @@ export function generateDDRenewalEmail(
               <div style="background: #fff8e1; border-left: 4px solid #f9a825; padding: 15px; border-radius: 0 6px 6px 0; margin-bottom: 15px;">
                 <p style="margin: 0 0 10px 0; font-size: 14px; color: #333; line-height: 1.6;">
                   <strong>If you wish to cancel your membership</strong>, you must notify the club in writing
-                  before 1st March ${year} to avoid being charged for the ${schedule.membershipYear} membership year.
+                  before 14th March ${year} to avoid being charged for the ${schedule.membershipYear} membership year.
                   After this date, you will be liable for the full annual subscription.
                 </p>
                 <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
@@ -876,7 +876,7 @@ export function generateConsolidatedDDRenewalEmail(
               <div style="background: #fff8e1; border-left: 4px solid #f9a825; padding: 15px; border-radius: 0 6px 6px 0; margin-bottom: 15px;">
                 <p style="margin: 0 0 10px 0; font-size: 14px; color: #333; line-height: 1.6;">
                   <strong>If you wish to cancel any membership</strong>, you must notify the club in writing
-                  before 1st March ${year} to avoid being charged for the ${consolidated.membershipYear} membership year.
+                  before 14th March ${year} to avoid being charged for the ${consolidated.membershipYear} membership year.
                   After this date, you will be liable for the full annual subscription.
                 </p>
                 <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
