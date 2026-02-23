@@ -147,6 +147,9 @@ export function generateSocialRenewalEmail(
                 Social membership is a non-playing membership available to residents of the NE65 and NE66 postcode areas.
                 Social members do not have playing rights on the course.
               </p>
+              <p style="margin: 10px 0 0 0; font-size: 14px; color: #1e5631; line-height: 1.6; font-weight: 600;">
+                As a thank you for renewing, &pound;20 will be loaded onto your renewed membership card to spend in the clubhouse.
+              </p>
             </td>
           </tr>
 

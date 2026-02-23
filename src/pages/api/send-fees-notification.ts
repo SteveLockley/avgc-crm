@@ -51,9 +51,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
   }
 
-  // Bulk mode: send to all members with email addresses
+  // Bulk mode: send to all members with email addresses (exclude Winter — separate Oct renewal cycle)
   const members = await env.DB.prepare(
-    "SELECT id, first_name, surname, email FROM members WHERE email IS NOT NULL AND email <> '' ORDER BY surname, first_name"
+    "SELECT id, first_name, surname, email FROM members WHERE email IS NOT NULL AND email <> '' AND LOWER(category) <> 'winter' ORDER BY surname, first_name"
   ).all();
 
   if (!members.results || members.results.length === 0) {

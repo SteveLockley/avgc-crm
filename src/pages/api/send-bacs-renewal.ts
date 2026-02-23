@@ -32,7 +32,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return new Response(JSON.stringify({ error: 'Database not available' }), { status: 500 });
   }
 
-  let body: { memberId?: number; year?: number; testEmail?: string };
+  let body: { memberId?: number; year?: number; testEmail?: string; sample?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -58,8 +58,57 @@ export const POST: APIRoute = async ({ request, locals }) => {
     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
     WHERE m.default_payment_method IN (${placeholders})
       AND LOWER(m.category) NOT LIKE '%social%'
+      AND LOWER(m.category) <> 'winter'
       AND m.email IS NOT NULL AND m.email <> ''
   `;
+
+  // Sample mode: one email per distinct category, all sent to testEmail
+  if (body.testEmail && body.sample) {
+    const members = await env.DB.prepare(
+      `SELECT m.*, p.fee as subscription_fee
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE m.default_payment_method IN (${placeholders})
+         AND LOWER(m.category) NOT LIKE '%social%'
+         AND m.email IS NOT NULL AND m.email <> ''
+       GROUP BY m.category
+       ORDER BY m.category`
+    ).bind(...BACS_PAYMENT_METHODS).all();
+
+    if (!members.results || members.results.length === 0) {
+      return new Response(JSON.stringify({ error: 'No eligible BACS members found' }), { status: 404 });
+    }
+
+    let sent = 0;
+    let failed = 0;
+    const categories: string[] = [];
+    const errors: string[] = [];
+
+    for (const member of members.results) {
+      if (member.subscription_fee === null) { failed++; errors.push(`${member.category}: No subscription fee configured`); continue; }
+      const html = generateBACSRenewalEmail(
+        {
+          title: member.title, first_name: member.first_name, surname: member.surname,
+          club_number: member.club_number || member.pin, category: member.category,
+          email: member.email, locker_number: member.locker_number,
+          national_id: member.national_id, home_away: member.home_away,
+          handicap_index: member.handicap_index,
+        },
+        member.subscription_fee as number, year, bankDetails
+      );
+      const catSubject = `[SAMPLE: ${member.category}] ${subject}`;
+
+      const result = await sendEmail({ to: body.testEmail, subject: catSubject, html }, emailEnv);
+      if (result.success) { sent++; categories.push(member.category as string); }
+      else { failed++; errors.push(`${member.category}: ${result.error}`); }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    return new Response(JSON.stringify({
+      success: true, mode: 'sample', sentTo: body.testEmail, sent, failed,
+      categories, errors: errors.length > 0 ? errors : undefined,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 
   // Test mode
   if (body.testEmail) {

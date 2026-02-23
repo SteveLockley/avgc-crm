@@ -29,7 +29,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return new Response(JSON.stringify({ error: 'Database not available' }), { status: 500 });
   }
 
-  let body: { memberId?: number; year?: number; testEmail?: string };
+  let body: { memberId?: number; year?: number; testEmail?: string; sample?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -55,6 +55,50 @@ export const POST: APIRoute = async ({ request, locals }) => {
     WHERE LOWER(m.category) LIKE '%social%'
       AND m.email IS NOT NULL AND m.email <> ''
   `;
+
+  // Sample mode: one email per distinct category, all sent to testEmail
+  if (body.testEmail && body.sample) {
+    const members = await env.DB.prepare(
+      `SELECT m.*, p.fee as subscription_fee
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE LOWER(m.category) LIKE '%social%'
+         AND m.email IS NOT NULL AND m.email <> ''
+       GROUP BY m.category
+       ORDER BY m.category`
+    ).all();
+
+    if (!members.results || members.results.length === 0) {
+      return new Response(JSON.stringify({ error: 'No eligible Social members found' }), { status: 404 });
+    }
+
+    let sent = 0;
+    let failed = 0;
+    const categories: string[] = [];
+    const errors: string[] = [];
+
+    for (const member of members.results) {
+      if (member.subscription_fee === null) { failed++; errors.push(`${member.category}: No subscription fee configured`); continue; }
+      const html = generateSocialRenewalEmail(
+        {
+          title: member.title, first_name: member.first_name, surname: member.surname,
+          club_number: member.club_number || member.pin, email: member.email,
+        },
+        member.subscription_fee as number, year, bankDetails
+      );
+      const catSubject = `[SAMPLE: ${member.category}] ${subject}`;
+
+      const result = await sendEmail({ to: body.testEmail, subject: catSubject, html }, emailEnv);
+      if (result.success) { sent++; categories.push(member.category as string); }
+      else { failed++; errors.push(`${member.category}: ${result.error}`); }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    return new Response(JSON.stringify({
+      success: true, mode: 'sample', sentTo: body.testEmail, sent, failed,
+      categories, errors: errors.length > 0 ? errors : undefined,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 
   // Test mode
   if (body.testEmail) {

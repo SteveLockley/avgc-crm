@@ -13,13 +13,16 @@ const emailConfigured = isEmailConfigured(env);
 const emailStatus = getEmailConfigStatus(env);
 
 // Count members in each group
+// Exclude Winter members from all April renewal counts (Winter renews 1st October separately)
 const allWithEmail = await db.prepare(
-  `SELECT COUNT(*) as count FROM members WHERE email IS NOT NULL AND email <> ''`
+  `SELECT COUNT(*) as count FROM members WHERE email IS NOT NULL AND email <> '' AND LOWER(category) <> 'winter'`
 ).first<{ count: number }>();
 
 const ddPayers = await db.prepare(
   `SELECT COUNT(*) as count FROM members
    WHERE default_payment_method = 'Clubwise Direct Debit'
+     AND LOWER(category) <> 'winter'
+     AND family_payer_id IS NULL
      AND email IS NOT NULL AND email <> ''`
 ).first<{ count: number }>();
 
@@ -27,6 +30,7 @@ const bacsPayers = await db.prepare(
   `SELECT COUNT(*) as count FROM members
    WHERE default_payment_method IN ('BACS', 'Over the Till', 'Standing Order', 'Cheque')
      AND LOWER(category) NOT LIKE '%social%'
+     AND LOWER(category) <> 'winter'
      AND email IS NOT NULL AND email <> ''`
 ).first<{ count: number }>();
 
@@ -35,6 +39,23 @@ const socialMembers = await db.prepare(
    WHERE LOWER(category) LIKE '%social%'
      AND email IS NOT NULL AND email <> ''`
 ).first<{ count: number }>();
+
+// Members with no email
+const noEmailMembers = await db.prepare(
+  `SELECT club_number, title, first_name, surname, category
+   FROM members
+   WHERE email IS NULL OR email = ''
+   ORDER BY surname, first_name`
+).all();
+
+// Members who have not consented to electronic communication
+const noConsentMembers = await db.prepare(
+  `SELECT club_number, title, first_name, surname, category, email
+   FROM members
+   WHERE electronic_communication_consent <> 'Yes'
+     AND email IS NOT NULL AND email <> ''
+   ORDER BY surname, first_name`
+).all();
 
 const adminEmail = user?.email || '';
 ---
@@ -67,6 +88,26 @@ const adminEmail = user?.email || '';
     </div>
   )}
 
+  {adminEmail ? (
+    <div class="alert alert-info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="16" x2="12" y2="12"/>
+        <line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+      Test emails will be sent to: <strong>{adminEmail}</strong>
+    </div>
+  ) : (
+    <div class="alert alert-warning">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      Could not detect your email address — test sends will not work. Check Cloudflare Access login.
+    </div>
+  )}
+
   <!-- Inbox Status -->
   <div class="inbox-card" id="inbox-card">
     <div class="inbox-content">
@@ -88,6 +129,87 @@ const adminEmail = user?.email || '';
     </div>
   </div>
 
+  <!-- Data Quality Warnings -->
+  {(noEmailMembers.results?.length > 0 || noConsentMembers.results?.length > 0) && (
+    <div class="warnings-section">
+
+      {noEmailMembers.results?.length > 0 && (
+        <details class="warning-card warning-no-email">
+          <summary class="warning-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+              <line x1="1" y1="1" x2="23" y2="23" stroke-width="2.5"/>
+            </svg>
+            <span class="warning-title">
+              <strong>{noEmailMembers.results.length} member{noEmailMembers.results.length !== 1 ? 's' : ''} with no email address</strong>
+              <span class="warning-subtitle">These members will not receive any renewal emails</span>
+            </span>
+          </summary>
+          <div class="warning-body">
+            <table class="warning-table">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                </tr>
+              </thead>
+              <tbody>
+                {noEmailMembers.results.map((m: any) => (
+                  <tr>
+                    <td>{m.club_number || '—'}</td>
+                    <td>{[m.title, m.first_name, m.surname].filter(Boolean).join(' ')}</td>
+                    <td>{m.category || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      {noConsentMembers.results?.length > 0 && (
+        <details class="warning-card warning-no-consent">
+          <summary class="warning-header">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span class="warning-title">
+              <strong>{noConsentMembers.results.length} member{noConsentMembers.results.length !== 1 ? 's' : ''} without GDPR consent</strong>
+              <span class="warning-subtitle">Have email but have not consented to electronic communication</span>
+            </span>
+          </summary>
+          <div class="warning-body">
+            <table class="warning-table">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th>Email</th>
+                </tr>
+              </thead>
+              <tbody>
+                {noConsentMembers.results.map((m: any) => (
+                  <tr>
+                    <td>{m.club_number || '—'}</td>
+                    <td>{[m.title, m.first_name, m.surname].filter(Boolean).join(' ')}</td>
+                    <td>{m.category || '—'}</td>
+                    <td>{m.email}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+    </div>
+  )}
+
   <!-- Batch Cards -->
   <div class="batch-cards">
 
@@ -106,10 +228,10 @@ const adminEmail = user?.email || '';
         <span class="progress-text" id="text-fees"></span>
       </div>
       <div class="batch-actions">
-        <button class="btn btn-secondary btn-sm" onclick="sendBatch('fees', true)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('fees', 'test')" {!emailConfigured && 'disabled'}>
           Send Test
         </button>
-        <button class="btn btn-primary btn-sm" onclick="sendBatch('fees', false)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('fees', 'bulk')" {!emailConfigured && 'disabled'}>
           Send to All
         </button>
       </div>
@@ -130,10 +252,13 @@ const adminEmail = user?.email || '';
         <span class="progress-text" id="text-dd"></span>
       </div>
       <div class="batch-actions">
-        <button class="btn btn-secondary btn-sm" onclick="sendBatch('dd', true)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('dd', 'test')" {!emailConfigured && 'disabled'}>
           Send Test
         </button>
-        <button class="btn btn-primary btn-sm" onclick="sendBatch('dd', false)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-outline btn-sm" onclick="sendBatch('dd', 'sample')" {!emailConfigured && 'disabled'}>
+          Send Sample (1 per category)
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('dd', 'bulk')" {!emailConfigured && 'disabled'}>
           Send to All
         </button>
       </div>
@@ -154,10 +279,13 @@ const adminEmail = user?.email || '';
         <span class="progress-text" id="text-bacs"></span>
       </div>
       <div class="batch-actions">
-        <button class="btn btn-secondary btn-sm" onclick="sendBatch('bacs', true)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('bacs', 'test')" {!emailConfigured && 'disabled'}>
           Send Test
         </button>
-        <button class="btn btn-primary btn-sm" onclick="sendBatch('bacs', false)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-outline btn-sm" onclick="sendBatch('bacs', 'sample')" {!emailConfigured && 'disabled'}>
+          Send Sample (1 per category)
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('bacs', 'bulk')" {!emailConfigured && 'disabled'}>
           Send to All
         </button>
         <a href="/documents/dd-mandate-form.pdf" target="_blank" class="btn btn-secondary btn-sm dd-mandate-link">
@@ -187,10 +315,13 @@ const adminEmail = user?.email || '';
         <span class="progress-text" id="text-social"></span>
       </div>
       <div class="batch-actions">
-        <button class="btn btn-secondary btn-sm" onclick="sendBatch('social', true)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-secondary btn-sm" onclick="sendBatch('social', 'test')" {!emailConfigured && 'disabled'}>
           Send Test
         </button>
-        <button class="btn btn-primary btn-sm" onclick="sendBatch('social', false)" {!emailConfigured && 'disabled'}>
+        <button class="btn btn-outline btn-sm" onclick="sendBatch('social', 'sample')" {!emailConfigured && 'disabled'}>
+          Send Sample (1 per category)
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="sendBatch('social', 'bulk')" {!emailConfigured && 'disabled'}>
           Send to All
         </button>
       </div>
@@ -292,6 +423,12 @@ const adminEmail = user?.email || '';
       border: 1px solid #ffcc80;
     }
 
+    .alert-info {
+      background: #e3f2fd;
+      color: #1565c0;
+      border: 1px solid #90caf9;
+    }
+
     /* Inbox Card */
     .inbox-card {
       background: #fff;
@@ -341,6 +478,113 @@ const adminEmail = user?.email || '';
 
     .inbox-stat.bounced .stat-num {
       color: #c62828;
+    }
+
+    /* Data Quality Warnings */
+    .warnings-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .warning-card {
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+
+    .warning-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    .warning-header::-webkit-details-marker {
+      display: none;
+    }
+
+    .warning-header svg {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .warning-no-email .warning-header {
+      background: #fff8e1;
+    }
+
+    .warning-no-email .warning-header svg {
+      color: #f57f17;
+    }
+
+    .warning-no-consent .warning-header {
+      background: #fce4ec;
+    }
+
+    .warning-no-consent .warning-header svg {
+      color: #c62828;
+    }
+
+    .warning-title {
+      display: flex;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+
+    .warning-title strong {
+      font-size: 0.9rem;
+      color: #1a1a1a;
+    }
+
+    .warning-subtitle {
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    .warning-body {
+      border-top: 1px solid #e8e8e8;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .warning-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .warning-table th {
+      text-align: left;
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      background: #fafafa;
+      border-bottom: 1px solid #e8e8e8;
+      position: sticky;
+      top: 0;
+    }
+
+    .warning-table td {
+      padding: 0.4rem 1rem;
+      border-bottom: 1px solid #f0f0f0;
+      color: #333;
+    }
+
+    .warning-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .warning-table tbody tr:hover {
+      background: #f9f9f9;
     }
 
     /* Batch Cards */
@@ -452,6 +696,16 @@ const adminEmail = user?.email || '';
       flex-wrap: wrap;
     }
 
+    .btn-outline {
+      background: #fff;
+      color: #1e5631;
+      border: 1.5px solid #1e5631;
+    }
+
+    .btn-outline:hover {
+      background: #f0f7f2;
+    }
+
     .dd-mandate-link {
       display: inline-flex;
       align-items: center;
@@ -491,6 +745,17 @@ const adminEmail = user?.email || '';
       return parseInt(document.getElementById('renewal-year').value) || new Date().getFullYear();
     }
 
+    // Get all buttons in a batch card
+    function setBatchButtons(type, disabled) {
+      const card = document.getElementById('batch-' + type);
+      if (!card) return;
+      card.querySelectorAll('button').forEach(function(btn) {
+        btn.disabled = disabled;
+        if (disabled) btn.style.opacity = '0.6';
+        else btn.style.opacity = '';
+      });
+    }
+
     // Load inbox status
     async function loadInboxStatus() {
       try {
@@ -507,7 +772,9 @@ const adminEmail = user?.email || '';
     }
     loadInboxStatus();
 
-    async function sendBatch(type, isTest) {
+    window.sendBatch = sendBatch;
+    async function sendBatch(type, mode) {
+      // mode: 'test', 'sample', or 'bulk'
       const year = getYear();
       const endpoint = ENDPOINTS[type];
       if (!endpoint) return;
@@ -517,35 +784,66 @@ const adminEmail = user?.email || '';
       const fillEl = document.getElementById('fill-' + type);
       const textEl = document.getElementById('text-' + type);
 
-      if (isTest) {
-        // Test mode - send to admin email
-        statusEl.textContent = 'Sending test...';
+      if (mode === 'test' || mode === 'sample') {
+        // Check we have an admin email
+        if (!adminEmail) {
+          await m3Alert('Could not determine your email address. Please check you are logged in via Cloudflare Access.', { title: 'No Email', type: 'error' });
+          return;
+        }
+
+        const isSample = mode === 'sample';
+        const label = isSample ? 'Sending samples...' : 'Sending test...';
+
+        setBatchButtons(type, true);
+        statusEl.textContent = label;
         statusEl.className = 'batch-status sending';
 
         try {
+          const payload = { testEmail: adminEmail, year };
+          if (isSample) payload.sample = true;
+
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ testEmail: adminEmail, year }),
+            body: JSON.stringify(payload),
           });
           const data = await res.json();
 
           if (data.success || data.sentTo) {
-            statusEl.textContent = 'Test sent';
             statusEl.className = 'batch-status done';
-            const msg = data.sampleMember
-              ? `Test sent to ${adminEmail} using ${data.sampleMember}'s data`
-              : `Test sent to ${adminEmail}`;
-            await m3Alert(msg, { title: 'Test Email Sent', type: 'success' });
+
+            if (isSample && data.categories) {
+              statusEl.textContent = data.failed > 0 ? `${data.sent} sent, ${data.failed} failed` : `${data.sent} samples sent`;
+              statusEl.className = data.failed > 0 ? 'batch-status error' : 'batch-status done';
+              const catList = data.categories.join(', ');
+              let msg = `Sent ${data.sent} sample email(s) to ${adminEmail}.\n\nCategories: ${catList}`;
+              if (data.failed > 0) {
+                msg += `\n\n${data.failed} failed:`;
+                if (data.errors && data.errors.length > 0) {
+                  msg += '\n' + data.errors.join('\n');
+                } else {
+                  msg += '\nCategory with no subscription fee configured (check payment_items table)';
+                }
+              }
+              await m3Alert(msg, { title: data.failed > 0 ? 'Samples Sent (with errors)' : 'Sample Emails Sent', type: data.failed > 0 ? 'warning' : 'success' });
+            } else {
+              statusEl.textContent = 'Test sent';
+              const msg = data.sampleMember
+                ? `Test sent to ${adminEmail} using ${data.sampleMember}'s data`
+                : `Test sent to ${adminEmail}`;
+              await m3Alert(msg, { title: 'Test Email Sent', type: 'success' });
+            }
           } else {
-            statusEl.textContent = 'Test failed';
+            statusEl.textContent = isSample ? 'Sample failed' : 'Test failed';
             statusEl.className = 'batch-status error';
-            await m3Alert(data.error || 'Unknown error', { title: 'Test Failed', type: 'error' });
+            await m3Alert(data.error || 'Unknown error', { title: 'Failed', type: 'error' });
           }
         } catch (e) {
           statusEl.textContent = 'Error';
           statusEl.className = 'batch-status error';
           await m3Alert(e.message, { title: 'Error', type: 'error' });
+        } finally {
+          setBatchButtons(type, false);
         }
 
         return;
@@ -571,6 +869,7 @@ const adminEmail = user?.email || '';
 
       if (!confirmed) return;
 
+      setBatchButtons(type, true);
       statusEl.textContent = 'Sending...';
       statusEl.className = 'batch-status sending';
       progressEl.style.display = 'block';
@@ -613,6 +912,8 @@ const adminEmail = user?.email || '';
         textEl.textContent = e.message;
         statusEl.textContent = 'Error';
         statusEl.className = 'batch-status error';
+      } finally {
+        setBatchButtons(type, false);
       }
     }
   </script>

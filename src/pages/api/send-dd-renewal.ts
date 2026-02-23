@@ -1,13 +1,14 @@
 // API endpoint to send DD renewal email for a specific member or all DD members
 // POST /api/send-dd-renewal { memberId?: number, year?: number, testEmail?: string }
-// If memberId provided: sends to that member
-// If no memberId and no testEmail: bulk sends to all DD payers
-// If testEmail provided: sends test using first DD member's data
+// Family members with family_payer_id are consolidated into the payer's email
 // Protected by Cloudflare Access (admin only)
 
 import type { APIRoute } from 'astro';
 import { sendEmail } from '../../lib/email';
-import { calculateDDSchedule, generateDDRenewalEmail, generateDDRenewalSubject } from '../../lib/dd-renewal-email';
+import {
+  calculateDDSchedule, generateDDRenewalEmail, generateDDRenewalSubject,
+  calculateConsolidatedSchedule, generateConsolidatedDDRenewalEmail,
+} from '../../lib/dd-renewal-email';
 
 function buildMemberData(member: any) {
   return {
@@ -25,13 +26,25 @@ function buildMemberData(member: any) {
   };
 }
 
+// Fetch dependants for a given payer ID
+async function getDependants(db: any, payerId: number) {
+  const rows = await db.prepare(
+    `SELECT m.*, p.fee as subscription_fee
+     FROM members m
+     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     WHERE m.family_payer_id = ?
+     ORDER BY m.surname, m.first_name`
+  ).bind(payerId).all();
+  return rows.results || [];
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = (locals as any).runtime?.env;
   if (!env?.DB) {
     return new Response(JSON.stringify({ error: 'Database not available' }), { status: 500 });
   }
 
-  let body: { memberId?: number; year?: number; testEmail?: string };
+  let body: { memberId?: number; year?: number; testEmail?: string; sample?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -49,7 +62,77 @@ export const POST: APIRoute = async ({ request, locals }) => {
     AZURE_SERVICE_PASSWORD: env.AZURE_SERVICE_PASSWORD,
   };
 
-  // Test mode: send to a test email using first DD member's data
+  // Sample mode: one email per distinct category + one family consolidated sample
+  if (body.testEmail && body.sample) {
+    const members = await env.DB.prepare(
+      `SELECT m.*, p.fee as subscription_fee
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE m.default_payment_method = 'Clubwise Direct Debit'
+         AND LOWER(m.category) <> 'winter'
+         AND m.family_payer_id IS NULL
+         AND m.email IS NOT NULL AND m.email <> ''
+       GROUP BY m.category
+       ORDER BY m.category`
+    ).all();
+
+    if (!members.results || members.results.length === 0) {
+      return new Response(JSON.stringify({ error: 'No eligible DD members found' }), { status: 404 });
+    }
+
+    let sent = 0;
+    let failed = 0;
+    const categories: string[] = [];
+    const errors: string[] = [];
+
+    for (const member of members.results) {
+      if (member.subscription_fee === null) { failed++; errors.push(`${member.category}: No subscription fee configured`); continue; }
+      const memberData = buildMemberData(member);
+      const schedule = calculateDDSchedule(memberData, member.subscription_fee as number, year);
+      const html = generateDDRenewalEmail(memberData, schedule);
+      const catSubject = `[SAMPLE: ${member.category}] ${subject}`;
+
+      const result = await sendEmail({ to: body.testEmail, subject: catSubject, html }, emailEnv);
+      if (result.success) { sent++; categories.push(member.category as string); }
+      else { failed++; errors.push(`${member.category}: ${result.error}`); }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Also send a family consolidated sample if any family payers exist
+    const familyPayer = await env.DB.prepare(
+      `SELECT m.*, p.fee as subscription_fee
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE m.default_payment_method = 'Clubwise Direct Debit'
+         AND LOWER(m.category) <> 'winter'
+         AND m.email IS NOT NULL AND m.email <> ''
+         AND m.id IN (SELECT DISTINCT family_payer_id FROM members WHERE family_payer_id IS NOT NULL)
+       LIMIT 1`
+    ).first();
+
+    if (familyPayer && familyPayer.subscription_fee !== null) {
+      const deps = await getDependants(env.DB, familyPayer.id as number);
+      const payerData = buildMemberData(familyPayer);
+      const depData = deps.filter((d: any) => d.subscription_fee !== null).map((d: any) => ({
+        member: buildMemberData(d),
+        fee: d.subscription_fee as number,
+      }));
+      const consolidated = calculateConsolidatedSchedule(payerData, familyPayer.subscription_fee as number, depData, year);
+      const html = generateConsolidatedDDRenewalEmail(consolidated);
+      const famSubject = `[SAMPLE: Family Consolidated] ${subject}`;
+
+      const result = await sendEmail({ to: body.testEmail, subject: famSubject, html }, emailEnv);
+      if (result.success) { sent++; categories.push('Family Consolidated'); }
+      else { failed++; errors.push(`Family: ${result.error}`); }
+    }
+
+    return new Response(JSON.stringify({
+      success: true, mode: 'sample', sentTo: body.testEmail, sent, failed,
+      categories, errors: errors.length > 0 ? errors : undefined,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Test mode: send single test to admin email
   if (body.testEmail) {
     const member = body.memberId
       ? await env.DB.prepare(
@@ -63,6 +146,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
            FROM members m
            LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
            WHERE m.default_payment_method = 'Clubwise Direct Debit'
+             AND LOWER(m.category) <> 'winter'
+             AND m.family_payer_id IS NULL
              AND m.email IS NOT NULL AND m.email <> ''
            ORDER BY m.surname LIMIT 1`
         ).first();
@@ -72,10 +157,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     const memberData = buildMemberData(member);
-    const schedule = calculateDDSchedule(memberData, member.subscription_fee, year);
-    const html = generateDDRenewalEmail(memberData, schedule);
 
-    const result = await sendEmail({ to: body.testEmail, subject, html }, emailEnv);
+    // Check if this member is a family payer
+    const deps = await getDependants(env.DB, member.id as number);
+    let html: string;
+    if (deps.length > 0) {
+      const depData = deps.filter((d: any) => d.subscription_fee !== null).map((d: any) => ({
+        member: buildMemberData(d),
+        fee: d.subscription_fee as number,
+      }));
+      const consolidated = calculateConsolidatedSchedule(memberData, member.subscription_fee, depData, year);
+      html = generateConsolidatedDDRenewalEmail(consolidated);
+    } else {
+      const schedule = calculateDDSchedule(memberData, member.subscription_fee, year);
+      html = generateDDRenewalEmail(memberData, schedule);
+    }
+
+    const result = await sendEmail({ to: body.testEmail, subject: `[TEST] ${subject}`, html }, emailEnv);
     if (!result.success) {
       return new Response(JSON.stringify({ error: result.error }), { status: 500 });
     }
@@ -108,15 +206,29 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     const memberData = buildMemberData(member);
-    const schedule = calculateDDSchedule(memberData, member.subscription_fee, year);
-    const html = generateDDRenewalEmail(memberData, schedule);
+    const deps = await getDependants(env.DB, member.id as number);
+    let html: string;
+    let annualTotal: number;
+
+    if (deps.length > 0) {
+      const depData = deps.filter((d: any) => d.subscription_fee !== null).map((d: any) => ({
+        member: buildMemberData(d),
+        fee: d.subscription_fee as number,
+      }));
+      const consolidated = calculateConsolidatedSchedule(memberData, member.subscription_fee, depData, year);
+      html = generateConsolidatedDDRenewalEmail(consolidated);
+      annualTotal = consolidated.totalAnnual;
+    } else {
+      const schedule = calculateDDSchedule(memberData, member.subscription_fee, year);
+      html = generateDDRenewalEmail(memberData, schedule);
+      annualTotal = schedule.initialCollectionTotal + 11 * schedule.monthlyPayment;
+    }
 
     const result = await sendEmail({ to: member.email, subject, html }, emailEnv);
     if (!result.success) {
       return new Response(JSON.stringify({ error: result.error }), { status: 500 });
     }
 
-    const annualTotal = schedule.initialCollectionTotal + 11 * schedule.monthlyPayment;
     return new Response(JSON.stringify({
       success: true,
       mode: 'single',
@@ -127,12 +239,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Bulk mode: send to all DD payers
+  // Bulk mode: send to all DD payers (skip dependants — they're included in payer's consolidated email)
   const members = await env.DB.prepare(
     `SELECT m.*, p.fee as subscription_fee
      FROM members m
      LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
      WHERE m.default_payment_method = 'Clubwise Direct Debit'
+       AND LOWER(m.category) <> 'winter'
+       AND m.family_payer_id IS NULL
        AND m.email IS NOT NULL AND m.email <> ''
      ORDER BY m.surname, m.first_name`
   ).all();
@@ -153,8 +267,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
 
     const memberData = buildMemberData(member);
-    const schedule = calculateDDSchedule(memberData, member.subscription_fee as number, year);
-    const html = generateDDRenewalEmail(memberData, schedule);
+    const deps = await getDependants(env.DB, member.id as number);
+    let html: string;
+
+    if (deps.length > 0) {
+      const depData = deps.filter((d: any) => d.subscription_fee !== null).map((d: any) => ({
+        member: buildMemberData(d),
+        fee: d.subscription_fee as number,
+      }));
+      const consolidated = calculateConsolidatedSchedule(memberData, member.subscription_fee as number, depData, year);
+      html = generateConsolidatedDDRenewalEmail(consolidated);
+    } else {
+      const schedule = calculateDDSchedule(memberData, member.subscription_fee as number, year);
+      html = generateDDRenewalEmail(memberData, schedule);
+    }
 
     const result = await sendEmail({ to: member.email as string, subject, html }, emailEnv);
     if (result.success) {
@@ -164,7 +290,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);
     }
 
-    // Rate limit: 100ms between emails
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
