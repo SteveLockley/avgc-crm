@@ -376,7 +376,7 @@ function buildQueryString(pageNum: number): string {
                   />
                 </td>
                 <td>
-                  <a href={`/invoices/${invoice.id}`} class="invoice-link">
+                  <a href={`/admin/invoices/${invoice.id}`} class="invoice-link">
                     {invoice.invoice_number}
                   </a>
                 </td>
@@ -400,14 +400,14 @@ function buildQueryString(pageNum: number): string {
                 </td>
                 <td class="actions-col">
                   <div class="action-buttons">
-                    <a href={`/invoices/${invoice.id}`} class="action-btn" title="View">
+                    <a href={`/admin/invoices/${invoice.id}`} class="action-btn" title="View">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                         <circle cx="12" cy="12" r="3"/>
                       </svg>
                     </a>
                     {invoice.status === 'draft' && (
-                      <a href={`/invoices/preview?ids=${invoice.id}`} class="action-btn primary" title="Send">
+                      <a href={`/admin/invoices/preview?ids=${invoice.id}`} class="action-btn primary" title="Send">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <line x1="22" y1="2" x2="11" y2="13"/>
                           <polygon points="22 2 15 22 11 13 2 9 22 2"/>

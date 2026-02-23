@@ -24,7 +24,7 @@ export async function DELETE({ params, locals }: APIContext) {
       });
     }
 
-    // Delete member (cascades to payments, subscription_history, etc.)
+    // Delete member — all related tables use ON DELETE CASCADE
     await db.prepare('DELETE FROM members WHERE id = ?').bind(memberId).run();
 
     // Log the deletion

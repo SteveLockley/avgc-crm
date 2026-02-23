@@ -58,6 +58,39 @@ const noConsentMembers = await db.prepare(
 ).all();
 
 const adminEmail = user?.email || '';
+
+// Count members eligible for invoice generation (sent email but no invoice yet)
+const periodStart = `${currentYear}-04-01`;
+const periodEnd = `${currentYear + 1}-03-31`;
+
+const ddInvoiceEligible = await db.prepare(
+  `SELECT COUNT(DISTINCT m.id) as count
+   FROM sent_emails se
+   INNER JOIN members m ON m.id = se.member_id
+   LEFT JOIN invoices inv ON inv.member_id = m.id AND inv.period_start = ? AND inv.period_end = ? AND inv.status != 'cancelled'
+   WHERE se.email_type = 'dd_renewal' AND se.year = ? AND se.status = 'sent' AND inv.id IS NULL`
+).bind(periodStart, periodEnd, currentYear).first<{ count: number }>();
+
+const bacsInvoiceEligible = await db.prepare(
+  `SELECT COUNT(DISTINCT m.id) as count
+   FROM sent_emails se
+   INNER JOIN members m ON m.id = se.member_id
+   LEFT JOIN invoices inv ON inv.member_id = m.id AND inv.period_start = ? AND inv.period_end = ? AND inv.status != 'cancelled'
+   WHERE se.email_type = 'bacs_renewal' AND se.year = ? AND se.status = 'sent' AND inv.id IS NULL`
+).bind(periodStart, periodEnd, currentYear).first<{ count: number }>();
+
+const socialInvoiceEligible = await db.prepare(
+  `SELECT COUNT(DISTINCT m.id) as count
+   FROM sent_emails se
+   INNER JOIN members m ON m.id = se.member_id
+   LEFT JOIN invoices inv ON inv.member_id = m.id AND inv.period_start = ? AND inv.period_end = ? AND inv.status != 'cancelled'
+   WHERE se.email_type = 'social_renewal' AND se.year = ? AND se.status = 'sent' AND inv.id IS NULL`
+).bind(periodStart, periodEnd, currentYear).first<{ count: number }>();
+
+// Count already-created invoices for this period
+const existingInvoices = await db.prepare(
+  `SELECT COUNT(*) as count FROM invoices WHERE period_start = ? AND period_end = ? AND status != 'cancelled'`
+).bind(periodStart, periodEnd).first<{ count: number }>();
 ---
 
 <AdminLayout title="Subscription Renewals">
@@ -70,6 +103,16 @@ const adminEmail = user?.email || '';
       <h1>Subscription Renewals</h1>
     </div>
     <div class="header-right">
+      <a href="/admin/members/email-log" class="btn btn-secondary btn-sm">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        Email Log
+      </a>
       <label class="year-label">
         Year
         <input type="number" id="renewal-year" value={currentYear} min="2024" max="2030" class="year-input" />
@@ -327,6 +370,100 @@ const adminEmail = user?.email || '';
       </div>
     </div>
 
+  </div>
+
+  <!-- Invoice Generation -->
+  <h2 class="section-heading">Invoice Generation</h2>
+  <p class="section-desc">
+    Generate draft invoices for members who have been sent renewal emails.
+    {existingInvoices?.count ? `${existingInvoices.count} invoices already exist for ${currentYear}/${currentYear + 1}.` : ''}
+    <a href="/admin/invoices" class="inline-link">View all invoices</a>
+  </p>
+
+  <div class="batch-cards">
+    <!-- DD Invoices -->
+    <div class="batch-card" id="batch-inv-dd">
+      <div class="batch-header">
+        <div class="batch-number inv-number">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+        </div>
+        <div class="batch-info">
+          <h3>DD Member Invoices</h3>
+          <p><span id="inv-dd-eligible">{ddInvoiceEligible?.count || 0}</span> members eligible</p>
+        </div>
+        <div class="batch-status" id="status-inv-dd">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-inv-dd" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-inv-dd"></div></div>
+        <span class="progress-text" id="text-inv-dd"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-primary btn-sm" onclick="generateInvoices('dd_renewal')" id="btn-inv-dd">
+          Generate Invoices
+        </button>
+      </div>
+    </div>
+
+    <!-- BACS Invoices -->
+    <div class="batch-card" id="batch-inv-bacs">
+      <div class="batch-header">
+        <div class="batch-number inv-number">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+        </div>
+        <div class="batch-info">
+          <h3>BACS / Other Payment Invoices</h3>
+          <p><span id="inv-bacs-eligible">{bacsInvoiceEligible?.count || 0}</span> members eligible</p>
+        </div>
+        <div class="batch-status" id="status-inv-bacs">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-inv-bacs" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-inv-bacs"></div></div>
+        <span class="progress-text" id="text-inv-bacs"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-primary btn-sm" onclick="generateInvoices('bacs_renewal')" id="btn-inv-bacs">
+          Generate Invoices
+        </button>
+      </div>
+    </div>
+
+    <!-- Social Invoices -->
+    <div class="batch-card" id="batch-inv-social">
+      <div class="batch-header">
+        <div class="batch-number inv-number">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+        </div>
+        <div class="batch-info">
+          <h3>Social Member Invoices</h3>
+          <p><span id="inv-social-eligible">{socialInvoiceEligible?.count || 0}</span> members eligible</p>
+        </div>
+        <div class="batch-status" id="status-inv-social">Idle</div>
+      </div>
+      <div class="batch-progress" id="progress-inv-social" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="fill-inv-social"></div></div>
+        <span class="progress-text" id="text-inv-social"></span>
+      </div>
+      <div class="batch-actions">
+        <button class="btn btn-primary btn-sm" onclick="generateInvoices('social_renewal')" id="btn-inv-social">
+          Generate Invoices
+        </button>
+      </div>
+    </div>
   </div>
 
   <style>
@@ -713,6 +850,34 @@ const adminEmail = user?.email || '';
       margin-left: auto;
     }
 
+    /* Invoice Generation Section */
+    .section-heading {
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin: 2.5rem 0 0.25rem 0;
+    }
+
+    .section-desc {
+      font-size: 0.9rem;
+      color: #666;
+      margin: 0 0 1rem 0;
+    }
+
+    .inline-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .inline-link:hover {
+      text-decoration: underline;
+    }
+
+    .inv-number {
+      background: linear-gradient(135deg, #1565c0 0%, #1e88e5 100%);
+    }
+
     @media (max-width: 600px) {
       .page-header {
         flex-direction: column;
@@ -858,7 +1023,7 @@ const adminEmail = user?.email || '';
       };
 
       const confirmed = await m3Confirm(
-        `This will send the ${typeLabels[type]} to ALL eligible members for ${year}. This cannot be undone.`,
+        `This will send the ${typeLabels[type]} to ALL eligible members for ${year}. Already-sent members will be skipped automatically. This cannot be undone.`,
         {
           title: 'Send to All?',
           type: 'warning',
@@ -873,48 +1038,188 @@ const adminEmail = user?.email || '';
       statusEl.textContent = 'Sending...';
       statusEl.className = 'batch-status sending';
       progressEl.style.display = 'block';
-      fillEl.style.width = '10%';
-      textEl.textContent = 'Sending emails...';
+      fillEl.style.width = '5%';
+      textEl.textContent = 'Starting batch send...';
+
+      let totalSent = 0;
+      let totalFailed = 0;
+      let allErrors = [];
+      let batchNum = 0;
 
       try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ year }),
-        });
-        const data = await res.json();
+        while (true) {
+          batchNum++;
+          statusEl.textContent = `Sending batch ${batchNum}...`;
 
-        fillEl.style.width = '100%';
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ year }),
+          });
+          const data = await res.json();
 
-        if (data.sent !== undefined) {
-          const total = data.total || (data.sent + data.failed);
-          textEl.textContent = `${data.sent} sent, ${data.failed || 0} failed of ${total}`;
-
-          if (data.failed > 0) {
-            statusEl.textContent = `Done (${data.failed} errors)`;
+          if (data.error && data.sent === undefined) {
+            // Fatal error
+            textEl.textContent = data.error;
+            statusEl.textContent = 'Error';
             statusEl.className = 'batch-status error';
-          } else {
-            statusEl.textContent = 'Done';
-            statusEl.className = 'batch-status done';
+            break;
           }
-        } else if (data.error) {
-          textEl.textContent = data.error;
-          statusEl.textContent = 'Error';
-          statusEl.className = 'batch-status error';
-        } else {
-          statusEl.textContent = 'Done';
-          statusEl.className = 'batch-status done';
-          textEl.textContent = 'Complete';
+
+          totalSent += (data.sent || 0);
+          totalFailed += (data.failed || 0);
+          if (data.errors) allErrors = allErrors.concat(data.errors);
+
+          const processed = totalSent + totalFailed;
+          const grandTotal = processed + (data.remaining || 0);
+
+          if (grandTotal > 0) {
+            const pct = Math.min(Math.round((processed / grandTotal) * 100), 100);
+            fillEl.style.width = pct + '%';
+          }
+          textEl.textContent = `${totalSent} sent, ${totalFailed} failed of ${processed + (data.remaining || 0)}`;
+
+          if (!data.remaining || data.remaining <= 0) {
+            // All done
+            fillEl.style.width = '100%';
+            if (totalFailed > 0) {
+              statusEl.textContent = `Done (${totalFailed} errors)`;
+              statusEl.className = 'batch-status error';
+            } else if (totalSent === 0) {
+              statusEl.textContent = 'All already sent';
+              statusEl.className = 'batch-status done';
+              textEl.textContent = 'All members have already been emailed for this year';
+            } else {
+              statusEl.textContent = 'Done';
+              statusEl.className = 'batch-status done';
+            }
+            break;
+          }
         }
       } catch (e) {
         fillEl.style.width = '100%';
         fillEl.style.background = '#c62828';
-        textEl.textContent = e.message;
-        statusEl.textContent = 'Error';
+        textEl.textContent = `${totalSent} sent, ${totalFailed} failed — error: ${e.message}`;
+        statusEl.textContent = 'Error (can resume)';
         statusEl.className = 'batch-status error';
       } finally {
         setBatchButtons(type, false);
       }
+    }
+
+    // Invoice generation
+    const INV_TYPE_MAP = {
+      dd_renewal: 'inv-dd',
+      bacs_renewal: 'inv-bacs',
+      social_renewal: 'inv-social',
+    };
+
+    const INV_LABELS = {
+      dd_renewal: 'DD',
+      bacs_renewal: 'BACS/Other',
+      social_renewal: 'Social',
+    };
+
+    window.generateInvoices = generateInvoices;
+    async function generateInvoices(emailType) {
+      const key = INV_TYPE_MAP[emailType];
+      if (!key) return;
+
+      const year = getYear();
+      const statusEl = document.getElementById('status-' + key);
+      const progressEl = document.getElementById('progress-' + key);
+      const fillEl = document.getElementById('fill-' + key);
+      const textEl = document.getElementById('text-' + key);
+      const btn = document.getElementById('btn-' + key);
+
+      const label = INV_LABELS[emailType];
+      const confirmed = await m3Confirm(
+        `This will generate draft invoices for all ${label} members who received a renewal email for ${year} and don't already have an invoice. Continue?`,
+        {
+          title: 'Generate Invoices?',
+          type: 'info',
+          confirmText: 'Generate',
+          cancelText: 'Cancel',
+        }
+      );
+      if (!confirmed) return;
+
+      btn.disabled = true;
+      btn.style.opacity = '0.6';
+      statusEl.textContent = 'Generating...';
+      statusEl.className = 'batch-status sending';
+      progressEl.style.display = 'block';
+      fillEl.style.width = '5%';
+      textEl.textContent = 'Starting invoice generation...';
+
+      let totalCreated = 0;
+      let totalFailed = 0;
+      let allErrors = [];
+      let batchNum = 0;
+
+      try {
+        while (true) {
+          batchNum++;
+          statusEl.textContent = `Generating batch ${batchNum}...`;
+
+          const res = await fetch('/api/generate-renewal-invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailType, year }),
+          });
+          const data = await res.json();
+
+          if (data.error && data.created === undefined) {
+            textEl.textContent = data.error;
+            statusEl.textContent = 'Error';
+            statusEl.className = 'batch-status error';
+            break;
+          }
+
+          totalCreated += (data.created || 0);
+          totalFailed += (data.failed || 0);
+          if (data.errors) allErrors = allErrors.concat(data.errors);
+
+          const processed = totalCreated + totalFailed;
+          const grandTotal = processed + (data.remaining || 0);
+
+          if (grandTotal > 0) {
+            const pct = Math.min(Math.round((processed / grandTotal) * 100), 100);
+            fillEl.style.width = pct + '%';
+          }
+          textEl.textContent = `${totalCreated} created, ${totalFailed} failed` + (data.remaining > 0 ? ` (${data.remaining} remaining)` : '');
+
+          if (!data.remaining || data.remaining <= 0) {
+            fillEl.style.width = '100%';
+            if (totalFailed > 0) {
+              statusEl.textContent = `Done (${totalFailed} errors)`;
+              statusEl.className = 'batch-status error';
+            } else if (totalCreated === 0) {
+              statusEl.textContent = 'All invoiced';
+              statusEl.className = 'batch-status done';
+              textEl.textContent = 'All members already have invoices for this period';
+            } else {
+              statusEl.textContent = 'Done';
+              statusEl.className = 'batch-status done';
+            }
+            break;
+          }
+        }
+      } catch (e) {
+        fillEl.style.width = '100%';
+        fillEl.style.background = '#c62828';
+        textEl.textContent = `${totalCreated} created, ${totalFailed} failed — error: ${e.message}`;
+        statusEl.textContent = 'Error (can resume)';
+        statusEl.className = 'batch-status error';
+      } finally {
+        btn.disabled = false;
+        btn.style.opacity = '';
+      }
+
+      // Update eligible counts
+      document.getElementById('inv-dd-eligible').textContent = '...';
+      document.getElementById('inv-bacs-eligible').textContent = '...';
+      document.getElementById('inv-social-eligible').textContent = '...';
     }
   </script>
 </AdminLayout>

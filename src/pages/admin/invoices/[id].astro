@@ -71,6 +71,11 @@ if (Astro.request.method === 'POST') {
     if (refreshed) Object.assign(invoice, refreshed);
 
   } else if (action === 'cancel') {
+    // Check if this invoice has associated payments (e.g. DD auto-paid invoices)
+    const existingPayment = await db.prepare(
+      `SELECT id, amount, payment_method FROM payments WHERE invoice_id = ? LIMIT 1`
+    ).bind(id).first();
+
     await db.prepare(
       `UPDATE invoices SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
@@ -80,7 +85,36 @@ if (Astro.request.method === 'POST') {
       `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
     ).bind(invoice.total, invoice.member_id).run();
 
-    success = 'Invoice cancelled and member balance adjusted';
+    // If a payment was already recorded (e.g. DD), create a refund payment record
+    if (existingPayment) {
+      const refundResult = await db.prepare(
+        `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
+         VALUES (?, ?, ?, date('now'), ?, 'subscription', ?, 'Refund — invoice cancelled', ?)`
+      ).bind(
+        invoice.member_id, id, -(existingPayment.amount as number),
+        existingPayment.payment_method, `REFUND ${invoice.invoice_number}`,
+        user?.email || 'system'
+      ).run();
+
+      // Create refund payment line items mirroring the original
+      const refundPaymentId = refundResult.meta?.last_row_id;
+      if (refundPaymentId) {
+        const originalLines = await db.prepare(
+          `SELECT invoice_item_id, payment_item_id, description, amount FROM payment_line_items WHERE payment_id = ?`
+        ).bind(existingPayment.id).all();
+
+        for (const line of (originalLines.results || []) as any[]) {
+          await db.prepare(
+            `INSERT INTO payment_line_items (payment_id, invoice_item_id, payment_item_id, description, amount)
+             VALUES (?, ?, ?, ?, ?)`
+          ).bind(refundPaymentId, line.invoice_item_id, line.payment_item_id, `Refund: ${line.description}`, -line.amount).run();
+        }
+      }
+
+      success = 'Invoice cancelled, payment refund recorded, and member balance adjusted';
+    } else {
+      success = 'Invoice cancelled and member balance adjusted';
+    }
 
     const refreshed = await db.prepare(
       `SELECT * FROM invoices WHERE id = ?`
@@ -416,7 +450,7 @@ const emailPreview = generateInvoiceEmail({
 
       container.innerHTML = data.invoices.map(inv =>
         `<div style="padding: 0.5rem 0; border-bottom: 1px solid #eee;">
-          <a href="/invoices/${inv.id}">${inv.invoice_number}</a>
+          <a href="/admin/invoices/${inv.id}">${inv.invoice_number}</a>
           <span class="badge badge-${inv.status === 'paid' ? 'success' : inv.status === 'sent' ? 'info' : 'warning'}" style="margin-left: 0.5rem; font-size: 0.7rem;">${inv.status}</span>
         </div>`
       ).join('');

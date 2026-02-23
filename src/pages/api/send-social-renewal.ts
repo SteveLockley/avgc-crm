@@ -1,9 +1,12 @@
 // API endpoint to send Social membership renewal email
 // POST /api/send-social-renewal { memberId?: number, year?: number, testEmail?: string }
+// Bulk mode processes up to BATCH_SIZE members per request, skipping already-sent
 
 import type { APIRoute } from 'astro';
 import { sendEmail } from '../../lib/email';
 import { generateSocialRenewalEmail, generateSocialRenewalSubject } from '../../lib/social-renewal-email';
+
+const BATCH_SIZE = 40;
 
 async function getBankDetails(db: any) {
   const settings = await db.prepare(
@@ -47,14 +50,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
     AZURE_SERVICE_USER: env.AZURE_SERVICE_USER,
     AZURE_SERVICE_PASSWORD: env.AZURE_SERVICE_PASSWORD,
   };
-
-  const socialQuery = `
-    SELECT m.*, p.fee as subscription_fee
-    FROM members m
-    LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
-    WHERE LOWER(m.category) LIKE '%social%'
-      AND m.email IS NOT NULL AND m.email <> ''
-  `;
 
   // Sample mode: one email per distinct category, all sent to testEmail
   if (body.testEmail && body.sample) {
@@ -110,7 +105,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
            WHERE m.id = ?`
         ).bind(body.memberId).first()
       : await env.DB.prepare(
-          `${socialQuery} ORDER BY m.surname LIMIT 1`
+          `SELECT m.*, p.fee as subscription_fee
+           FROM members m
+           LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+           WHERE LOWER(m.category) LIKE '%social%'
+             AND m.email IS NOT NULL AND m.email <> ''
+           ORDER BY m.surname LIMIT 1`
         ).first();
 
     if (!member || member.subscription_fee === null) {
@@ -166,23 +166,38 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Bulk mode
+  // Bulk mode — skip already-sent members
   const members = await env.DB.prepare(
-    `${socialQuery} ORDER BY m.surname, m.first_name`
-  ).all();
+    `SELECT m.*, p.fee as subscription_fee
+     FROM members m
+     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     LEFT JOIN sent_emails se ON se.member_id = m.id AND se.email_type = 'social_renewal' AND se.year = ? AND se.status = 'sent'
+     WHERE LOWER(m.category) LIKE '%social%'
+       AND m.email IS NOT NULL AND m.email <> ''
+       AND se.id IS NULL
+     ORDER BY m.surname, m.first_name`
+  ).bind(year).all();
 
   if (!members.results || members.results.length === 0) {
-    return new Response(JSON.stringify({ error: 'No Social members with email found' }), { status: 404 });
+    return new Response(JSON.stringify({
+      success: true, mode: 'bulk', total: 0, sent: 0, failed: 0, remaining: 0,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
+
+  const totalRemaining = members.results.length;
+  const batch = members.results.slice(0, BATCH_SIZE);
 
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
 
-  for (const member of members.results) {
+  for (const member of batch) {
     if (member.subscription_fee === null || member.subscription_fee === undefined) {
       failed++;
       errors.push(`${member.first_name} ${member.surname}: No fee for category ${member.category}`);
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'social_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, `No fee for category ${member.category}`).run();
       continue;
     }
 
@@ -199,16 +214,24 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const result = await sendEmail({ to: member.email as string, subject, html }, emailEnv);
     if (result.success) {
       sent++;
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'social_renewal', ?, ?, 'sent')`
+      ).bind(member.id, member.email, year).run();
     } else {
       failed++;
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'social_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, result.error || 'Unknown error').run();
     }
 
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
+  const remaining = totalRemaining - batch.length;
+
   return new Response(JSON.stringify({
-    success: true, mode: 'bulk', total: members.results.length, sent, failed,
+    success: true, mode: 'bulk', total: batch.length, sent, failed, remaining,
     errors: errors.length > 0 ? errors : undefined,
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };

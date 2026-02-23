@@ -1,0 +1,592 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+
+const currentYear = new Date().getFullYear();
+const url = new URL(Astro.request.url);
+const year = parseInt(url.searchParams.get('year') || '') || currentYear;
+const filterType = url.searchParams.get('type') || 'all';
+const filterStatus = url.searchParams.get('status') || 'all';
+
+// Summary stats per email type for the selected year
+const stats = await db.prepare(
+  `SELECT email_type,
+    COUNT(*) as total,
+    SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent_count,
+    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count
+   FROM sent_emails
+   WHERE year = ?
+   GROUP BY email_type
+   ORDER BY email_type`
+).bind(year).all();
+
+// Build the filtered query
+let whereClause = 'WHERE se.year = ?';
+const params: any[] = [year];
+
+if (filterType !== 'all') {
+  whereClause += ' AND se.email_type = ?';
+  params.push(filterType);
+}
+if (filterStatus !== 'all') {
+  whereClause += ' AND se.status = ?';
+  params.push(filterStatus);
+}
+
+const logs = await db.prepare(
+  `SELECT se.*, m.first_name, m.surname, m.category, m.club_number
+   FROM sent_emails se
+   LEFT JOIN members m ON m.id = se.member_id
+   ${whereClause}
+   ORDER BY se.sent_at DESC
+   LIMIT 500`
+).bind(...params).all();
+
+const totalFailed = stats.results?.reduce((sum: number, s: any) => sum + (s.failed_count || 0), 0) || 0;
+const totalSent = stats.results?.reduce((sum: number, s: any) => sum + (s.sent_count || 0), 0) || 0;
+
+const typeLabels: Record<string, string> = {
+  fees_notification: 'Fees Notice',
+  dd_renewal: 'DD Renewal',
+  bacs_renewal: 'BACS Renewal',
+  social_renewal: 'Social Renewal',
+};
+
+function formatDate(dateStr: string) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'Z');
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+---
+
+<AdminLayout title="Email Log">
+  <div class="page-header">
+    <div class="header-left">
+      <a href="/admin/members/subscription-renewals" class="back-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        Renewals
+      </a>
+      <h1>Email Log</h1>
+    </div>
+    <div class="header-right">
+      <label class="year-label">
+        Year
+        <select id="year-select" class="year-input" onchange="applyFilters()">
+          {[currentYear - 1, currentYear, currentYear + 1].map(y => (
+            <option value={y} selected={y === year}>{y}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="summary-cards">
+    <div class="summary-card total">
+      <div class="summary-number">{totalSent + totalFailed}</div>
+      <div class="summary-label">Total Emails</div>
+    </div>
+    <div class="summary-card sent">
+      <div class="summary-number">{totalSent}</div>
+      <div class="summary-label">Sent</div>
+    </div>
+    <div class={`summary-card failed ${totalFailed > 0 ? 'has-failures' : ''}`}>
+      <div class="summary-number">{totalFailed}</div>
+      <div class="summary-label">Failed</div>
+    </div>
+  </div>
+
+  <!-- Per-type breakdown -->
+  {stats.results && stats.results.length > 0 && (
+    <div class="type-breakdown">
+      {stats.results.map((s: any) => (
+        <div class="type-card">
+          <div class="type-name">{typeLabels[s.email_type] || s.email_type}</div>
+          <div class="type-stats">
+            <span class="type-sent">{s.sent_count} sent</span>
+            {s.failed_count > 0 && (
+              <span class="type-failed">{s.failed_count} failed</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  <!-- Failures highlight -->
+  {totalFailed > 0 && (
+    <div class="alert alert-error">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      <span><strong>{totalFailed} email{totalFailed !== 1 ? 's' : ''} failed</strong> — filter by "Failed" below to see details</span>
+    </div>
+  )}
+
+  <!-- Filters -->
+  <div class="filters">
+    <label class="filter-group">
+      <span class="filter-label">Type</span>
+      <select id="filter-type" class="filter-select" onchange="applyFilters()">
+        <option value="all" selected={filterType === 'all'}>All types</option>
+        <option value="fees_notification" selected={filterType === 'fees_notification'}>Fees Notice</option>
+        <option value="dd_renewal" selected={filterType === 'dd_renewal'}>DD Renewal</option>
+        <option value="bacs_renewal" selected={filterType === 'bacs_renewal'}>BACS Renewal</option>
+        <option value="social_renewal" selected={filterType === 'social_renewal'}>Social Renewal</option>
+      </select>
+    </label>
+    <label class="filter-group">
+      <span class="filter-label">Status</span>
+      <select id="filter-status" class="filter-select" onchange="applyFilters()">
+        <option value="all" selected={filterStatus === 'all'}>All</option>
+        <option value="sent" selected={filterStatus === 'sent'}>Sent</option>
+        <option value="failed" selected={filterStatus === 'failed'}>Failed</option>
+      </select>
+    </label>
+    <span class="filter-count">{logs.results?.length || 0} records</span>
+  </div>
+
+  <!-- Log Table -->
+  {(!logs.results || logs.results.length === 0) ? (
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+        <polyline points="22,6 12,13 2,6"/>
+      </svg>
+      <h3>No emails logged</h3>
+      <p>Email send logs for {year} will appear here after bulk sends</p>
+    </div>
+  ) : (
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Member</th>
+            <th>Category</th>
+            <th>Email</th>
+            <th>Type</th>
+            <th>Sent At</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {logs.results.map((log: any) => (
+            <tr class={log.status === 'failed' ? 'row-failed' : ''}>
+              <td>
+                {log.status === 'sent' ? (
+                  <span class="status-badge status-sent">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px;">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Sent
+                  </span>
+                ) : (
+                  <span class="status-badge status-failed">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px;">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                    Failed
+                  </span>
+                )}
+              </td>
+              <td>
+                {log.club_number ? <span class="member-num">#{log.club_number}</span> : ''}
+                {[log.first_name, log.surname].filter(Boolean).join(' ') || `ID ${log.member_id}`}
+              </td>
+              <td>{log.category || '—'}</td>
+              <td class="email-cell">{log.email_address}</td>
+              <td><span class="type-tag">{typeLabels[log.email_type] || log.email_type}</span></td>
+              <td class="date-cell">{formatDate(log.sent_at)}</td>
+              <td class="error-cell">{log.error || ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )}
+
+  <style>
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-link {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      color: #666;
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .back-link:hover { color: #1e5631; }
+
+    .back-link svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .page-header h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .year-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #666;
+    }
+
+    .year-input {
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-align: center;
+      background: #fff;
+    }
+
+    .year-input:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    /* Summary Cards */
+    .summary-cards {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .summary-card {
+      flex: 1;
+      background: #fff;
+      border-radius: 12px;
+      padding: 1.25rem;
+      border: 1px solid #e8e8e8;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .summary-number {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 0.25rem;
+    }
+
+    .summary-label {
+      font-size: 0.85rem;
+      color: #666;
+      font-weight: 500;
+    }
+
+    .summary-card.total .summary-number { color: #1a1a1a; }
+    .summary-card.sent .summary-number { color: #2e7d32; }
+    .summary-card.failed .summary-number { color: #999; }
+    .summary-card.failed.has-failures .summary-number { color: #c62828; }
+    .summary-card.failed.has-failures {
+      border-color: #ffcdd2;
+      background: #fff5f5;
+    }
+
+    /* Type Breakdown */
+    .type-breakdown {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .type-card {
+      flex: 1;
+      min-width: 140px;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 10px;
+      padding: 0.875rem 1rem;
+    }
+
+    .type-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 0.25rem;
+    }
+
+    .type-stats {
+      display: flex;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .type-sent { color: #2e7d32; }
+    .type-failed { color: #c62828; font-weight: 600; }
+
+    /* Alert */
+    .alert {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .alert-error {
+      background: #ffebee;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+    }
+
+    /* Filters */
+    .filters {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .filter-label {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #666;
+    }
+
+    .filter-select {
+      padding: 0.4rem 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      background: #fff;
+    }
+
+    .filter-select:focus {
+      outline: none;
+      border-color: #1e5631;
+      box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+    }
+
+    .filter-count {
+      font-size: 0.85rem;
+      color: #999;
+      margin-left: auto;
+    }
+
+    /* Table */
+    .table-wrapper {
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #e8e8e8;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      background: #fafafa;
+      border-bottom: 1px solid #e8e8e8;
+      position: sticky;
+      top: 0;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid #f0f0f0;
+      color: #333;
+    }
+
+    tbody tr:hover {
+      background: #f9f9f9;
+    }
+
+    tr.row-failed {
+      background: #fff8f8;
+    }
+
+    tr.row-failed:hover {
+      background: #fff0f0;
+    }
+
+    /* Status badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .status-sent {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status-failed {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .member-num {
+      color: #999;
+      font-size: 0.8rem;
+      margin-right: 0.375rem;
+    }
+
+    .email-cell {
+      color: #666;
+      font-size: 0.8rem;
+    }
+
+    .date-cell {
+      white-space: nowrap;
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    .error-cell {
+      color: #c62828;
+      font-size: 0.8rem;
+      max-width: 250px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .type-tag {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      background: #f0f0f0;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 12px;
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      color: #666;
+      opacity: 0.5;
+      margin-bottom: 1rem;
+    }
+
+    .empty-state h3 {
+      margin: 0 0 0.5rem 0;
+      color: #1a1a1a;
+    }
+
+    .empty-state p {
+      margin: 0;
+      color: #666;
+    }
+
+    @media (max-width: 600px) {
+      .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .summary-cards {
+        flex-direction: column;
+      }
+
+      .type-breakdown {
+        flex-direction: column;
+      }
+
+      .filters {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .filter-count {
+        margin-left: 0;
+      }
+    }
+  </style>
+
+  <script is:inline>
+    function applyFilters() {
+      const year = document.getElementById('year-select').value;
+      const type = document.getElementById('filter-type').value;
+      const status = document.getElementById('filter-status').value;
+
+      const params = new URLSearchParams();
+      params.set('year', year);
+      if (type !== 'all') params.set('type', type);
+      if (status !== 'all') params.set('status', status);
+
+      window.location.href = '/admin/members/email-log?' + params.toString();
+    }
+  </script>
+</AdminLayout>

@@ -2,6 +2,7 @@
 // POST /api/send-dd-renewal { memberId?: number, year?: number, testEmail?: string }
 // Family members with family_payer_id are consolidated into the payer's email
 // Protected by Cloudflare Access (admin only)
+// Bulk mode processes up to BATCH_SIZE members per request, skipping already-sent
 
 import type { APIRoute } from 'astro';
 import { sendEmail } from '../../lib/email';
@@ -9,6 +10,8 @@ import {
   calculateDDSchedule, generateDDRenewalEmail, generateDDRenewalSubject,
   calculateConsolidatedSchedule, generateConsolidatedDDRenewalEmail,
 } from '../../lib/dd-renewal-email';
+
+const BATCH_SIZE = 40;
 
 function buildMemberData(member: any) {
   return {
@@ -240,29 +243,40 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   // Bulk mode: send to all DD payers (skip dependants — they're included in payer's consolidated email)
+  // Skip members already sent for this email_type + year
   const members = await env.DB.prepare(
     `SELECT m.*, p.fee as subscription_fee
      FROM members m
      LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     LEFT JOIN sent_emails se ON se.member_id = m.id AND se.email_type = 'dd_renewal' AND se.year = ? AND se.status = 'sent'
      WHERE m.default_payment_method = 'Clubwise Direct Debit'
        AND LOWER(m.category) <> 'winter'
        AND m.family_payer_id IS NULL
        AND m.email IS NOT NULL AND m.email <> ''
+       AND se.id IS NULL
      ORDER BY m.surname, m.first_name`
-  ).all();
+  ).bind(year).all();
 
   if (!members.results || members.results.length === 0) {
-    return new Response(JSON.stringify({ error: 'No DD members with email addresses found' }), { status: 404 });
+    return new Response(JSON.stringify({
+      success: true, mode: 'bulk', total: 0, sent: 0, failed: 0, remaining: 0,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
+
+  const totalRemaining = members.results.length;
+  const batch = members.results.slice(0, BATCH_SIZE);
 
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
 
-  for (const member of members.results) {
+  for (const member of batch) {
     if (member.subscription_fee === null || member.subscription_fee === undefined) {
       failed++;
       errors.push(`${member.first_name} ${member.surname}: No fee for category ${member.category}`);
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'dd_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, `No fee for category ${member.category}`).run();
       continue;
     }
 
@@ -285,20 +299,24 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const result = await sendEmail({ to: member.email as string, subject, html }, emailEnv);
     if (result.success) {
       sent++;
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'dd_renewal', ?, ?, 'sent')`
+      ).bind(member.id, member.email, year).run();
     } else {
       failed++;
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'dd_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, result.error || 'Unknown error').run();
     }
 
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
+  const remaining = totalRemaining - batch.length;
+
   return new Response(JSON.stringify({
-    success: true,
-    mode: 'bulk',
-    total: members.results.length,
-    sent,
-    failed,
+    success: true, mode: 'bulk', total: batch.length, sent, failed, remaining,
     errors: errors.length > 0 ? errors : undefined,
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
