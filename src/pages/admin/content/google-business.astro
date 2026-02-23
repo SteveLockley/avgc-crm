@@ -1,0 +1,985 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { isGoogleConfigured } from '../../../lib/google-business';
+import { getCurrentSeason, getSeasonLabel } from '../../../lib/opening-hours';
+
+const env = Astro.locals.runtime?.env;
+const db = env?.DB;
+const configured = isGoogleConfigured(env);
+const currentSeason = getCurrentSeason();
+const locationId = env?.GOOGLE_LOCATION_ID || '';
+
+// Fetch last sync info
+let lastSync: any = null;
+let lastHoursPush: any = null;
+let syncLog: any[] = [];
+let specialHours: any[] = [];
+
+if (db) {
+  try {
+    lastSync = await db.prepare(
+      `SELECT * FROM google_sync_log ORDER BY created_at DESC LIMIT 1`
+    ).first();
+
+    lastHoursPush = await db.prepare(
+      `SELECT * FROM google_sync_log WHERE action = 'push_hours' AND status = 'success' ORDER BY created_at DESC LIMIT 1`
+    ).first();
+
+    const logRows = await db.prepare(
+      `SELECT * FROM google_sync_log ORDER BY created_at DESC LIMIT 20`
+    ).all();
+    syncLog = logRows.results || [];
+
+    const today = new Date().toISOString().split('T')[0];
+    const shRows = await db.prepare(
+      `SELECT * FROM google_special_hours WHERE date >= ? ORDER BY date ASC`
+    ).bind(today).all();
+    specialHours = shRows.results || [];
+  } catch (e) {
+    console.error('Error loading Google Business data:', e);
+  }
+}
+---
+
+<AdminLayout title="Google Business Profile">
+  <div class="gbp-page">
+    <a href="/admin/content" class="back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      Back to Content
+    </a>
+
+    <div id="alert-container"></div>
+
+    <!-- Connection Status -->
+    <div class="card">
+      <div class="card-header">
+        <div class="header-left">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <div>
+            <h2>Connection Status</h2>
+            <p>Google Business Profile API configuration</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          {configured && (
+            <button type="button" class="google-btn" id="test-connection">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              Test Connection
+            </button>
+          )}
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="status-row">
+          <span class="status-label">Status</span>
+          <span class={`status-badge ${configured ? 'status-ok' : 'status-error'}`}>
+            {configured ? 'Configured' : 'Not Configured'}
+          </span>
+        </div>
+        {configured && (
+          <div class="status-row">
+            <span class="status-label">Location ID</span>
+            <code class="location-id">{locationId}</code>
+          </div>
+        )}
+        {lastSync && (
+          <div class="status-row">
+            <span class="status-label">Last Activity</span>
+            <span>{lastSync.action} — {lastSync.status} — {lastSync.created_at}</span>
+          </div>
+        )}
+        <div id="profile-preview" style="display:none;">
+          <div class="status-row">
+            <span class="status-label">Business Name</span>
+            <span id="preview-title">—</span>
+          </div>
+        </div>
+      </div>
+      {!configured && (
+        <div class="card-body" style="border-top: 1px solid var(--border);">
+          <div class="info-box" style="margin:0;">
+            <h4>Setup Required</h4>
+            <p>Add these Cloudflare secrets to enable Google Business Profile sync:</p>
+            <ul>
+              <li><code>GOOGLE_CLIENT_ID</code></li>
+              <li><code>GOOGLE_CLIENT_SECRET</code></li>
+              <li><code>GOOGLE_REFRESH_TOKEN</code></li>
+              <li><code>GOOGLE_LOCATION_ID</code></li>
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+
+    {configured && (
+      <!-- Business Information -->
+      <div class="card">
+        <div class="card-header">
+          <div class="header-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <div>
+              <h2>Business Information</h2>
+              <p>Edit your Google Business Profile details</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="btn-secondary" id="fetch-info">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Fetch from Google
+            </button>
+            <button type="button" class="google-btn" id="save-info">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <polyline points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              Save to Google
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label for="biz-description">Description</label>
+            <textarea id="biz-description" rows="4" class="form-input" placeholder="Business description shown on Google..."></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="biz-phone">Phone Number</label>
+              <input type="tel" id="biz-phone" class="form-input" placeholder="e.g. 01onal 830370" />
+            </div>
+            <div class="form-group">
+              <label for="biz-website">Website URL</label>
+              <input type="url" id="biz-website" class="form-input" placeholder="https://www.alnmouthvillage.golf" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Opening Hours -->
+      <div class="card">
+        <div class="card-header">
+          <div class="header-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+            <div>
+              <h2>Opening Hours</h2>
+              <p>Currently showing: {currentSeason} ({getSeasonLabel(currentSeason)}){lastHoursPush ? ` — Last pushed ${lastHoursPush.created_at}` : ''}</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <a href="/admin/content/opening-hours" class="btn-secondary">
+              Edit Hours
+            </a>
+            <button type="button" class="google-btn" id="push-hours" data-season={currentSeason}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <polyline points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              Push Hours to Google
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Special Hours -->
+      <div class="card">
+        <div class="card-header">
+          <div class="header-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <div>
+              <h2>Special Hours</h2>
+              <p>Holidays, closures, and other exceptional hours</p>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button type="button" class="google-btn" id="push-special-hours">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <polyline points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+              Push to Google
+            </button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="add-special-form" id="add-special-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="sh-date">Date</label>
+                <input type="date" id="sh-date" class="form-input" required />
+              </div>
+              <div class="form-group">
+                <label for="sh-open">Open</label>
+                <input type="time" id="sh-open" class="form-input" value="08:30" />
+              </div>
+              <div class="form-group">
+                <label for="sh-close">Close</label>
+                <input type="time" id="sh-close" class="form-input" value="16:00" />
+              </div>
+              <div class="form-group">
+                <label class="toggle-label" style="padding-top:1.5rem;">
+                  <input type="checkbox" id="sh-closed" class="toggle-checkbox" />
+                  <span class="toggle-text">Closed</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1;">
+                <label for="sh-label">Label (optional)</label>
+                <input type="text" id="sh-label" class="form-input" placeholder="e.g. Good Friday, Christmas Day" />
+              </div>
+              <div class="form-group" style="align-self:flex-end;">
+                <button type="button" class="save-btn" id="add-special-hour">Add</button>
+              </div>
+            </div>
+          </div>
+
+          {specialHours.length > 0 ? (
+            <table class="data-table" id="special-hours-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Hours</th>
+                  <th>Label</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {specialHours.map((sh: any) => (
+                  <tr data-id={sh.id}>
+                    <td>{sh.date}</td>
+                    <td>{sh.is_closed ? 'Closed' : `${sh.open_time || '—'} – ${sh.close_time || '—'}`}</td>
+                    <td>{sh.label || '—'}</td>
+                    <td>
+                      <button type="button" class="btn-delete" data-id={sh.id}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p class="empty-text">No special hours entries. Add holidays or closures above.</p>
+          )}
+        </div>
+      </div>
+
+      <!-- Sync Log -->
+      <div class="card">
+        <div class="card-header">
+          <div class="header-left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <div>
+              <h2>Sync Log</h2>
+              <p>Recent Google Business Profile activity</p>
+            </div>
+          </div>
+        </div>
+        {syncLog.length > 0 ? (
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Action</th>
+                <th>Status</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {syncLog.map((log: any) => (
+                <tr>
+                  <td>{log.created_at}</td>
+                  <td><code>{log.action}</code></td>
+                  <td>
+                    <span class={`status-badge ${log.status === 'success' ? 'status-ok' : 'status-error'}`}>
+                      {log.status}
+                    </span>
+                  </td>
+                  <td class="log-detail">{log.error_message || log.season || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div class="card-body">
+            <p class="empty-text">No sync activity yet.</p>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  <script is:inline>
+    function showAlert(message, type) {
+      const container = document.getElementById('alert-container');
+      container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+      setTimeout(() => { container.innerHTML = ''; }, 6000);
+    }
+
+    // Test Connection
+    document.getElementById('test-connection')?.addEventListener('click', async function() {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      try {
+        const resp = await fetch('/api/google-profile');
+        const result = await resp.json();
+        if (result.success) {
+          showAlert('Connection successful! Business: ' + (result.data?.title || 'Unknown'), 'success');
+          document.getElementById('preview-title').textContent = result.data?.title || '—';
+          document.getElementById('profile-preview').style.display = 'block';
+        } else {
+          showAlert('Connection failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Connection test failed. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Test Connection';
+    });
+
+    // Fetch Info
+    document.getElementById('fetch-info')?.addEventListener('click', async function() {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Fetching...';
+      try {
+        const resp = await fetch('/api/google-profile');
+        const result = await resp.json();
+        if (result.success && result.data) {
+          document.getElementById('biz-description').value = result.data.description || '';
+          document.getElementById('biz-phone').value = result.data.primaryPhone || '';
+          document.getElementById('biz-website').value = result.data.websiteUri || '';
+          showAlert('Profile loaded from Google', 'success');
+        } else {
+          showAlert('Failed to fetch: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Fetch failed. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Fetch from Google';
+    });
+
+    // Save Info
+    document.getElementById('save-info')?.addEventListener('click', async function() {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+      try {
+        const body = {
+          description: document.getElementById('biz-description').value,
+          primaryPhone: document.getElementById('biz-phone').value,
+          websiteUri: document.getElementById('biz-website').value,
+        };
+        const resp = await fetch('/api/google-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          showAlert('Business information updated on Google', 'success');
+        } else {
+          showAlert('Update failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Save failed. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="22 2 15 22 11 13 2 9 22 2"/></svg> Save to Google';
+    });
+
+    // Push Hours
+    document.getElementById('push-hours')?.addEventListener('click', async function() {
+      const btn = this;
+      const season = btn.getAttribute('data-season');
+      btn.disabled = true;
+      btn.textContent = 'Pushing...';
+      try {
+        const resp = await fetch('/api/google-hours', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ season, force: true }),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          let msg = 'Hours pushed to Google!';
+          if (result.skippedDays?.length) {
+            msg += ' Skipped days with text-based times: ' + result.skippedDays.join(', ');
+          }
+          showAlert(msg, 'success');
+        } else {
+          showAlert('Push failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Push failed. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="22 2 15 22 11 13 2 9 22 2"/></svg> Push Hours to Google';
+    });
+
+    // Add Special Hour
+    document.getElementById('add-special-hour')?.addEventListener('click', async function() {
+      const date = document.getElementById('sh-date').value;
+      if (!date) { showAlert('Please select a date', 'error'); return; }
+
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+      try {
+        const isClosed = document.getElementById('sh-closed').checked;
+        const body = {
+          action: 'add',
+          date,
+          openTime: isClosed ? null : document.getElementById('sh-open').value,
+          closeTime: isClosed ? null : document.getElementById('sh-close').value,
+          isClosed,
+          label: document.getElementById('sh-label').value || null,
+        };
+        const resp = await fetch('/api/google-special-hours', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          showAlert('Special hours entry added', 'success');
+          location.reload();
+        } else {
+          showAlert('Failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Failed to add entry. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.textContent = 'Add';
+    });
+
+    // Delete Special Hour
+    document.querySelectorAll('.btn-delete').forEach(btn => {
+      btn.addEventListener('click', async function() {
+        if (!confirm('Delete this special hours entry?')) return;
+        const id = parseInt(this.getAttribute('data-id'));
+        this.disabled = true;
+        this.textContent = '...';
+        try {
+          const resp = await fetch('/api/google-special-hours', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete', id }),
+          });
+          const result = await resp.json();
+          if (result.success) {
+            this.closest('tr').remove();
+            showAlert('Entry deleted', 'success');
+          } else {
+            showAlert('Delete failed: ' + (result.error || 'Unknown error'), 'error');
+          }
+        } catch (e) {
+          showAlert('Delete failed. Check console.', 'error');
+          console.error(e);
+        }
+        this.disabled = false;
+        this.textContent = 'Delete';
+      });
+    });
+
+    // Push Special Hours
+    document.getElementById('push-special-hours')?.addEventListener('click', async function() {
+      const btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Pushing...';
+      try {
+        const resp = await fetch('/api/google-special-hours', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'push' }),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          showAlert('Special hours pushed to Google!', 'success');
+        } else {
+          showAlert('Push failed: ' + (result.error || 'Unknown error'), 'error');
+        }
+      } catch (e) {
+        showAlert('Push failed. Check console.', 'error');
+        console.error(e);
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="22 2 15 22 11 13 2 9 22 2"/></svg> Push to Google';
+    });
+
+    // Toggle closed state hides/shows time inputs
+    document.getElementById('sh-closed')?.addEventListener('change', function() {
+      const open = document.getElementById('sh-open');
+      const close = document.getElementById('sh-close');
+      open.disabled = this.checked;
+      close.disabled = this.checked;
+      if (this.checked) {
+        open.style.opacity = '0.4';
+        close.style.opacity = '0.4';
+      } else {
+        open.style.opacity = '1';
+        close.style.opacity = '1';
+      }
+    });
+  </script>
+</AdminLayout>
+
+<style>
+  .gbp-page {
+    max-width: 900px;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--text-light);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .back-link:hover {
+    color: var(--primary);
+  }
+
+  .back-link svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .alert {
+    padding: 0.875rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+
+  .alert-success {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .header-icon {
+    width: 32px;
+    height: 32px;
+    color: var(--primary);
+    flex-shrink: 0;
+  }
+
+  .card-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--text);
+  }
+
+  .card-header p {
+    margin: 0.125rem 0 0 0;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .card-body {
+    padding: 1.25rem 1.5rem;
+  }
+
+  /* Status */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 0;
+  }
+
+  .status-row:not(:last-child) {
+    border-bottom: 1px solid var(--border, #f0f0f0);
+  }
+
+  .status-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-light);
+    min-width: 120px;
+    flex-shrink: 0;
+  }
+
+  .status-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .status-ok {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .status-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .location-id {
+    background: var(--surface, #f3f4f6);
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  /* Buttons */
+  .google-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.625rem 1rem;
+    background: #4285f4;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+
+  .google-btn:hover {
+    background: #3367d6;
+  }
+
+  .google-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .save-btn {
+    padding: 0.625rem 1.25rem;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+  }
+
+  .save-btn:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.625rem 1rem;
+    background: var(--card-bg, #fff);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+
+  .btn-secondary:hover {
+    background: var(--surface, #f3f4f6);
+  }
+
+  .btn-delete {
+    padding: 0.3rem 0.75rem;
+    background: transparent;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-delete:hover {
+    background: #fee2e2;
+  }
+
+  /* Forms */
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .form-group label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .form-input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    background: var(--white, #fff);
+    transition: border-color 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(34, 139, 34, 0.1);
+  }
+
+  textarea.form-input {
+    resize: vertical;
+  }
+
+  .form-row {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .form-row .form-group {
+    flex: 1;
+  }
+
+  /* Data tables */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .data-table thead {
+    border-bottom: 2px solid var(--border, #e5e7eb);
+  }
+
+  .data-table th {
+    text-align: left;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-light);
+  }
+
+  .data-table td {
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border, #f0f0f0);
+  }
+
+  .data-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--surface, #f9fafb);
+  }
+
+  .data-table code {
+    background: var(--surface, #f3f4f6);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+  }
+
+  .log-detail {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    color: var(--text-light);
+  }
+
+  .empty-text {
+    color: var(--text-light);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 1rem 0;
+  }
+
+  /* Info box */
+  .info-box {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+  }
+
+  .info-box h4 {
+    margin: 0 0 0.5rem 0;
+    color: #0369a1;
+    font-size: 0.95rem;
+  }
+
+  .info-box p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: #0c4a6e;
+  }
+
+  .info-box ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: #0c4a6e;
+  }
+
+  .info-box li {
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
+  }
+
+  .info-box code {
+    background: #e0f2fe;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  /* Special hours form */
+  .add-special-form {
+    background: var(--surface, #f9fafb);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .toggle-checkbox {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+  }
+
+  .toggle-text {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    user-select: none;
+  }
+
+  @media (max-width: 600px) {
+    .card-header {
+      padding: 1rem;
+    }
+
+    .card-body {
+      padding: 1rem;
+    }
+
+    .header-actions {
+      width: 100%;
+    }
+
+    .google-btn, .save-btn, .btn-secondary {
+      flex: 1;
+      text-align: center;
+      justify-content: center;
+    }
+
+    .form-row {
+      flex-direction: column;
+    }
+
+    .status-row {
+      flex-direction: column;
+      gap: 0.25rem;
+      align-items: flex-start;
+    }
+
+    .status-label {
+      min-width: auto;
+    }
+
+    .data-table th,
+    .data-table td {
+      padding: 0.5rem 0.75rem;
+    }
+
+    .log-detail {
+      max-width: 150px;
+    }
+  }
+</style>

@@ -95,3 +95,141 @@ export async function updateGoogleBusinessHours(
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
+
+export async function getGoogleBusinessProfile(
+  env: GoogleEnv
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  try {
+    const accessToken = await getGoogleAccessToken(env);
+    const locationId = env.GOOGLE_LOCATION_ID;
+
+    const response = await fetch(
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${locationId}?readMask=title,profile,phoneNumbers,websiteUri`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Google API error (${response.status}): ${errorText}` };
+    }
+
+    const data = await response.json() as any;
+    return {
+      success: true,
+      data: {
+        title: data.title || '',
+        description: data.profile?.description || '',
+        primaryPhone: data.phoneNumbers?.primaryPhone || '',
+        websiteUri: data.websiteUri || '',
+      }
+    };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+export async function updateGoogleBusinessInfo(
+  env: GoogleEnv,
+  info: { description?: string; primaryPhone?: string; websiteUri?: string }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const accessToken = await getGoogleAccessToken(env);
+    const locationId = env.GOOGLE_LOCATION_ID;
+
+    const body: any = {};
+    const masks: string[] = [];
+
+    if (info.description !== undefined) {
+      body.profile = { description: info.description };
+      masks.push('profile.description');
+    }
+    if (info.primaryPhone !== undefined) {
+      body.phoneNumbers = { primaryPhone: info.primaryPhone };
+      masks.push('phoneNumbers.primaryPhone');
+    }
+    if (info.websiteUri !== undefined) {
+      body.websiteUri = info.websiteUri;
+      masks.push('websiteUri');
+    }
+
+    if (masks.length === 0) {
+      return { success: false, error: 'No fields to update' };
+    }
+
+    const response = await fetch(
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${locationId}?updateMask=${masks.join(',')}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Google API error (${response.status}): ${errorText}` };
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+export interface SpecialHourEntry {
+  date: string; // YYYY-MM-DD
+  open_time?: string;
+  close_time?: string;
+  is_closed: boolean;
+}
+
+export async function updateGoogleSpecialHours(
+  env: GoogleEnv,
+  entries: SpecialHourEntry[]
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const accessToken = await getGoogleAccessToken(env);
+    const locationId = env.GOOGLE_LOCATION_ID;
+
+    const specialHourPeriods = entries.map(entry => {
+      const [year, month, day] = entry.date.split('-').map(Number);
+      const period: any = {
+        startDate: { year, month, day },
+        closed: !!entry.is_closed,
+      };
+      if (!entry.is_closed && entry.open_time && entry.close_time) {
+        const [openH, openM] = entry.open_time.split(':').map(Number);
+        const [closeH, closeM] = entry.close_time.split(':').map(Number);
+        period.openTime = { hours: openH, minutes: openM };
+        period.closeTime = { hours: closeH, minutes: closeM };
+      }
+      return period;
+    });
+
+    const response = await fetch(
+      `https://mybusinessbusinessinformation.googleapis.com/v1/${locationId}?updateMask=specialHours`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ specialHours: { specialHourPeriods } }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Google API error (${response.status}): ${errorText}` };
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
