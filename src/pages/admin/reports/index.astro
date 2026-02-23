@@ -103,47 +103,116 @@ const outstandingBalances = await db.prepare(`
 `).first();
 
 // Monthly subscription revenue (Apr-Mar membership year)
-// Use the membership year that contains "now" - if before April, use previous year
+// Find the most recent membership year that has invoices
 const now = new Date();
-const membershipYearStart = now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear();
+const latestInvoiceYear = await db.prepare(`
+  SELECT DISTINCT period_start FROM invoices
+  WHERE status != 'cancelled'
+  ORDER BY period_start DESC LIMIT 1
+`).first<{ period_start: string }>();
+
+// Fall back to current year logic if no invoices exist
+let membershipYearStart: number;
+if (latestInvoiceYear?.period_start) {
+  membershipYearStart = parseInt(latestInvoiceYear.period_start.substring(0, 4));
+} else {
+  membershipYearStart = now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear();
+}
 const membershipYearEnd = membershipYearStart + 1;
 const aprStart = `${membershipYearStart}-04-01`;
 const marEnd = `${membershipYearEnd}-03-31`;
 
-const monthlySubRevenue = await db.prepare(`
+// DD invoices: get subscription vs fee breakdown per invoice for schedule calculation
+const ddInvoiceBreakdown = await db.prepare(`
   SELECT
-    strftime('%Y-%m', p.payment_date) as month,
-    SUM(pli.amount) as total
-  FROM payment_line_items pli
-  JOIN payments p ON pli.payment_id = p.id
-  JOIN invoices i ON p.invoice_id = i.id
-  WHERE pli.description LIKE '%subscription%'
-    AND p.payment_date >= ?
-    AND p.payment_date <= ?
-  GROUP BY strftime('%Y-%m', p.payment_date)
-  ORDER BY month
-`).bind(aprStart, marEnd).all();
+    i.id,
+    i.total,
+    SUM(CASE WHEN ii.description LIKE '%subscription%' THEN ii.line_total ELSE 0 END) as sub_amount,
+    SUM(CASE WHEN ii.description NOT LIKE '%subscription%' THEN ii.line_total ELSE 0 END) as fee_amount
+  FROM invoices i
+  JOIN invoice_items ii ON ii.invoice_id = i.id
+  WHERE i.status != 'cancelled'
+    AND i.period_start = ?
+    AND i.status = 'paid'
+    AND EXISTS (SELECT 1 FROM payments p WHERE p.invoice_id = i.id AND p.payment_method = 'Clubwise Direct Debit')
+  GROUP BY i.id
+`).bind(aprStart).all();
 
-// Build full 12-month array (Apr-Mar) with zero-fill for months with no data
+// Non-DD invoices (BACS, Social, etc): full amount in invoice_date month
+const nonDDInvoices = await db.prepare(`
+  SELECT
+    strftime('%Y-%m', i.invoice_date) as month,
+    SUM(i.total) as total,
+    SUM(CASE WHEN i.status = 'paid' THEN i.total ELSE 0 END) as paid
+  FROM invoices i
+  WHERE i.status != 'cancelled'
+    AND i.period_start = ?
+    AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.invoice_id = i.id AND p.payment_method = 'Clubwise Direct Debit')
+  GROUP BY strftime('%Y-%m', i.invoice_date)
+  ORDER BY month
+`).bind(aprStart).all();
+
+// Build monthly schedule arrays (Apr=0 ... Mar=11)
 const MONTH_LABELS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-const subRevenueMap: Record<string, number> = {};
-for (const row of (monthlySubRevenue.results || []) as any[]) {
-  subRevenueMap[row.month] = row.total;
+const invoicedByMonth = new Array(12).fill(0);
+const paidByMonth = new Array(12).fill(0);
+
+// Spread DD invoices across 12 months using DD schedule
+// First month (Apr): fees + first month subscription (absorbs rounding)
+// Months 2-12 (May-Mar): floor(subscription / 12) each
+for (const inv of (ddInvoiceBreakdown.results || []) as any[]) {
+  const sub = inv.sub_amount as number;
+  const fees = inv.fee_amount as number;
+  const monthly = Math.floor(sub * 100 / 12) / 100;
+  const firstMonthSub = Math.round((sub - 11 * monthly) * 100) / 100;
+  const firstMonth = fees + firstMonthSub;
+
+  // DD invoices are paid, so invoiced = paid for each month
+  invoicedByMonth[0] += firstMonth;
+  paidByMonth[0] += firstMonth;
+  for (let m = 1; m < 12; m++) {
+    invoicedByMonth[m] += monthly;
+    paidByMonth[m] += monthly;
+  }
 }
 
-const subRevenueData: { label: string; key: string; value: number }[] = [];
+// Add non-DD invoices to their respective months
+for (const row of (nonDDInvoices.results || []) as any[]) {
+  const month = row.month as string;
+  // Find which index this month maps to in Apr-Mar
+  const [yr, mo] = month.split('-').map(Number);
+  let idx: number;
+  if (mo >= 4) {
+    idx = mo - 4; // Apr=0, May=1, ..., Dec=8
+  } else {
+    idx = mo + 8; // Jan=9, Feb=10, Mar=11
+  }
+  if (idx >= 0 && idx < 12) {
+    invoicedByMonth[idx] += row.total as number;
+    paidByMonth[idx] += row.paid as number;
+  }
+}
+
+// Build chart data
+const subRevenueData: { label: string; key: string; invoiced: number; paid: number; unpaid: number }[] = [];
 for (let i = 0; i < 12; i++) {
-  const monthNum = ((3 + i) % 12) + 1; // Apr=4, May=5, ..., Mar=3
+  const monthNum = ((3 + i) % 12) + 1;
   const yr = monthNum <= 3 ? membershipYearEnd : membershipYearStart;
   const key = `${yr}-${String(monthNum).padStart(2, '0')}`;
+  const invoiced = Math.round(invoicedByMonth[i] * 100) / 100;
+  const paid = Math.round(paidByMonth[i] * 100) / 100;
   subRevenueData.push({
     label: MONTH_LABELS[i],
     key,
-    value: subRevenueMap[key] || 0,
+    invoiced,
+    paid,
+    unpaid: Math.max(Math.round((invoiced - paid) * 100) / 100, 0),
   });
 }
-const maxSubRevenue = Math.max(...subRevenueData.map(d => d.value), 1);
-const totalSubRevenue = subRevenueData.reduce((sum, d) => sum + d.value, 0);
+const totalInvoiced = Math.round(subRevenueData.reduce((sum, d) => sum + d.invoiced, 0) * 100) / 100;
+const totalPaid = Math.round(subRevenueData.reduce((sum, d) => sum + d.paid, 0) * 100) / 100;
+const totalUnpaid = Math.max(Math.round((totalInvoiced - totalPaid) * 100) / 100, 0);
+const maxBarValue = Math.max(...subRevenueData.map(d => Math.max(d.invoiced, d.paid)), 1);
 
 // Age group breakdown
 const ageStats = await db.prepare(`
@@ -387,22 +456,36 @@ const handicapStats = await db.prepare(`
           <span class="card-badge">{membershipYearStart}/{membershipYearEnd}</span>
         </div>
         <div class="card-content">
-          <div class="chart-total">
-            Total: <strong>{formatCurrency(totalSubRevenue)}</strong>
+          <div class="chart-summary">
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-invoiced"></span>
+              Invoiced: <strong>{formatCurrency(totalInvoiced)}</strong>
+            </div>
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-paid"></span>
+              Paid: <strong>{formatCurrency(totalPaid)}</strong>
+            </div>
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-unpaid"></span>
+              Unpaid: <strong>{formatCurrency(totalUnpaid)}</strong>
+            </div>
           </div>
           <div class="bar-chart">
             {subRevenueData.map((d) => (
               <div class="bar-col">
-                <div class="bar-value">{d.value > 0 ? formatCurrency(d.value) : ''}</div>
+                <div class="bar-value">{d.invoiced > 0 ? formatCurrency(d.invoiced) : ''}</div>
                 <div class="bar-track">
-                  <div class="bar-fill" style={`height: ${maxSubRevenue > 0 ? (d.value / maxSubRevenue) * 100 : 0}%`}></div>
+                  <div class="bar-stack" style={`height: ${maxBarValue > 0 ? (d.invoiced / maxBarValue) * 100 : 0}%`}>
+                    <div class="bar-segment-unpaid" style={`flex: ${d.unpaid}`}></div>
+                    <div class="bar-segment-paid" style={`flex: ${d.paid}`}></div>
+                  </div>
                 </div>
                 <div class="bar-label">{d.label}</div>
               </div>
             ))}
           </div>
-          {totalSubRevenue === 0 && (
-            <div class="empty-row" style="text-align: center; color: #999; padding: 1rem;">No subscription payments recorded for this period</div>
+          {totalInvoiced === 0 && (
+            <div class="empty-row" style="text-align: center; color: #999; padding: 1rem;">No invoices recorded for this period</div>
           )}
         </div>
       </div>
@@ -988,17 +1071,36 @@ const handicapStats = await db.prepare(`
     }
 
     /* Bar Chart */
-    .chart-total {
-      font-size: 0.9rem;
-      color: #666;
+    .chart-summary {
+      display: flex;
+      gap: 1.5rem;
       margin-bottom: 1rem;
-      text-align: right;
+      justify-content: flex-end;
+      flex-wrap: wrap;
     }
 
-    .chart-total strong {
-      color: #1e5631;
-      font-size: 1.1rem;
+    .chart-summary-item {
+      font-size: 0.85rem;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
     }
+
+    .chart-summary-item strong {
+      color: #1a1a1a;
+    }
+
+    .chart-legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .legend-invoiced { background: #e0e0e0; }
+    .legend-paid { background: #28a745; }
+    .legend-unpaid { background: #dc3545; }
 
     .bar-chart {
       display: flex;
@@ -1035,12 +1137,21 @@ const handicapStats = await db.prepare(`
       overflow: hidden;
     }
 
-    .bar-fill {
+    .bar-stack {
       width: 100%;
-      background: linear-gradient(180deg, #1e5631 0%, #2d7a45 100%);
+      display: flex;
+      flex-direction: column;
       border-radius: 4px 4px 0 0;
-      min-height: 2px;
+      overflow: hidden;
       transition: height 0.3s ease;
+    }
+
+    .bar-segment-paid {
+      background: #28a745;
+    }
+
+    .bar-segment-unpaid {
+      background: #dc3545;
     }
 
     .bar-label {

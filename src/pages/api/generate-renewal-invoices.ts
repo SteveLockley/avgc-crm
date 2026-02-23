@@ -169,14 +169,38 @@ export const POST: APIRoute = async ({ request, locals }) => {
      ORDER BY m.surname, m.first_name`
   ).bind(periodStart, periodEnd, emailType, year).all();
 
-  if (!members.results || members.results.length === 0) {
+  // For DD renewals, also include family dependants whose payer was sent a DD renewal.
+  // Dependants are consolidated into the payer's email, so they don't have their own sent_emails row.
+  let dependants: any[] = [];
+  if (isDD) {
+    const depResult = await env.DB.prepare(
+      `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
+       FROM members m
+       INNER JOIN sent_emails se ON se.member_id = m.family_payer_id
+         AND se.email_type = 'dd_renewal' AND se.year = ? AND se.status = 'sent'
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       LEFT JOIN invoices inv ON inv.member_id = m.id
+         AND inv.period_start = ? AND inv.period_end = ?
+         AND inv.status != 'cancelled'
+       WHERE m.family_payer_id IS NOT NULL
+         AND inv.id IS NULL
+       GROUP BY m.id
+       ORDER BY m.surname, m.first_name`
+    ).bind(year, periodStart, periodEnd).all();
+    dependants = depResult.results || [];
+  }
+
+  // Combine payers + dependants
+  const allMembers = [...(members.results || []), ...dependants];
+
+  if (allMembers.length === 0) {
     return new Response(JSON.stringify({
       success: true, created: 0, failed: 0, remaining: 0,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  const totalRemaining = members.results.length;
-  const batch = members.results.slice(0, BATCH_SIZE);
+  const totalRemaining = allMembers.length;
+  const batch = allMembers.slice(0, BATCH_SIZE);
 
   let created = 0;
   let failed = 0;
