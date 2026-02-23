@@ -1,230 +1,721 @@
 ---
 import MemberLayout from '../../layouts/MemberLayout.astro';
+import {
+  isMsbConfigured,
+  getClosedCompetitionList,
+  getOrdersOfMeritList,
+  getEclecticsList,
+  getMatchplayList,
+  getBestOfList,
+} from '../../lib/masterscoreboard';
 
-// In future, this would fetch from a database or BRS API
-// For now, showing placeholder structure
+const env = (Astro.locals as any).runtime?.env;
+const msbConfigured = isMsbConfigured(env);
+
+let recentResults: any[] = [];
+let meritList: any[] = [];
+let eclecticsList: any[] = [];
+let matchplayList: any[] = [];
+let bestofList: any[] = [];
+let serverError = '';
+
+if (msbConfigured) {
+  try {
+    const [resultsData, meritsData, eclecticsData, matchplayData, bestofData] = await Promise.all([
+      getClosedCompetitionList(env, { count: 20 }).catch(() => null),
+      getOrdersOfMeritList(env).catch(() => null),
+      getEclecticsList(env).catch(() => null),
+      getMatchplayList(env).catch(() => null),
+      getBestOfList(env).catch(() => null),
+    ]);
+
+    recentResults = resultsData?.Competitions || resultsData?.competitions || [];
+    meritList = meritsData?.OrdersOfMerit || meritsData?.ordersOfMerit || meritsData || [];
+    eclecticsList = eclecticsData?.Eclectics || eclecticsData?.eclectics || eclecticsData || [];
+    matchplayList = matchplayData?.Competitions || matchplayData?.competitions || matchplayData || [];
+    bestofList = bestofData?.Competitions || bestofData?.competitions || bestofData || [];
+
+    if (!Array.isArray(recentResults)) recentResults = [];
+    if (!Array.isArray(meritList)) meritList = [];
+    if (!Array.isArray(eclecticsList)) eclecticsList = [];
+    if (!Array.isArray(matchplayList)) matchplayList = [];
+    if (!Array.isArray(bestofList)) bestofList = [];
+  } catch (e: any) {
+    serverError = e?.message || 'Failed to load competition data';
+  }
+}
 ---
 
 <MemberLayout title="Competition Results">
   <div class="results-page">
-    <div class="results-intro">
-      <p>View the latest competition results and standings. Full competition details are available through Masterscoreboard.</p>
+
+    {serverError && (
+      <div class="alert alert-warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span>Unable to load data: {serverError}</span>
+      </div>
+    )}
+
+    {!msbConfigured && (
+      <div class="alert alert-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <span>Master Scoreboard integration is not yet configured. <a href="https://www.masterscoreboard.co.uk/ClubIndex.php?CWID=1027" target="_blank" rel="noopener noreferrer">View results on Master Scoreboard</a></span>
+      </div>
+    )}
+
+    <!-- Main tab bar -->
+    <div class="tabs-nav" role="tablist">
+      <button class="tab-btn active" role="tab" data-tab="recent" aria-selected="true">Recent Results</button>
+      <button class="tab-btn" role="tab" data-tab="merit" aria-selected="false">Orders of Merit</button>
+      <button class="tab-btn" role="tab" data-tab="eclectics" aria-selected="false">Eclectics</button>
+      <button class="tab-btn" role="tab" data-tab="matchplay" aria-selected="false">Match Play</button>
+      <button class="tab-btn" role="tab" data-tab="bestof" aria-selected="false">Best of Series</button>
     </div>
 
-    <div class="results-actions">
-      <a
-        href="https://www.masterscoreboard.co.uk/ClubIndex.php?CWID=1027"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="btn btn-primary"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/>
-          <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
-          <path d="M4 22h16"/>
-          <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
-          <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
-          <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
-        </svg>
-        View Full Results on Masterscoreboard
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="external-icon">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-          <polyline points="15 3 21 3 21 9"/>
-          <line x1="10" y1="14" x2="21" y2="3"/>
+    <!-- Recent Results -->
+    <div class="tab-panel active" id="tab-recent" role="tabpanel">
+      {recentResults.length > 0 ? (
+        <div class="comp-list">
+          {recentResults.map((comp: any) => (
+            <button
+              class="comp-card"
+              data-comp-id={comp.CompID || comp.compId || comp.CompetitionID}
+              data-report-id={comp.ReportID || comp.reportId || 0}
+              data-type="results"
+            >
+              <div class="comp-date">{comp.Date || comp.date || ''}</div>
+              <div class="comp-info">
+                <span class="comp-name">{comp.Name || comp.name || comp.CompetitionName || ''}</span>
+                {(comp.Winner || comp.winner) && (
+                  <span class="comp-winner">Winner: {comp.Winner || comp.winner}</span>
+                )}
+              </div>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          ))}
+        </div>
+      ) : !serverError && msbConfigured ? (
+        <div class="empty-state">No recent results available.</div>
+      ) : null}
+    </div>
+
+    <!-- Orders of Merit -->
+    <div class="tab-panel" id="tab-merit" role="tabpanel">
+      {meritList.length > 0 ? (
+        <div class="comp-list">
+          {meritList.map((m: any) => (
+            <button
+              class="comp-card"
+              data-merit-id={m.MeritID || m.meritId || m.ID}
+              data-type="merit"
+            >
+              <div class="comp-info">
+                <span class="comp-name">{m.Name || m.name || m.MeritName || ''}</span>
+                {(m.Description || m.description) && (
+                  <span class="comp-winner">{m.Description || m.description}</span>
+                )}
+              </div>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">No orders of merit available.</div>
+      )}
+    </div>
+
+    <!-- Eclectics -->
+    <div class="tab-panel" id="tab-eclectics" role="tabpanel">
+      {eclecticsList.length > 0 ? (
+        <div class="comp-list">
+          {eclecticsList.map((e: any) => (
+            <button
+              class="comp-card"
+              data-eclectic-id={e.EclecticID || e.eclecticId || e.ID}
+              data-report-id={e.ReportID || e.reportId || 0}
+              data-type="eclectics"
+            >
+              <div class="comp-info">
+                <span class="comp-name">{e.Name || e.name || e.EclecticName || ''}</span>
+              </div>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">No eclectics available.</div>
+      )}
+    </div>
+
+    <!-- Match Play -->
+    <div class="tab-panel" id="tab-matchplay" role="tabpanel">
+      {matchplayList.length > 0 ? (
+        <div class="comp-list">
+          {matchplayList.map((m: any) => (
+            <button
+              class="comp-card"
+              data-comp-id={m.CompID || m.compId || m.CompetitionID || m.ID}
+              data-type="matchplay"
+            >
+              <div class="comp-info">
+                <span class="comp-name">{m.Name || m.name || m.CompetitionName || ''}</span>
+              </div>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">No match play competitions available.</div>
+      )}
+    </div>
+
+    <!-- Best of Series -->
+    <div class="tab-panel" id="tab-bestof" role="tabpanel">
+      {bestofList.length > 0 ? (
+        <div class="comp-list">
+          {bestofList.map((b: any) => (
+            <button
+              class="comp-card"
+              data-comp-id={b.CompID || b.compId || b.CompetitionID || b.ID}
+              data-type="bestof"
+            >
+              <div class="comp-info">
+                <span class="comp-name">{b.Name || b.name || b.CompetitionName || ''}</span>
+              </div>
+              <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div class="empty-state">No best-of series available.</div>
+      )}
+    </div>
+
+    <!-- Detail panel (populated via JS) -->
+    <div class="detail-panel" id="detail-panel" style="display:none">
+      <div class="detail-header">
+        <button class="back-btn" id="back-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          Back to list
+        </button>
+        <h3 id="detail-title"></h3>
+      </div>
+      <div class="detail-body" id="detail-body">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <span>Loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- External link -->
+    <div class="external-link">
+      <a href="https://www.masterscoreboard.co.uk/ClubIndex.php?CWID=1027" target="_blank" rel="noopener noreferrer" class="btn-secondary">
+        View on Master Scoreboard
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
         </svg>
       </a>
     </div>
 
-    <div class="results-info">
-      <div class="info-card">
-        <div class="info-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-            <line x1="16" y1="2" x2="16" y2="6"/>
-            <line x1="8" y1="2" x2="8" y2="6"/>
-            <line x1="3" y1="10" x2="21" y2="10"/>
-          </svg>
-        </div>
-        <div class="info-content">
-          <h3>Upcoming Competitions</h3>
-          <p>Check the competition calendar on Masterscoreboard to see upcoming events and enter competitions.</p>
-        </div>
-      </div>
-
-      <div class="info-card">
-        <div class="info-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="20" x2="12" y2="10"/>
-            <line x1="18" y1="20" x2="18" y2="4"/>
-            <line x1="6" y1="20" x2="6" y2="16"/>
-          </svg>
-        </div>
-        <div class="info-content">
-          <h3>Your Handicap</h3>
-          <p>Your handicap is managed through the World Handicap System (WHS). View and track your handicap on Masterscoreboard.</p>
-        </div>
-      </div>
-
-      <div class="info-card">
-        <div class="info-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-            <line x1="16" y1="13" x2="8" y2="13"/>
-            <line x1="16" y1="17" x2="8" y2="17"/>
-          </svg>
-        </div>
-        <div class="info-content">
-          <h3>Scorecard Submission</h3>
-          <p>Remember to return your scorecard within 24 hours of completing a qualifying round.</p>
-        </div>
-      </div>
-    </div>
-
+    <!-- Competition queries note -->
     <div class="results-note">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <line x1="12" y1="16" x2="12" y2="12"/>
-        <line x1="12" y1="8" x2="12.01" y2="8"/>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
       </svg>
       <div>
         <h4>Competition Queries</h4>
-        <p>For any questions about competitions or results, please contact the Clubhouse on <a href="tel:01665830370">01665 830370</a> or speak to a committee member.</p>
+        <p>For any questions about competitions or results, please contact the Clubhouse on <a href="tel:01665830370">01665 830370</a>.</p>
       </div>
     </div>
   </div>
 
+  <script is:inline>
+    (function() {
+      // Tab switching
+      const tabs = document.querySelectorAll('.tab-btn');
+      const panels = document.querySelectorAll('.tab-panel');
+      const detailPanel = document.getElementById('detail-panel');
+      const detailBody = document.getElementById('detail-body');
+      const detailTitle = document.getElementById('detail-title');
+      const backBtn = document.getElementById('back-btn');
+      let activeTab = 'recent';
+
+      tabs.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          tabs.forEach(function(t) { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+          panels.forEach(function(p) { p.classList.remove('active'); });
+          btn.classList.add('active');
+          btn.setAttribute('aria-selected', 'true');
+          activeTab = btn.dataset.tab;
+          document.getElementById('tab-' + activeTab).classList.add('active');
+          detailPanel.style.display = 'none';
+        });
+      });
+
+      // Back button
+      backBtn.addEventListener('click', function() {
+        detailPanel.style.display = 'none';
+        document.getElementById('tab-' + activeTab).style.display = '';
+      });
+
+      // Click handlers for competition cards
+      document.querySelectorAll('.comp-card').forEach(function(card) {
+        card.addEventListener('click', function() {
+          var type = card.dataset.type;
+          var url, title = card.querySelector('.comp-name')?.textContent || 'Result';
+
+          if (type === 'results') {
+            var compId = card.dataset.compId;
+            var reportId = card.dataset.reportId || '0';
+            url = '/api/msb/results/' + compId + '/' + reportId;
+          } else if (type === 'merit') {
+            url = '/api/msb/merit/' + card.dataset.meritId;
+          } else if (type === 'eclectics') {
+            var eclecticId = card.dataset.eclecticId;
+            var reportId = card.dataset.reportId || '0';
+            url = '/api/msb/eclectics/' + eclecticId + '/' + reportId;
+          } else if (type === 'matchplay') {
+            url = '/api/msb/matchplay/' + card.dataset.compId;
+          } else if (type === 'bestof') {
+            url = '/api/msb/bestof/' + card.dataset.compId;
+          }
+
+          if (!url) return;
+
+          // Show detail panel, hide list
+          document.getElementById('tab-' + activeTab).style.display = 'none';
+          detailPanel.style.display = 'block';
+          detailTitle.textContent = title;
+          detailBody.innerHTML = '<div class="loading-state"><div class="spinner"></div><span>Loading...</span></div>';
+
+          fetch(url)
+            .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+            .then(function(data) { renderDetail(type, data); })
+            .catch(function() { detailBody.innerHTML = '<div class="empty-state">Failed to load result. Please try again.</div>'; });
+        });
+      });
+
+      function renderDetail(type, data) {
+        var rows = [];
+        var columns = [];
+
+        if (type === 'results') {
+          rows = data.Result || data.Results || data.result || data.results || [];
+          if (!Array.isArray(rows)) rows = [];
+          columns = [
+            { key: 'Position', label: 'Pos' },
+            { key: 'PlayerName', label: 'Player', alt: ['Name', 'name'] },
+            { key: 'Score', label: 'Score', alt: ['GrossScore'] },
+            { key: 'NetScore', label: 'Net' },
+            { key: 'Handicap', label: 'Hcap' },
+          ];
+        } else if (type === 'merit') {
+          rows = data.Standings || data.standings || data.Results || data.results || [];
+          if (!Array.isArray(rows)) rows = [];
+          columns = [
+            { key: 'Position', label: 'Pos', alt: ['Rank'] },
+            { key: 'PlayerName', label: 'Player', alt: ['Name', 'name'] },
+            { key: 'Points', label: 'Points', alt: ['TotalPoints'] },
+            { key: 'Played', label: 'Played' },
+          ];
+        } else if (type === 'eclectics') {
+          rows = data.Result || data.Results || data.result || [];
+          if (!Array.isArray(rows)) rows = [];
+          columns = [
+            { key: 'Position', label: 'Pos' },
+            { key: 'PlayerName', label: 'Player', alt: ['Name', 'name'] },
+            { key: 'Score', label: 'Score', alt: ['Total'] },
+            { key: 'Rounds', label: 'Rounds' },
+          ];
+        } else if (type === 'matchplay') {
+          rows = data.Draw || data.Rounds || data.draw || data.rounds || [];
+          if (!Array.isArray(rows)) rows = [];
+          columns = [
+            { key: 'Round', label: 'Round', alt: ['RoundName'] },
+            { key: 'Player1', label: 'Player 1', alt: ['Home', 'PlayerA'] },
+            { key: 'Player2', label: 'Player 2', alt: ['Away', 'PlayerB'] },
+            { key: 'Result', label: 'Result', alt: ['Score', 'MatchResult'] },
+          ];
+        } else if (type === 'bestof') {
+          rows = data.Standings || data.Results || data.standings || data.results || [];
+          if (!Array.isArray(rows)) rows = [];
+          columns = [
+            { key: 'Position', label: 'Pos', alt: ['Rank'] },
+            { key: 'PlayerName', label: 'Player', alt: ['Name', 'name'] },
+            { key: 'BestScores', label: 'Best Scores', alt: ['Total', 'Points'] },
+            { key: 'Rounds', label: 'Rounds', alt: ['Played'] },
+          ];
+        }
+
+        if (rows.length === 0) {
+          detailBody.innerHTML = '<div class="empty-state">No detailed data available for this competition.</div>';
+          return;
+        }
+
+        var html = '<div class="table-wrap"><table class="data-table"><thead><tr>';
+        columns.forEach(function(c) { html += '<th>' + c.label + '</th>'; });
+        html += '</tr></thead><tbody>';
+
+        rows.forEach(function(row) {
+          html += '<tr>';
+          columns.forEach(function(c) {
+            var val = row[c.key];
+            if ((val === undefined || val === null) && c.alt) {
+              for (var i = 0; i < c.alt.length; i++) {
+                if (row[c.alt[i]] !== undefined && row[c.alt[i]] !== null) {
+                  val = row[c.alt[i]];
+                  break;
+                }
+              }
+            }
+            html += '<td data-label="' + c.label + '">' + (val !== undefined && val !== null ? val : '') + '</td>';
+          });
+          html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+        detailBody.innerHTML = html;
+      }
+    })();
+  </script>
+
   <style>
     .results-page {
-      max-width: 900px;
+      max-width: 1000px;
     }
 
-    .results-intro {
-      margin-bottom: 2rem;
+    /* Alerts */
+    .alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
     }
 
-    .results-intro p {
-      font-size: 1.1rem;
-      color: var(--text-light);
-      margin: 0;
+    .alert svg { flex-shrink: 0; margin-top: 1px; }
+
+    .alert-warning {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      color: #6d4c00;
     }
 
-    .results-actions {
-      margin-bottom: 2rem;
+    .alert-info {
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      color: #1b5e20;
     }
 
-    .btn-primary {
+    .alert-info a {
+      color: var(--primary, #1e5631);
+      font-weight: 600;
+    }
+
+    /* Tabs */
+    .tabs-nav {
+      display: flex;
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      margin-bottom: 1.5rem;
+    }
+
+    .tabs-nav::-webkit-scrollbar { display: none; }
+
+    .tab-btn {
+      flex-shrink: 0;
+      padding: 0.875rem 1.25rem;
+      border: none;
+      background: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-light, #666);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      white-space: nowrap;
+      min-height: 44px;
+    }
+
+    .tab-btn:hover {
+      color: var(--primary, #1e5631);
+      background: var(--primary-light, #e8f5e9);
+    }
+
+    .tab-btn.active {
+      color: var(--primary, #1e5631);
+      border-bottom-color: var(--primary, #1e5631);
+      font-weight: 600;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    /* Competition list */
+    .comp-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .comp-card {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: left;
+      width: 100%;
+      font-family: inherit;
+      font-size: inherit;
+      min-height: 44px;
+    }
+
+    .comp-card:hover {
+      border-color: var(--primary, #1e5631);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    .comp-date {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--primary, #1e5631);
+      white-space: nowrap;
+      min-width: 90px;
+    }
+
+    .comp-info {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      min-width: 0;
+    }
+
+    .comp-name {
+      font-weight: 500;
+      font-size: 0.9rem;
+    }
+
+    .comp-winner {
+      font-size: 0.8rem;
+      color: var(--text-light, #666);
+    }
+
+    .chevron {
+      flex-shrink: 0;
+      color: var(--text-light, #666);
+    }
+
+    /* Detail panel */
+    .detail-panel {
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .detail-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .back-btn {
       display: inline-flex;
       align-items: center;
-      gap: 0.75rem;
-      padding: 1rem 1.5rem;
-      background: var(--primary);
-      color: white;
-      border-radius: 12px;
-      text-decoration: none;
-      font-weight: 600;
+      gap: 0.35rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--surface, #f5f5f5);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-family: inherit;
+      color: var(--text, #1a1a1a);
+      min-height: 44px;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: var(--border, #e0e0e0);
+    }
+
+    .detail-header h3 {
       font-size: 1rem;
+      font-weight: 600;
+      margin: 0;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .btn-primary svg {
-      width: 22px;
-      height: 22px;
+    .detail-body {
+      padding: 1.25rem;
     }
 
-    .btn-primary .external-icon {
-      width: 18px;
-      height: 18px;
-      opacity: 0.8;
+    /* Tables */
+    .table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
-    .btn-primary:hover {
-      background: var(--primary-dark);
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
     }
 
-    .results-info {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 1rem;
-      margin-bottom: 2rem;
+    .data-table th {
+      text-align: left;
+      padding: 0.625rem 0.75rem;
+      font-weight: 600;
+      color: var(--text-light, #666);
+      border-bottom: 2px solid var(--border, #e0e0e0);
+      white-space: nowrap;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
     }
 
-    @media (min-width: 600px) {
-      .results-info {
-        grid-template-columns: repeat(3, 1fr);
+    .data-table td {
+      padding: 0.625rem 0.75rem;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+    }
+
+    .data-table tbody tr:hover {
+      background: var(--surface, #f5f5f5);
+    }
+
+    @media (max-width: 640px) {
+      .data-table thead { display: none; }
+
+      .data-table tbody tr {
+        display: block;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--border, #e0e0e0);
       }
+
+      .data-table td {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.25rem 0;
+        border: none;
+      }
+
+      .data-table td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: var(--text-light, #666);
+        font-size: 0.8rem;
+      }
+
+      .comp-date { min-width: auto; }
     }
 
-    .info-card {
-      background: var(--white);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 1.5rem;
-    }
-
-    .info-icon {
-      width: 48px;
-      height: 48px;
-      background: var(--primary-light);
-      border-radius: 12px;
+    /* Loading / empty */
+    .loading-state {
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 1rem;
-    }
-
-    .info-icon svg {
-      width: 24px;
-      height: 24px;
-      color: var(--primary);
-    }
-
-    .info-content h3 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1rem;
-      font-weight: 600;
-    }
-
-    .info-content p {
-      margin: 0;
+      gap: 0.75rem;
+      padding: 2rem;
+      color: var(--text-light, #666);
       font-size: 0.9rem;
-      color: var(--text-light);
-      line-height: 1.5;
     }
 
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border, #e0e0e0);
+      border-top-color: var(--primary, #1e5631);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-light, #666);
+      font-size: 0.9rem;
+    }
+
+    /* External link */
+    .external-link {
+      text-align: center;
+      padding: 1.5rem 0;
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--surface, #f5f5f5);
+      color: var(--text, #1a1a1a);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+      min-height: 44px;
+    }
+
+    .btn-secondary:hover {
+      background: var(--border, #e0e0e0);
+    }
+
+    /* Note */
     .results-note {
       display: flex;
       gap: 1rem;
-      background: var(--surface);
+      background: var(--surface, #f5f5f5);
       border-radius: 16px;
       padding: 1.5rem;
     }
 
-    .results-note > svg {
-      width: 24px;
-      height: 24px;
-      color: var(--primary);
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
-
-    .results-note h4 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1rem;
-    }
-
-    .results-note p {
-      margin: 0;
-      font-size: 0.95rem;
-      color: var(--text-light);
-    }
-
-    .results-note a {
-      color: var(--primary);
-      text-decoration: none;
-    }
-
-    .results-note a:hover {
-      text-decoration: underline;
-    }
+    .results-note > svg { flex-shrink: 0; color: var(--primary, #1e5631); margin-top: 2px; }
+    .results-note h4 { margin: 0 0 0.5rem 0; font-size: 1rem; }
+    .results-note p { margin: 0; font-size: 0.9rem; color: var(--text-light, #666); }
+    .results-note a { color: var(--primary, #1e5631); text-decoration: none; }
+    .results-note a:hover { text-decoration: underline; }
   </style>
 </MemberLayout>

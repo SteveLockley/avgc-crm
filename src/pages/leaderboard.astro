@@ -1,0 +1,502 @@
+---
+// Public leaderboard page — no auth required
+// Designed for clubhouse TV/projector display and mobile viewing
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Leaderboard | Alnmouth Village Golf Club</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="leaderboard-app">
+    <!-- Header -->
+    <header class="lb-header">
+      <div class="header-left">
+        <img src="/favicon-32x32.png" alt="AVGC" class="club-logo" width="32" height="32">
+        <div class="header-title">
+          <h1>Alnmouth Village Golf Club</h1>
+          <span class="header-subtitle" id="comp-name">Live Leaderboard</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="status-indicator" id="status-indicator">
+          <span class="status-dot"></span>
+          <span class="status-text" id="last-updated">Loading...</span>
+        </div>
+        <button class="fullscreen-btn" id="fullscreen-btn" title="Toggle fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+            <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Competition selector (when multiple) -->
+    <div class="comp-selector" id="comp-selector" style="display:none">
+      <select id="comp-select"></select>
+    </div>
+
+    <!-- Leaderboard table -->
+    <div class="lb-table-wrap">
+      <table class="lb-table" id="lb-table" style="display:none">
+        <thead>
+          <tr>
+            <th class="col-pos">Pos</th>
+            <th class="col-name">Player</th>
+            <th class="col-score">Score</th>
+            <th class="col-thru">Thru</th>
+            <th class="col-round">Round</th>
+          </tr>
+        </thead>
+        <tbody id="lb-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="64" height="64">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/>
+          <path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/>
+          <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/>
+          <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
+        </svg>
+      </div>
+      <h2>No Competition in Progress</h2>
+      <p>The leaderboard will update automatically when a competition begins.</p>
+    </div>
+
+    <!-- Loading state -->
+    <div class="loading-state" id="loading-state">
+      <div class="spinner"></div>
+      <span>Connecting to Master Scoreboard...</span>
+    </div>
+  </div>
+
+  <script is:inline>
+    (function() {
+      var REFRESH_MS = 60000;
+      var CYCLE_MS = 30000;
+      var competitions = [];
+      var currentIdx = 0;
+      var cycleTimer = null;
+      var refreshTimer = null;
+
+      var lbTable = document.getElementById('lb-table');
+      var lbBody = document.getElementById('lb-body');
+      var compName = document.getElementById('comp-name');
+      var emptyState = document.getElementById('empty-state');
+      var loadingState = document.getElementById('loading-state');
+      var statusText = document.getElementById('last-updated');
+      var statusDot = document.querySelector('.status-dot');
+      var compSelector = document.getElementById('comp-selector');
+      var compSelect = document.getElementById('comp-select');
+      var fullscreenBtn = document.getElementById('fullscreen-btn');
+
+      // Fullscreen toggle
+      fullscreenBtn.addEventListener('click', function() {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen().catch(function() {});
+        }
+      });
+
+      // Competition selector
+      compSelect.addEventListener('change', function() {
+        currentIdx = parseInt(compSelect.value, 10);
+        clearInterval(cycleTimer);
+        loadLeaderboard();
+        if (competitions.length > 1) startCycle();
+      });
+
+      // Initial load
+      loadCompetitions();
+      refreshTimer = setInterval(loadCompetitions, REFRESH_MS);
+
+      function loadCompetitions() {
+        fetch('/api/msb/leaderboard')
+          .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+          .then(function(data) {
+            loadingState.style.display = 'none';
+            var list = data.Competitions || data.competitions || data.Leaderboards || [];
+            if (!Array.isArray(list)) list = [];
+
+            competitions = list;
+
+            if (competitions.length === 0) {
+              lbTable.style.display = 'none';
+              compSelector.style.display = 'none';
+              emptyState.style.display = '';
+              compName.textContent = 'Live Leaderboard';
+              return;
+            }
+
+            emptyState.style.display = 'none';
+
+            // Populate selector
+            if (competitions.length > 1) {
+              compSelect.innerHTML = competitions.map(function(c, i) {
+                return '<option value="' + i + '">' + (c.Name || c.name || c.CompetitionName || 'Competition ' + (i + 1)) + '</option>';
+              }).join('');
+              compSelect.value = currentIdx;
+              compSelector.style.display = '';
+              if (!cycleTimer) startCycle();
+            } else {
+              compSelector.style.display = 'none';
+            }
+
+            loadLeaderboard();
+          })
+          .catch(function() {
+            loadingState.style.display = 'none';
+            emptyState.style.display = '';
+            statusDot.classList.remove('live');
+            statusDot.classList.add('error');
+            statusText.textContent = 'Connection error';
+          });
+      }
+
+      function loadLeaderboard() {
+        if (competitions.length === 0) return;
+
+        var comp = competitions[currentIdx] || competitions[0];
+        var compId = comp.CompID || comp.compId || comp.CompetitionID;
+        var reportId = comp.ReportID || comp.reportId || 0;
+        var name = comp.Name || comp.name || comp.CompetitionName || 'Competition';
+
+        compName.textContent = name;
+
+        fetch('/api/msb/leaderboard/' + compId + '/' + reportId)
+          .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
+          .then(function(data) {
+            var rows = data.Leaderboard || data.leaderboard || data.Results || data.results || [];
+            if (!Array.isArray(rows)) rows = [];
+
+            if (rows.length === 0) {
+              lbTable.style.display = 'none';
+              return;
+            }
+
+            lbBody.innerHTML = rows.map(function(r, i) {
+              var pos = r.Position || r.position || r.Pos || (i + 1);
+              var player = r.PlayerName || r.Name || r.name || r.Player || '';
+              var score = r.Score || r.ToPar || r.score || '';
+              var thru = r.Thru || r.thru || r.HolesPlayed || '';
+              var round = r.RoundScore || r.Round || r.roundScore || '';
+              return '<tr class="' + (i % 2 === 0 ? 'row-even' : 'row-odd') + '">' +
+                '<td class="col-pos">' + pos + '</td>' +
+                '<td class="col-name">' + player + '</td>' +
+                '<td class="col-score">' + score + '</td>' +
+                '<td class="col-thru">' + thru + '</td>' +
+                '<td class="col-round">' + round + '</td>' +
+                '</tr>';
+            }).join('');
+
+            lbTable.style.display = '';
+            lbTable.classList.add('fade-in');
+            setTimeout(function() { lbTable.classList.remove('fade-in'); }, 300);
+
+            // Update timestamp
+            var now = new Date();
+            statusText.textContent = 'Updated ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            statusDot.classList.remove('error');
+            statusDot.classList.add('live');
+          })
+          .catch(function() {
+            statusDot.classList.remove('live');
+            statusDot.classList.add('error');
+            statusText.textContent = 'Update failed';
+          });
+      }
+
+      function startCycle() {
+        cycleTimer = setInterval(function() {
+          currentIdx = (currentIdx + 1) % competitions.length;
+          compSelect.value = currentIdx;
+          loadLeaderboard();
+        }, CYCLE_MS);
+      }
+    })();
+  </script>
+
+  <style>
+    :root {
+      --lb-bg: #0f1923;
+      --lb-surface: #1a2733;
+      --lb-border: #2a3a4a;
+      --lb-text: #e8eaed;
+      --lb-text-dim: #8899aa;
+      --lb-primary: #2e7d32;
+      --lb-primary-light: #43a047;
+      --lb-accent: #ffd600;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--lb-bg);
+      color: var(--lb-text);
+      min-height: 100vh;
+    }
+
+    .leaderboard-app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    .lb-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      background: var(--lb-surface);
+      border-bottom: 1px solid var(--lb-border);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .club-logo {
+      border-radius: 6px;
+    }
+
+    .header-title h1 {
+      font-size: clamp(0.85rem, 2vw, 1.1rem);
+      font-weight: 700;
+      color: var(--lb-text);
+      line-height: 1.2;
+    }
+
+    .header-subtitle {
+      font-size: clamp(0.7rem, 1.5vw, 0.85rem);
+      color: var(--lb-primary-light);
+      font-weight: 500;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--lb-text-dim);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--lb-text-dim);
+    }
+
+    .status-dot.live {
+      background: var(--lb-primary-light);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .status-dot.error {
+      background: #ef5350;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .fullscreen-btn {
+      background: var(--lb-border);
+      border: none;
+      color: var(--lb-text);
+      padding: 0.5rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .fullscreen-btn:hover {
+      background: var(--lb-primary);
+    }
+
+    /* Competition selector */
+    .comp-selector {
+      padding: 0.75rem 1.5rem;
+      background: var(--lb-surface);
+      border-bottom: 1px solid var(--lb-border);
+    }
+
+    .comp-selector select {
+      width: 100%;
+      max-width: 400px;
+      padding: 0.5rem 1rem;
+      background: var(--lb-bg);
+      color: var(--lb-text);
+      border: 1px solid var(--lb-border);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    /* Table */
+    .lb-table-wrap {
+      flex: 1;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 1rem 1.5rem;
+    }
+
+    .lb-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: clamp(0.9rem, 2vw, 1.1rem);
+    }
+
+    .lb-table.fade-in {
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0.6; }
+      to { opacity: 1; }
+    }
+
+    .lb-table th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      color: var(--lb-text-dim);
+      border-bottom: 2px solid var(--lb-border);
+      font-size: clamp(0.75rem, 1.5vw, 0.9rem);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .lb-table td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--lb-border);
+    }
+
+    .row-even { background: transparent; }
+    .row-odd { background: rgba(255, 255, 255, 0.03); }
+
+    .lb-table tbody tr:hover {
+      background: rgba(46, 125, 50, 0.12);
+    }
+
+    .col-pos {
+      width: 60px;
+      text-align: center;
+      font-weight: 700;
+      color: var(--lb-accent);
+    }
+
+    .col-name { font-weight: 500; }
+
+    .col-score {
+      text-align: center;
+      font-weight: 700;
+      font-size: clamp(1rem, 2.5vw, 1.3rem);
+    }
+
+    .col-thru {
+      text-align: center;
+      color: var(--lb-text-dim);
+    }
+
+    .col-round {
+      text-align: center;
+    }
+
+    /* Empty state */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem;
+      text-align: center;
+    }
+
+    .empty-icon {
+      margin-bottom: 1.5rem;
+      color: var(--lb-text-dim);
+      opacity: 0.5;
+    }
+
+    .empty-state h2 {
+      font-size: clamp(1.1rem, 3vw, 1.5rem);
+      margin-bottom: 0.5rem;
+      color: var(--lb-text);
+    }
+
+    .empty-state p {
+      font-size: clamp(0.85rem, 2vw, 1rem);
+      color: var(--lb-text-dim);
+    }
+
+    /* Loading */
+    .loading-state {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      padding: 3rem;
+      color: var(--lb-text-dim);
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--lb-border);
+      border-top-color: var(--lb-primary-light);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Mobile adjustments */
+    @media (max-width: 640px) {
+      .lb-header { padding: 0.75rem 1rem; }
+      .lb-table-wrap { padding: 0.5rem; }
+      .lb-table th, .lb-table td { padding: 0.5rem; }
+      .header-right { gap: 0.5rem; }
+      .status-text { display: none; }
+    }
+
+    /* Large screen / TV optimizations */
+    @media (min-width: 1400px) {
+      .lb-table { font-size: 1.3rem; }
+      .lb-table th { font-size: 1rem; }
+      .col-score { font-size: 1.5rem; }
+      .lb-table td, .lb-table th { padding: 1rem 1.25rem; }
+    }
+  </style>
+</body>
+</html>

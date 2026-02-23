@@ -1,0 +1,784 @@
+---
+import MemberLayout from '../../layouts/MemberLayout.astro';
+import { formatCurrency } from '../../lib/db';
+import {
+  isMsbConfigured,
+  getHandicapList,
+  getPlayerHandicapRecord,
+  getFixtureList,
+  findPlayerByNationalId,
+  formatHandicap,
+} from '../../lib/masterscoreboard';
+
+const member = Astro.locals.member;
+const db = (Astro.locals as any).runtime?.env?.DB;
+const env = (Astro.locals as any).runtime?.env;
+
+// Fetch full member details from DB
+let memberDetails: any = null;
+if (db && member?.id) {
+  try {
+    memberDetails = await db.prepare(
+      `SELECT * FROM members WHERE id = ?`
+    ).bind(member.id).first();
+  } catch (e) {
+    console.error('Error fetching member details:', e);
+  }
+}
+
+// Fetch MSB data
+let msbPlayer: any = null;
+let msbPlayerId: number | null = null;
+let handicapRecord: any = null;
+let fixtures: any = null;
+let msbError = '';
+const msbConfigured = isMsbConfigured(env);
+
+if (msbConfigured && memberDetails?.national_id) {
+  try {
+    const handicapList = await getHandicapList(env);
+    msbPlayer = findPlayerByNationalId(handicapList, memberDetails.national_id);
+    if (msbPlayer) {
+      msbPlayerId = msbPlayer.PlayerID || msbPlayer.playerId;
+
+      // Fetch handicap record
+      if (msbPlayerId) {
+        handicapRecord = await getPlayerHandicapRecord(env, msbPlayerId);
+      }
+
+      // Sync handicap index to DB if changed
+      const msbHcap = msbPlayer.HandicapIndex ?? msbPlayer.handicapIndex ?? null;
+      if (msbHcap !== null && db && memberDetails.handicap_index !== parseFloat(msbHcap)) {
+        try {
+          await db.prepare(
+            `UPDATE members SET handicap_index = ?, updated_at = datetime('now') WHERE id = ?`
+          ).bind(parseFloat(msbHcap), member.id).run();
+          memberDetails.handicap_index = parseFloat(msbHcap);
+        } catch (e) {
+          console.error('Error syncing handicap:', e);
+        }
+      }
+    }
+
+    // Fetch upcoming fixtures
+    fixtures = await getFixtureList(env);
+  } catch (e: any) {
+    console.error('MSB API error:', e);
+    msbError = e?.message || 'Failed to connect to Master Scoreboard';
+  }
+}
+
+const handicapIndex = memberDetails?.handicap_index;
+const purseBalance = memberDetails?.competition_fee_purse ?? 0;
+const nationalId = memberDetails?.national_id || '';
+const effectiveDate = msbPlayer?.EffectiveDate || msbPlayer?.effectiveDate || '';
+
+// Get next 5 fixtures
+let upcomingFixtures: any[] = [];
+if (fixtures?.Fixtures) {
+  upcomingFixtures = fixtures.Fixtures.slice(0, 5);
+} else if (Array.isArray(fixtures)) {
+  upcomingFixtures = fixtures.slice(0, 5);
+}
+---
+
+<MemberLayout title="My Golf">
+  <div class="my-golf">
+
+    {msbError && (
+      <div class="alert alert-warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span>Unable to connect to Master Scoreboard: {msbError}</span>
+      </div>
+    )}
+
+    {!msbConfigured && (
+      <div class="alert alert-info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <span>Master Scoreboard integration is not yet configured. Some features may be unavailable.</span>
+      </div>
+    )}
+
+    <!-- Top cards row -->
+    <div class="cards-row">
+      <!-- Handicap Card -->
+      <div class="card handicap-card">
+        <div class="card-header">
+          <h2>WHS Handicap Index</h2>
+        </div>
+        <div class="card-body">
+          <div class="handicap-display">
+            <span class="handicap-value">{formatHandicap(handicapIndex)}</span>
+          </div>
+          {effectiveDate && (
+            <p class="effective-date">Effective: {effectiveDate}</p>
+          )}
+          {nationalId && (
+            <span class="national-id-badge">ID: {nationalId}</span>
+          )}
+        </div>
+        <div class="whs-notice alert-info">
+          These Handicap Indexes have been produced using the World Handicap System and are for guidance only. Official indexes are maintained by England Golf.
+        </div>
+      </div>
+
+      <!-- Competition Purse Card -->
+      <div class="card purse-card">
+        <div class="card-header">
+          <h2>Competition Purse</h2>
+        </div>
+        <div class="card-body">
+          <div class="purse-display">
+            <span class="purse-value">{formatCurrency(purseBalance)}</span>
+          </div>
+          <p class="purse-label">Current balance</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabbed data sections -->
+    {msbPlayerId && (
+      <div class="tabs-section">
+        <div class="tabs-nav" role="tablist">
+          <button class="tab-btn active" role="tab" data-tab="history" aria-selected="true">Playing History</button>
+          <button class="tab-btn" role="tab" data-tab="handicap-scores" aria-selected="false">Handicap Scores</button>
+          <button class="tab-btn" role="tab" data-tab="analysis" aria-selected="false">Playing Analysis</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-history" role="tabpanel">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading playing history...</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="display:none">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Competition</th>
+                  <th>Course</th>
+                  <th>Score</th>
+                  <th>CSS</th>
+                  <th>Handicap</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="empty-state" style="display:none">No playing history available.</div>
+        </div>
+
+        <div class="tab-panel" id="tab-handicap-scores" role="tabpanel">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading handicap scores...</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="display:none">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Competition</th>
+                  <th>Adj. Gross</th>
+                  <th>PCC</th>
+                  <th>Differential</th>
+                  <th>Index</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="empty-state" style="display:none">No handicap scores available.</div>
+        </div>
+
+        <div class="tab-panel" id="tab-analysis" role="tabpanel">
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>Loading playing analysis...</span>
+          </div>
+          <div class="analysis-grid" style="display:none"></div>
+          <div class="empty-state" style="display:none">No analysis data available.</div>
+        </div>
+      </div>
+    )}
+
+    {!msbPlayerId && !msbError && msbConfigured && (
+      <div class="alert alert-info" style="margin-top: 1.5rem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <span>We couldn't find your player record on Master Scoreboard. Please ensure your National ID is set correctly in your account.</span>
+      </div>
+    )}
+
+    <!-- Upcoming Fixtures -->
+    {upcomingFixtures.length > 0 && (
+      <div class="fixtures-section">
+        <h2>Upcoming Competitions</h2>
+        <div class="fixtures-list">
+          {upcomingFixtures.map((f: any) => (
+            <div class="fixture-item">
+              <div class="fixture-date">
+                {f.Date || f.date || ''}
+              </div>
+              <div class="fixture-details">
+                <span class="fixture-name">{f.Name || f.name || f.CompetitionName || ''}</span>
+                {(f.Type || f.type || f.CompetitionType) && (
+                  <span class="fixture-type">{f.Type || f.type || f.CompetitionType}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <!-- External link fallback -->
+    <div class="external-link">
+      <a href="https://www.masterscoreboard.co.uk/ClubIndex.php?CWID=1027" target="_blank" rel="noopener noreferrer" class="btn-secondary">
+        View Full Details on Master Scoreboard
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ msbPlayerId }}>
+    if (msbPlayerId) {
+      const tabs = document.querySelectorAll('.tab-btn');
+      const panels = document.querySelectorAll('.tab-panel');
+      const loaded = {};
+
+      tabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+          tabs.forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected', 'false'); });
+          panels.forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          btn.setAttribute('aria-selected', 'true');
+          const tab = btn.dataset.tab;
+          document.getElementById('tab-' + tab).classList.add('active');
+          if (!loaded[tab]) loadTab(tab);
+        });
+      });
+
+      // Load first tab
+      loadTab('history');
+
+      async function loadTab(tab) {
+        loaded[tab] = true;
+        const panel = document.getElementById('tab-' + tab);
+        const loading = panel.querySelector('.loading-state');
+        const table = panel.querySelector('.data-table');
+        const grid = panel.querySelector('.analysis-grid');
+        const empty = panel.querySelector('.empty-state');
+
+        try {
+          let url, data;
+          if (tab === 'history') {
+            url = '/api/msb/player/' + msbPlayerId + '/play-record';
+          } else if (tab === 'handicap-scores') {
+            url = '/api/msb/player/' + msbPlayerId + '/handicap-record';
+          } else if (tab === 'analysis') {
+            url = '/api/msb/player/' + msbPlayerId + '/scores';
+          }
+
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Failed to load data');
+          data = await res.json();
+
+          if (loading) loading.style.display = 'none';
+
+          if (tab === 'history') {
+            const rows = data.PlayRecord || data.Records || data.records || [];
+            if (rows.length === 0) {
+              if (empty) empty.style.display = 'block';
+              return;
+            }
+            const tbody = table.querySelector('tbody');
+            tbody.innerHTML = rows.map(r =>
+              '<tr>' +
+              '<td data-label="Date">' + (r.Date || r.date || '') + '</td>' +
+              '<td data-label="Competition">' + (r.CompetitionName || r.Competition || r.competitionName || '') + '</td>' +
+              '<td data-label="Course">' + (r.CourseName || r.Course || r.courseName || '') + '</td>' +
+              '<td data-label="Score">' + (r.Score || r.score || '') + '</td>' +
+              '<td data-label="CSS">' + (r.CSS || r.css || '') + '</td>' +
+              '<td data-label="Handicap">' + fmtHcap(r.Handicap || r.handicap) + '</td>' +
+              '</tr>'
+            ).join('');
+            table.style.display = '';
+          } else if (tab === 'handicap-scores') {
+            const rows = data.HandicapRecord || data.Records || data.records || [];
+            if (rows.length === 0) {
+              if (empty) empty.style.display = 'block';
+              return;
+            }
+            const tbody = table.querySelector('tbody');
+            tbody.innerHTML = rows.map(r =>
+              '<tr>' +
+              '<td data-label="Date">' + (r.Date || r.date || '') + '</td>' +
+              '<td data-label="Competition">' + (r.CompetitionName || r.Competition || r.competitionName || '') + '</td>' +
+              '<td data-label="Adj. Gross">' + (r.AdjustedGross || r.adjustedGross || '') + '</td>' +
+              '<td data-label="PCC">' + (r.PCC || r.pcc || '') + '</td>' +
+              '<td data-label="Differential">' + (r.ScoreDifferential || r.Differential || r.differential || '') + '</td>' +
+              '<td data-label="Index">' + fmtHcap(r.HandicapIndex || r.handicapIndex) + '</td>' +
+              '</tr>'
+            ).join('');
+            table.style.display = '';
+          } else if (tab === 'analysis') {
+            const holes = data.Scores || data.HoleScores || data.scores || [];
+            if (holes.length === 0) {
+              if (empty) empty.style.display = 'block';
+              return;
+            }
+            grid.innerHTML = holes.map(h =>
+              '<div class="hole-card">' +
+              '<div class="hole-number">Hole ' + (h.Hole || h.hole || '') + '</div>' +
+              '<div class="hole-stats">' +
+              '<div class="stat"><span class="stat-label">Par</span><span class="stat-value">' + (h.Par || h.par || '') + '</span></div>' +
+              '<div class="stat"><span class="stat-label">Avg</span><span class="stat-value">' + formatAvg(h.Average || h.average || h.Avg) + '</span></div>' +
+              '<div class="stat"><span class="stat-label">Birdies</span><span class="stat-value birdie">' + (h.Birdies || h.birdies || 0) + '</span></div>' +
+              '<div class="stat"><span class="stat-label">Pars</span><span class="stat-value par">' + (h.Pars || h.pars || 0) + '</span></div>' +
+              '<div class="stat"><span class="stat-label">Bogeys</span><span class="stat-value bogey">' + (h.Bogeys || h.bogeys || 0) + '</span></div>' +
+              '<div class="stat"><span class="stat-label">Doubles+</span><span class="stat-value double">' + (h.DoublesOrWorse || h.doublesOrWorse || h.Doubles || 0) + '</span></div>' +
+              '</div>' +
+              '</div>'
+            ).join('');
+            grid.style.display = '';
+          }
+        } catch (err) {
+          if (loading) loading.style.display = 'none';
+          if (empty) {
+            empty.textContent = 'Failed to load data. Please try again later.';
+            empty.style.display = 'block';
+          }
+        }
+      }
+
+      function fmtHcap(v) {
+        if (v === null || v === undefined || v === '') return 'N/A';
+        var n = typeof v === 'string' ? parseFloat(v) : v;
+        if (isNaN(n)) return 'N/A';
+        if (n < 0) return '+' + Math.abs(n).toFixed(1);
+        return n.toFixed(1);
+      }
+
+      function formatAvg(v) {
+        if (v === null || v === undefined || v === '') return '-';
+        var n = typeof v === 'string' ? parseFloat(v) : v;
+        if (isNaN(n)) return '-';
+        return n.toFixed(2);
+      }
+    }
+  </script>
+
+  <style>
+    .my-golf {
+      max-width: 1000px;
+    }
+
+    /* Alerts */
+    .alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .alert svg {
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .alert-warning {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      color: #6d4c00;
+    }
+
+    .alert-info {
+      background: #e8f5e9;
+      border: 1px solid #a5d6a7;
+      color: #1b5e20;
+    }
+
+    /* Cards row */
+    .cards-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 640px) {
+      .cards-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+    }
+
+    .card-header h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 0;
+      color: var(--text-light, #666);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .card-body {
+      padding: 1.5rem 1.25rem;
+      text-align: center;
+    }
+
+    /* Handicap display */
+    .handicap-display {
+      margin-bottom: 0.75rem;
+    }
+
+    .handicap-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--primary, #1e5631);
+      line-height: 1;
+    }
+
+    .effective-date {
+      font-size: 0.85rem;
+      color: var(--text-light, #666);
+      margin: 0.5rem 0;
+    }
+
+    .national-id-badge {
+      display: inline-block;
+      background: var(--surface, #f5f5f5);
+      padding: 0.25rem 0.75rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      color: var(--text-light, #666);
+      font-family: monospace;
+    }
+
+    .whs-notice {
+      padding: 0.75rem 1.25rem;
+      font-size: 0.8rem;
+      line-height: 1.4;
+      border-top: 1px solid #a5d6a7;
+    }
+
+    /* Purse display */
+    .purse-display {
+      margin-bottom: 0.5rem;
+    }
+
+    .purse-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--primary, #1e5631);
+      line-height: 1;
+    }
+
+    .purse-label {
+      font-size: 0.85rem;
+      color: var(--text-light, #666);
+      margin: 0;
+    }
+
+    /* Tabs */
+    .tabs-section {
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .tabs-nav {
+      display: flex;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .tabs-nav::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-btn {
+      flex-shrink: 0;
+      padding: 0.875rem 1.25rem;
+      border: none;
+      background: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-light, #666);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      white-space: nowrap;
+      min-height: 44px;
+    }
+
+    .tab-btn:hover {
+      color: var(--primary, #1e5631);
+      background: var(--primary-light, #e8f5e9);
+    }
+
+    .tab-btn.active {
+      color: var(--primary, #1e5631);
+      border-bottom-color: var(--primary, #1e5631);
+    }
+
+    .tab-panel {
+      display: none;
+      padding: 1.25rem;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    /* Loading */
+    .loading-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      padding: 2rem;
+      color: var(--text-light, #666);
+      font-size: 0.9rem;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border, #e0e0e0);
+      border-top-color: var(--primary, #1e5631);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-light, #666);
+      font-size: 0.9rem;
+    }
+
+    /* Data tables */
+    .table-wrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .data-table th {
+      text-align: left;
+      padding: 0.625rem 0.75rem;
+      font-weight: 600;
+      color: var(--text-light, #666);
+      border-bottom: 2px solid var(--border, #e0e0e0);
+      white-space: nowrap;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .data-table td {
+      padding: 0.625rem 0.75rem;
+      border-bottom: 1px solid var(--border, #e0e0e0);
+    }
+
+    .data-table tbody tr:hover {
+      background: var(--surface, #f5f5f5);
+    }
+
+    /* Responsive table: stack on mobile */
+    @media (max-width: 640px) {
+      .data-table thead {
+        display: none;
+      }
+
+      .data-table tbody tr {
+        display: block;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--border, #e0e0e0);
+      }
+
+      .data-table td {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.25rem 0;
+        border: none;
+      }
+
+      .data-table td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: var(--text-light, #666);
+        font-size: 0.8rem;
+      }
+    }
+
+    /* Analysis grid */
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 1rem;
+    }
+
+    @media (max-width: 480px) {
+      .analysis-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .hole-card {
+      background: var(--surface, #f5f5f5);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+
+    .hole-number {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--primary, #1e5631);
+      margin-bottom: 0.75rem;
+      text-align: center;
+    }
+
+    .hole-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-label {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-light, #666);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .stat-value.birdie { color: #1565c0; }
+    .stat-value.par { color: #2e7d32; }
+    .stat-value.bogey { color: #e65100; }
+    .stat-value.double { color: #c62828; }
+
+    /* Fixtures */
+    .fixtures-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .fixtures-section h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 0 0 1rem 0;
+    }
+
+    .fixtures-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .fixture-item {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      min-height: 44px;
+    }
+
+    .fixture-date {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--primary, #1e5631);
+      white-space: nowrap;
+      min-width: 90px;
+    }
+
+    .fixture-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+
+    .fixture-name {
+      font-weight: 500;
+      font-size: 0.9rem;
+    }
+
+    .fixture-type {
+      font-size: 0.8rem;
+      color: var(--text-light, #666);
+    }
+
+    /* External link */
+    .external-link {
+      text-align: center;
+      padding: 1rem 0;
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      background: var(--surface, #f5f5f5);
+      color: var(--text, #1a1a1a);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+      min-height: 44px;
+    }
+
+    .btn-secondary:hover {
+      background: var(--border, #e0e0e0);
+    }
+  </style>
+</MemberLayout>
