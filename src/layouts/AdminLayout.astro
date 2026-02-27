@@ -12,7 +12,8 @@ const navItems = [
   { href: '/admin/members', label: 'Members', icon: 'users' },
   { href: '/admin/payments', label: 'Payments', icon: 'credit-card' },
   { href: '/admin/invoices', label: 'Invoices', icon: 'invoice' },
-  { href: '/admin/reports', label: 'Reports', icon: 'chart' },
+  { href: '/admin/revenue', label: 'Revenue', icon: 'chart' },
+  { href: '/admin/statistics', label: 'Statistics', icon: 'bar-chart-2' },
   { href: '/admin/database', label: 'Database', icon: 'database' },
   { href: '/admin/content', label: 'Website', icon: 'globe' },
 ];
@@ -808,6 +809,42 @@ const navItems = [
 
         overlay.classList.add('open');
         document.getElementById('m3-confirm-btn').focus();
+
+        return new Promise((resolve) => {
+          resolvePromise = resolve;
+        });
+      };
+      // M3 Select - confirm dialog with a dropdown select
+      window.m3Select = function(message, selectOptions, options = {}) {
+        const {
+          title = 'Select',
+          type = 'warning',
+          confirmText = 'Confirm',
+          cancelText = 'Cancel',
+          defaultValue = ''
+        } = options;
+
+        iconEl.className = 'm3-dialog-icon ' + type;
+        iconEl.innerHTML = icons[type] || icons.warning;
+        titleEl.textContent = title;
+        contentEl.innerHTML = `<p style="margin:0 0 0.75rem">${message}</p>
+          <select id="m3-select-input" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:8px;font-size:0.95rem;">
+            ${selectOptions.map(opt => `<option value="${opt}"${opt === defaultValue ? ' selected' : ''}>${opt}</option>`).join('')}
+          </select>`;
+
+        actionsEl.innerHTML = `
+          <button class="m3-btn m3-btn-text" id="m3-cancel-btn">${cancelText}</button>
+          <button class="m3-btn m3-btn-filled" id="m3-confirm-btn">${confirmText}</button>
+        `;
+
+        document.getElementById('m3-cancel-btn').onclick = () => closeDialog(null);
+        document.getElementById('m3-confirm-btn').onclick = () => {
+          const val = document.getElementById('m3-select-input').value;
+          closeDialog(val);
+        };
+
+        overlay.classList.add('open');
+        document.getElementById('m3-select-input').focus();
 
         return new Promise((resolve) => {
           resolvePromise = resolve;

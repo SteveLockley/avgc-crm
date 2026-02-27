@@ -51,6 +51,10 @@ const typeLabels: Record<string, string> = {
   dd_renewal: 'DD Renewal',
   bacs_renewal: 'BACS Renewal',
   social_renewal: 'Social Renewal',
+  invoice_send: 'Invoice Send',
+  invoice_resend: 'Invoice Resend',
+  reminder: 'Reminder',
+  subscription_change: 'Subscription Change',
 };
 
 function formatDate(dateStr: string) {
@@ -136,6 +140,10 @@ function formatDate(dateStr: string) {
         <option value="dd_renewal" selected={filterType === 'dd_renewal'}>DD Renewal</option>
         <option value="bacs_renewal" selected={filterType === 'bacs_renewal'}>BACS Renewal</option>
         <option value="social_renewal" selected={filterType === 'social_renewal'}>Social Renewal</option>
+        <option value="invoice_send" selected={filterType === 'invoice_send'}>Invoice Send</option>
+        <option value="invoice_resend" selected={filterType === 'invoice_resend'}>Invoice Resend</option>
+        <option value="reminder" selected={filterType === 'reminder'}>Reminder</option>
+        <option value="subscription_change" selected={filterType === 'subscription_change'}>Subscription Change</option>
       </select>
     </label>
     <label class="filter-group">

@@ -220,53 +220,79 @@
     max-width: none !important;
   }
 
-  /* Page margins for A4 */
+  /* Suppress browser header/footer (date, URL, page number) */
   @page {
-    margin: 15mm;
+    margin: 10mm;
     size: A4;
   }
 
-  /* Document fills the page */
+  /* Document fills the page, compact spacing */
   .club-document {
     max-width: none;
     padding: 0;
     margin: 0;
   }
 
-  .doc-header {
-    padding-bottom: 1.25rem;
-    margin-bottom: 1.5rem;
+  /* Hide document header (crest, club name) and footer (address, URL) */
+  .doc-header,
+  .doc-footer {
+    display: none !important;
   }
 
-  .doc-crest {
-    width: 60px;
+  /* Compact title spacing */
+  .doc-title {
+    font-size: 1.5rem;
+    margin: 0 0 0.25rem;
   }
 
-  /* Avoid breaking inside sections */
+  .doc-subtitle {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+  }
+
+  /* Tighter section spacing */
   .doc-section {
+    margin-bottom: 0.75rem;
     page-break-inside: avoid;
+  }
+
+  .doc-section-title {
+    font-size: 1rem;
+    padding-bottom: 0.3rem;
+    margin-bottom: 0.5rem;
+  }
+
+  /* Tighter menu item rows */
+  .menu-item {
+    padding: 0.25rem 0;
+    border-color: #999 !important;
+  }
+
+  .menu-item-name {
+    font-size: 0.9em;
+  }
+
+  .menu-item-price {
+    font-size: 0.9em;
+  }
+
+  .doc-note {
+    font-size: 0.8rem;
+    margin-bottom: 0.4rem;
   }
 
   .doc-banner {
+    padding: 0.6rem 1rem;
+    margin: 1rem 0;
+    font-size: 0.95rem;
     page-break-inside: avoid;
+    border-color: #000 !important;
   }
 
   /* No background colours */
   * {
     background: transparent !important;
     box-shadow: none !important;
-  }
-
-  /* Ensure borders print */
-  .doc-header,
-  .doc-footer,
-  .doc-section-title,
-  .doc-banner {
-    border-color: #000 !important;
-  }
-
-  .menu-item {
-    border-color: #999 !important;
   }
 
   /* Hide the non-document wrapper content */

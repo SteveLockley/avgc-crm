@@ -1,0 +1,150 @@
+---
+import PublicLayout from '../../layouts/PublicLayout.astro';
+
+const heroImage = '/images/clubhouse.jpg';
+
+const menus = [
+  {
+    title: 'Sunday Lunch Menu',
+    description: 'Starters, roast dinners, and desserts served every Sunday from 12 noon to 3pm. Any 2 courses for £20, all 3 for £24.',
+    href: '/clubhouse/sunday-menu',
+    when: 'Sundays, 12:00 - 15:00',
+  },
+  {
+    title: 'Sunday Bar Menu',
+    description: 'Breakfast rolls, gourmet sandwiches, homemade soup, fish shop favourites and sides.',
+    href: '/clubhouse/sunday-bar-menu',
+    when: 'Sundays, 12:00 - 16:00',
+  },
+];
+---
+
+<PublicLayout
+  title="Menus"
+  description="View our food and drink menus at Alnmouth Village Golf Club. Sunday lunch, bar menu, and more."
+  heroImage={heroImage}
+  heroTitle="Our Menus"
+  heroSubtitle="Delicious food served in the clubhouse with stunning views across the links"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <section class="section menus-section">
+      <div class="menus-grid">
+        {menus.map(menu => (
+          <a href={menu.href} class="menu-card">
+            <div class="menu-card-content">
+              <h2>{menu.title}</h2>
+              <p class="menu-when">{menu.when}</p>
+              <p class="menu-desc">{menu.description}</p>
+              <span class="menu-link">View menu &rarr;</span>
+            </div>
+          </a>
+        ))}
+      </div>
+
+      <div class="menus-note">
+        <p>
+          Vegetarian and dietary options are available. Please ask our staff for details.
+          Members receive a 15% discount on Sunday lunch.
+        </p>
+        <p>
+          For function catering and special event menus, please
+          <a href="/contact?enquiry=function">contact us</a>.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    .menus-section {
+      padding-top: 3rem;
+    }
+
+    .menus-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 640px) {
+      .menus-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .menu-card {
+      display: block;
+      text-decoration: none;
+      background: var(--white);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      border: 2px solid var(--border-light);
+      transition: all 0.3s ease;
+    }
+
+    .menu-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.12);
+      border-color: var(--primary);
+    }
+
+    .menu-card-content {
+      padding: 2rem;
+    }
+
+    .menu-card h2 {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      color: var(--primary);
+      margin-bottom: 0.5rem;
+    }
+
+    .menu-when {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 1rem;
+    }
+
+    .menu-desc {
+      font-size: 0.95rem;
+      color: var(--text-light);
+      line-height: 1.7;
+      margin-bottom: 1.25rem;
+    }
+
+    .menu-link {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .menu-card:hover .menu-link {
+      color: var(--primary-dark);
+    }
+
+    .menus-note {
+      max-width: 600px;
+      margin: 3rem auto 0;
+      text-align: center;
+      color: var(--text-light);
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+
+    .menus-note p {
+      margin-bottom: 0.75rem;
+    }
+
+    .menus-note a {
+      color: var(--primary);
+      font-weight: 500;
+    }
+  </style>
+</PublicLayout>

@@ -1,13 +1,74 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { isGoogleConfigured } from '../../../lib/google-business';
-import { getCurrentSeason, getSeasonLabel } from '../../../lib/opening-hours';
+import { isGoogleConfigured, getGoogleMode } from '../../../lib/google-business';
+import { getHoursBySeason, getCurrentSeason, getSeasonLabel, type Season } from '../../../lib/opening-hours';
 
 const env = Astro.locals.runtime?.env;
 const db = env?.DB;
 const configured = isGoogleConfigured(env);
+const googleMode = getGoogleMode(env);
 const currentSeason = getCurrentSeason();
 const locationId = env?.GOOGLE_LOCATION_ID || '';
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Hours editor state
+const seasonParam = Astro.url.searchParams.get('season');
+const activeSeason: Season = (seasonParam === 'Winter' || seasonParam === 'Summer') ? seasonParam : currentSeason;
+
+let hoursMessage = '';
+let hoursMessageType: 'success' | 'error' | '' = '';
+
+// Handle hours form POST
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+  const period = formData.get('period') as Season;
+
+  try {
+    if (action === 'update' && (period === 'Winter' || period === 'Summer')) {
+      for (let day = 0; day < 7; day++) {
+        const openTime = formData.get(`open_${day}`)?.toString() || '08:00';
+        const closeTime = formData.get(`close_${day}`)?.toString() || '18:00';
+        const isClosed = formData.get(`closed_${day}`) === 'on' ? 1 : 0;
+
+        const existing = await db?.prepare(
+          `SELECT id FROM opening_hours WHERE location = 'Clubhouse' AND period_name = ? AND day_of_week = ?`
+        ).bind(period, day).first();
+
+        if (existing) {
+          await db?.prepare(
+            `UPDATE opening_hours SET open_time = ?, close_time = ?, is_closed = ?, updated_at = datetime('now')
+             WHERE location = 'Clubhouse' AND period_name = ? AND day_of_week = ?`
+          ).bind(openTime, closeTime, isClosed, period, day).run();
+        } else {
+          await db?.prepare(
+            `INSERT INTO opening_hours (location, period_name, day_of_week, open_time, close_time, is_closed, sort_order)
+             VALUES ('Clubhouse', ?, ?, ?, ?, ?, ?)`
+          ).bind(period, day, openTime, closeTime, isClosed, day).run();
+        }
+      }
+      hoursMessage = `${period} hours updated successfully`;
+      hoursMessageType = 'success';
+    }
+  } catch (e: any) {
+    hoursMessage = e.message || 'Failed to update opening hours';
+    hoursMessageType = 'error';
+  }
+}
+
+// Fetch hours for active season
+let hours: any[] = [];
+if (db) {
+  hours = await getHoursBySeason(db, activeSeason);
+}
+
+const hoursByDay = new Map<number, any>();
+for (const h of hours) {
+  if (h.day_of_week !== null) {
+    hoursByDay.set(h.day_of_week, h);
+  }
+}
 
 // Fetch last sync info
 let lastSync: any = null;
@@ -52,6 +113,12 @@ if (db) {
 
     <div id="alert-container"></div>
 
+    {hoursMessage && (
+      <div class={`alert alert-${hoursMessageType}`}>
+        {hoursMessage}
+      </div>
+    )}
+
     <!-- Connection Status -->
     <div class="card">
       <div class="card-header">
@@ -85,6 +152,14 @@ if (db) {
         </div>
         {configured && (
           <div class="status-row">
+            <span class="status-label">Mode</span>
+            <span class={`status-badge ${googleMode === 'proxy' ? 'status-proxy' : 'status-ok'}`}>
+              {googleMode === 'proxy' ? 'Apps Script Proxy' : 'Direct API'}
+            </span>
+          </div>
+        )}
+        {configured && locationId && (
+          <div class="status-row">
             <span class="status-label">Location ID</span>
             <code class="location-id">{locationId}</code>
           </div>
@@ -106,7 +181,12 @@ if (db) {
         <div class="card-body" style="border-top: 1px solid var(--border);">
           <div class="info-box" style="margin:0;">
             <h4>Setup Required</h4>
-            <p>Add these Cloudflare secrets to enable Google Business Profile sync:</p>
+            <p><strong>Option 1 — Apps Script Proxy (recommended):</strong></p>
+            <ul>
+              <li><code>GOOGLE_APPS_SCRIPT_URL</code> — deployed web app URL</li>
+              <li><code>GOOGLE_APPS_SCRIPT_SECRET</code> — shared secret</li>
+            </ul>
+            <p style="margin-top:0.75rem;"><strong>Option 2 — Direct API:</strong></p>
             <ul>
               <li><code>GOOGLE_CLIENT_ID</code></li>
               <li><code>GOOGLE_CLIENT_SECRET</code></li>
@@ -168,31 +248,103 @@ if (db) {
       </div>
 
       <!-- Opening Hours -->
-      <div class="card">
-        <div class="card-header">
-          <div class="header-left">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
-              <circle cx="12" cy="12" r="10"/>
-              <polyline points="12 6 12 12 16 14"/>
+      <div class="season-tabs">
+        <a href="?season=Summer" class={`tab ${activeSeason === 'Summer' ? 'active' : ''}`}>
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
             </svg>
-            <div>
-              <h2>Opening Hours</h2>
-              <p>Currently showing: {currentSeason} ({getSeasonLabel(currentSeason)}){lastHoursPush ? ` — Last pushed ${lastHoursPush.created_at}` : ''}</p>
+          </span>
+          Summer (Apr - Sep)
+          {currentSeason === 'Summer' && <span class="season-badge">Active</span>}
+        </a>
+        <a href="?season=Winter" class={`tab ${activeSeason === 'Winter' ? 'active' : ''}`}>
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="20" y1="16" x2="4" y2="8"/><line x1="20" y1="8" x2="4" y2="16"/>
+            </svg>
+          </span>
+          Winter (Oct - Mar)
+          {currentSeason === 'Winter' && <span class="season-badge">Active</span>}
+        </a>
+      </div>
+
+      <form method="POST">
+        <input type="hidden" name="action" value="update" />
+        <input type="hidden" name="period" value={activeSeason} />
+
+        <div class="card">
+          <div class="card-header">
+            <div class="header-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="header-icon">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <div>
+                <h2>{activeSeason} Hours</h2>
+                <p>{getSeasonLabel(activeSeason)}{activeSeason === currentSeason ? ' — Currently showing on website' : ''}{lastHoursPush ? ` — Last pushed ${lastHoursPush.created_at}` : ''}</p>
+              </div>
+            </div>
+            <div class="header-actions">
+              <button type="submit" class="save-btn">Save Changes</button>
+              <button type="button" class="google-btn" id="push-hours" data-season={activeSeason}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                  <polyline points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+                Push to Google
+              </button>
             </div>
           </div>
-          <div class="header-actions">
-            <a href="/admin/content/opening-hours" class="btn-secondary">
-              Edit Hours
-            </a>
-            <button type="button" class="google-btn" id="push-hours" data-season={currentSeason}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
-                <polyline points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-              Push Hours to Google
-            </button>
+
+          <div class="hours-list">
+            {[1, 2, 3, 4, 5, 6, 0].map(day => {
+              const h = hoursByDay.get(day);
+              const openTime = h?.open_time || '08:00';
+              const closeTime = h?.close_time || '18:00';
+              const isClosed = h?.is_closed || false;
+
+              return (
+                <div class={`day-row ${isClosed ? 'day-closed' : ''}`}>
+                  <div class="day-name">{DAY_NAMES[day]}</div>
+                  <div class="day-inputs">
+                    <div class="time-group">
+                      <label>Opens</label>
+                      <input
+                        type="time"
+                        name={`open_${day}`}
+                        value={openTime}
+                        class="time-input"
+                      />
+                    </div>
+                    <div class="time-separator">to</div>
+                    <div class="time-group">
+                      <label>Closes</label>
+                      <input
+                        type="text"
+                        name={`close_${day}`}
+                        value={closeTime}
+                        class="time-input"
+                        placeholder="e.g. 18:00 or Dusk"
+                      />
+                    </div>
+                    <div class="closed-toggle">
+                      <label class="toggle-label">
+                        <input
+                          type="checkbox"
+                          name={`closed_${day}`}
+                          checked={isClosed}
+                          class="toggle-checkbox"
+                        />
+                        <span class="toggle-text">Closed</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
-      </div>
+      </form>
 
       <!-- Special Hours -->
       <div class="card">
@@ -685,6 +837,11 @@ if (db) {
     color: #991b1b;
   }
 
+  .status-proxy {
+    background: #e0f2fe;
+    color: #0369a1;
+  }
+
   .location-id {
     background: var(--surface, #f3f4f6);
     padding: 0.2rem 0.6rem;
@@ -912,6 +1069,140 @@ if (db) {
     font-size: 0.85rem;
   }
 
+  /* Season Tabs */
+  .season-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--card-bg, #fff);
+    border: 2px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    text-decoration: none;
+    color: var(--text-light);
+    font-weight: 500;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    flex: 1;
+    justify-content: center;
+  }
+
+  .tab:hover {
+    border-color: var(--primary);
+    color: var(--text);
+  }
+
+  .tab.active {
+    border-color: var(--primary);
+    background: var(--primary-light, #e8f5e9);
+    color: var(--primary);
+  }
+
+  .tab-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .season-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--primary);
+    color: white;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+  }
+
+  /* Day rows */
+  .hours-list {
+    padding: 0;
+  }
+
+  .day-row {
+    display: flex;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    gap: 1rem;
+    transition: background 0.15s;
+  }
+
+  .day-row:last-child {
+    border-bottom: none;
+  }
+
+  .day-row:hover {
+    background: var(--surface, #f9fafb);
+  }
+
+  .day-row.day-closed {
+    opacity: 0.5;
+  }
+
+  .day-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text);
+    width: 110px;
+    flex-shrink: 0;
+  }
+
+  .day-inputs {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+
+  .time-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .time-group label {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .time-input {
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    width: 130px;
+    background: var(--white, #fff);
+    transition: border-color 0.2s;
+  }
+
+  .time-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(34, 139, 34, 0.1);
+  }
+
+  .time-separator {
+    color: var(--text-light);
+    font-size: 0.9rem;
+    padding-top: 1.25rem;
+  }
+
+  .closed-toggle {
+    margin-left: auto;
+  }
+
   /* Special hours form */
   .add-special-form {
     background: var(--surface, #f9fafb);
@@ -980,6 +1271,28 @@ if (db) {
 
     .log-detail {
       max-width: 150px;
+    }
+
+    .season-tabs {
+      flex-direction: column;
+    }
+
+    .day-row {
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 1rem;
+    }
+
+    .day-name {
+      width: auto;
+    }
+
+    .day-inputs {
+      width: 100%;
+    }
+
+    .closed-toggle {
+      margin-left: 0;
     }
   }
 </style>

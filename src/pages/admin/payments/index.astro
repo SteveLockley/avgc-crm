@@ -267,6 +267,12 @@ function buildQueryString(pageNum: number): string {
                     <circle cx="12" cy="12" r="3"/>
                   </svg>
                 </a>
+                <button type="button" class="action-btn action-btn-danger delete-payment-btn" title="Delete" data-id={payment.id}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                </button>
               </td>
             </tr>
           ))}
@@ -688,8 +694,9 @@ function buildQueryString(pageNum: number): string {
 
     /* Actions */
     .actions-col {
-      width: 60px;
+      width: 80px;
       text-align: right;
+      white-space: nowrap;
     }
 
     .action-btn {
@@ -710,6 +717,11 @@ function buildQueryString(pageNum: number): string {
     .action-btn:hover {
       background: #e8e8e8;
       color: #1e5631;
+    }
+
+    .action-btn-danger:hover {
+      background: #fef2f2;
+      color: #dc2626;
     }
 
     .action-btn svg {
@@ -850,4 +862,36 @@ function buildQueryString(pageNum: number): string {
       }
     }
   </style>
+
+  <script is:inline>
+    document.querySelectorAll('.delete-payment-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const paymentId = btn.dataset.id;
+        const confirmed = await m3Confirm('Are you sure you want to delete this payment?', {
+          title: 'Delete Payment?',
+          type: 'delete',
+          confirmText: 'Delete',
+          cancelText: 'Cancel',
+          danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+          const res = await fetch('/api/delete-payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paymentId: parseInt(paymentId) }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            btn.closest('tr').remove();
+          } else {
+            await m3Alert(data.error || 'Failed to delete payment', { title: 'Error', type: 'error' });
+          }
+        } catch (err) {
+          await m3Alert('Failed to delete payment', { title: 'Error', type: 'error' });
+        }
+      });
+    });
+  </script>
 </AdminLayout>

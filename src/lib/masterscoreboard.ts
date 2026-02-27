@@ -1,15 +1,15 @@
-// Master Scoreboard API v8 client
+// Master Scoreboard API v1 client
 // JWT-authenticated (HS256) via Web Crypto API — Cloudflare Workers compatible, no npm deps
 
-const MSB_BASE_URL = 'https://www.masterscoreboard.co.uk/api/v8';
+const MSB_BASE_URL = 'https://www.masterscoreboard.co.uk/api/public/v1';
 
 export interface MsbEnv {
-  MSB_CLUB_WEB_ID: string;
+  MSB_CWID: string;         // numeric club ID — used in URL params AND as JWT issuer
   MSB_SECRET_KEY: string;
 }
 
 export function isMsbConfigured(env: any): boolean {
-  return !!(env?.MSB_CLUB_WEB_ID && env?.MSB_SECRET_KEY);
+  return !!(env?.MSB_CWID && env?.MSB_SECRET_KEY);
 }
 
 // --- JWT signing (HS256 via Web Crypto) ---
@@ -30,7 +30,7 @@ async function generateMsbToken(env: MsbEnv): Promise<string> {
   const header = { alg: 'HS256', typ: 'JWT' };
   const payload = {
     aud: 'msb-api',
-    iss: env.MSB_CLUB_WEB_ID,
+    iss: env.MSB_CWID,
     iat: Math.floor(Date.now() / 1000),
   };
 
@@ -63,7 +63,7 @@ async function msbFetch(
   const token = await generateMsbToken(env);
 
   const url = new URL(`${MSB_BASE_URL}/${endpoint}`);
-  url.searchParams.set('CWID', env.MSB_CLUB_WEB_ID);
+  url.searchParams.set('CWID', env.MSB_CWID);
 
   if (params) {
     for (const [key, value] of Object.entries(params)) {
@@ -77,6 +77,7 @@ async function msbFetch(
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
+      'User-Agent': 'AVGC-CRM/1.0',
     },
   });
 
@@ -85,7 +86,26 @@ async function msbFetch(
     throw new Error(`MSB API error (${response.status}): ${errorText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  return decodeHtmlEntities(data);
+}
+
+// MSB API returns HTML entities (e.g. &#163; for £) in string fields — decode them
+function decodeHtmlEntities(value: any): any {
+  if (typeof value === 'string') {
+    return value.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+               .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+               .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  }
+  if (Array.isArray(value)) return value.map(decodeHtmlEntities);
+  if (value && typeof value === 'object') {
+    const result: any = {};
+    for (const key of Object.keys(value)) {
+      result[key] = decodeHtmlEntities(value[key]);
+    }
+    return result;
+  }
+  return value;
 }
 
 // --- Typed wrapper functions ---
@@ -108,6 +128,11 @@ export async function getPlayerScores(env: MsbEnv, playerId: number): Promise<an
   return msbFetch(env, 'player_scores.php', { PlayerID: playerId });
 }
 
+// Start sheet
+export async function getStartSheet(env: MsbEnv, compId: number): Promise<any> {
+  return msbFetch(env, 'competition_start_sheet.php', { Comp_ID: compId });
+}
+
 // Fixtures
 export async function getFixtureList(env: MsbEnv): Promise<any> {
   return msbFetch(env, 'fixture_list.php');
@@ -121,11 +146,13 @@ export async function getLiveLeaderboardList(env: MsbEnv): Promise<any> {
 export async function getLiveLeaderboard(
   env: MsbEnv,
   compId: number,
-  reportId: number
+  division: number = 0,
+  gross: boolean = false
 ): Promise<any> {
   return msbFetch(env, 'competition_leaderboard.php', {
-    CompID: compId,
-    ReportID: reportId,
+    Comp_ID: compId,
+    Division: division,
+    Gross: gross ? 'True' : 'False',
   });
 }
 
@@ -148,7 +175,7 @@ export async function getClosedCompetitionResult(
   reportId: number
 ): Promise<any> {
   return msbFetch(env, 'competition_closed_result.php', {
-    CompID: compId,
+    Comp_ID: compId,
     ReportID: reportId,
   });
 }
@@ -158,8 +185,8 @@ export async function getBestOfList(env: MsbEnv): Promise<any> {
   return msbFetch(env, 'competitions_bestof_list.php');
 }
 
-export async function getBestOfResult(env: MsbEnv, compId: number): Promise<any> {
-  return msbFetch(env, 'competition_bestof_result.php', { CompID: compId });
+export async function getBestOfResult(env: MsbEnv, seriesId: number): Promise<any> {
+  return msbFetch(env, 'competition_bestof_result.php', { Series_ID: seriesId });
 }
 
 // Match play
@@ -168,7 +195,7 @@ export async function getMatchplayList(env: MsbEnv): Promise<any> {
 }
 
 export async function getMatchplayDraw(env: MsbEnv, compId: number): Promise<any> {
-  return msbFetch(env, 'competition_matchplay_draw.php', { CompID: compId });
+  return msbFetch(env, 'competition_matchplay_draw.php', { Comp_ID: compId });
 }
 
 // Orders of merit
@@ -176,8 +203,8 @@ export async function getOrdersOfMeritList(env: MsbEnv): Promise<any> {
   return msbFetch(env, 'ordersofmerit_list.php');
 }
 
-export async function getOrderOfMerit(env: MsbEnv, meritId: number): Promise<any> {
-  return msbFetch(env, 'orderofmerit.php', { MeritID: meritId });
+export async function getOrderOfMerit(env: MsbEnv, seriesId: number): Promise<any> {
+  return msbFetch(env, 'orderofmerit.php', { Series_ID: seriesId });
 }
 
 // Eclectics
@@ -187,12 +214,10 @@ export async function getEclecticsList(env: MsbEnv): Promise<any> {
 
 export async function getEclecticResult(
   env: MsbEnv,
-  eclecticId: number,
-  reportId: number
+  eclecticId: number
 ): Promise<any> {
   return msbFetch(env, 'eclectic_result.php', {
-    EclecticID: eclecticId,
-    ReportID: reportId,
+    Eclectic_ID: eclecticId,
   });
 }
 
@@ -202,10 +227,11 @@ export function findPlayerByNationalId(
   handicapList: any,
   nationalId: string
 ): any | null {
-  if (!handicapList?.Players || !nationalId) return null;
+  const players = handicapList?.players || handicapList?.Players;
+  if (!players || !nationalId) return null;
   return (
-    handicapList.Players.find(
-      (p: any) => p.NationalID === nationalId || p.nationalId === nationalId
+    players.find(
+      (p: any) => p.nationalId === nationalId || p.NationalID === nationalId
     ) ?? null
   );
 }

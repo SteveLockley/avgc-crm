@@ -12,6 +12,8 @@ const db = Astro.locals.runtime.env.DB;
 
 let changes: SubscriptionChange[] = [];
 let appliedCount = 0;
+let emailsSent = 0;
+let invoicesGenerated = 0;
 let error = '';
 let success = '';
 
@@ -50,8 +52,13 @@ if (Astro.request.method === 'POST') {
           }
         }
 
+        // Build changes list with old categories for the API call
+        const apiChanges: { memberId: number; oldCategory: string; newCategory: string }[] = [];
+
         // Apply updates (category holds subscription type)
         for (const update of updates) {
+          const oldCat = formData.get(`old_subscription_${update.id}`)?.toString() || '';
+
           await db.prepare(
             `UPDATE members SET category = ?, updated_at = datetime('now') WHERE id = ?`
           ).bind(update.newSubscription, update.id).run();
@@ -63,13 +70,35 @@ if (Astro.request.method === 'POST') {
           ).bind(
             Astro.locals.user?.email || 'system',
             update.id,
-            JSON.stringify({ newSubscription: update.newSubscription })
+            JSON.stringify({ oldSubscription: oldCat, newSubscription: update.newSubscription })
           ).run();
 
+          apiChanges.push({ memberId: update.id, oldCategory: oldCat, newCategory: update.newSubscription });
           appliedCount++;
         }
 
-        success = `Successfully updated ${appliedCount} member subscription${appliedCount !== 1 ? 's' : ''}`;
+        // Call the API to delete old invoices, send notifications, and generate new invoices
+        try {
+          const origin = Astro.url.origin;
+          const apiResponse = await fetch(`${origin}/api/apply-subscription-changes`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Cookie': Astro.request.headers.get('Cookie') || '',
+            },
+            body: JSON.stringify({ changes: apiChanges }),
+          });
+          const apiResult = await apiResponse.json();
+          emailsSent = apiResult.emailsSent || 0;
+          invoicesGenerated = apiResult.invoicesGenerated || 0;
+          if (apiResult.errors?.length) {
+            error = apiResult.errors.join('; ');
+          }
+        } catch (apiErr: any) {
+          error = `Subscriptions updated but post-processing failed: ${apiErr.message}`;
+        }
+
+        success = `Updated ${appliedCount} subscription${appliedCount !== 1 ? 's' : ''}, sent ${emailsSent} notification${emailsSent !== 1 ? 's' : ''}, generated ${invoicesGenerated} invoice${invoicesGenerated !== 1 ? 's' : ''}`;
       } catch (e: any) {
         error = `Failed to apply changes: ${e.message}`;
       }
@@ -88,7 +117,11 @@ const membersResult = await db.prepare(
       AND category NOT LIKE '%Gratis%'
       AND category NOT LIKE '%Honorary%'
       AND category NOT LIKE '%Retention%'
-      AND category NOT LIKE '%Resigned%')
+      AND category NOT LIKE '%Resigned%'
+      AND category NOT LIKE '%Winter%'
+      AND category NOT LIKE '%PGA Professional%'
+      AND category NOT LIKE '%International%'
+      AND category NOT LIKE '%Life%')
    ORDER BY surname, first_name`
 ).all();
 
@@ -214,13 +247,17 @@ for (const change of changes) {
   <div class="info-box">
     <h4>Subscription Rules (based on age on 1st April {currentYear})</h4>
     <ul>
-      <li><strong>Junior → Intermediate:</strong> Member turns 18+ on 1st April</li>
-      <li><strong>Intermediate → Under 30:</strong> Member turns 21+ on 1st April</li>
-      <li><strong>Under 30 → Full:</strong> Member turns 30+ on 1st April</li>
-      <li><strong>Full → Senior Loyalty:</strong> Member is 65+ years old AND has 25+ years of membership</li>
-      <li><strong>Any → Over 80:</strong> Member turns 80+ on 1st April</li>
-      <li><strong>Any → Life Member:</strong> Member reaches 50+ years of membership during the year</li>
+      <li><strong>Junior:</strong> Under 18 on 1st April</li>
+      <li><strong>Intermediate:</strong> Age 18–20 on 1st April</li>
+      <li><strong>Under 30:</strong> Age 21–29 on 1st April</li>
+      <li><strong>Full:</strong> Age 30+ on 1st April</li>
+      <li><strong>Senior Loyalty:</strong> Age 65+ AND 25+ years of membership</li>
+      <li><strong>Over 80:</strong> Age 80+ on 1st April</li>
+      <li><strong>Life Member:</strong> 50+ years of membership during the year</li>
     </ul>
+    <p style="margin-top: 0.5rem; font-size: 0.8125rem; color: #004085;">
+      This review detects both upgrades and corrections (e.g. a Full member who should be Under 30).
+    </p>
     <p style="margin-top: 0.75rem; font-size: 0.875rem;">
       <strong>Reference date:</strong> 1st April {currentYear} ({formatDate(april1st.toISOString())})
     </p>
@@ -264,7 +301,7 @@ for (const change of changes) {
       <div class="card">
         <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
           <h3 class="card-title">Proposed Subscription Changes ({changes.length})</h3>
-          <button type="submit" class="btn btn-primary">Apply Selected Changes</button>
+          <button type="submit" class="btn btn-primary">Apply, Notify &amp; Re-Invoice</button>
         </div>
 
         {Object.entries(changesByType).map(([changeType, groupChanges]) => (
@@ -302,6 +339,11 @@ for (const change of changes) {
                         name={`new_subscription_${change.memberId}`}
                         value={change.newSubscription}
                       />
+                      <input
+                        type="hidden"
+                        name={`old_subscription_${change.memberId}`}
+                        value={change.currentSubscription || ''}
+                      />
                     </td>
                     <td>
                       <a href={`/admin/members/${change.memberId}`}>{change.memberName}</a>
@@ -318,7 +360,7 @@ for (const change of changes) {
       </div>
 
       <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
-        <button type="submit" class="btn btn-primary">Apply Selected Changes</button>
+        <button type="submit" class="btn btn-primary">Apply, Notify &amp; Re-Invoice</button>
       </div>
     </form>
   )}

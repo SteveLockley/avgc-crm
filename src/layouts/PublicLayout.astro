@@ -30,7 +30,7 @@ const currentPath = Astro.url.pathname;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const pageTitle = `${title} | Alnmouth Village Golf Club`;
 const pageDescription = description || 'Welcome to Alnmouth Village Golf Club - a stunning links course on the Northumberland coast, established 1869.';
-const ogImageUrl = ogImage || heroImage || 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2019/08/DSC_0178.jpg';
+const ogImageUrl = ogImage || heroImage || '/images/hero-course.jpg';
 const resolvedOgType = ogType || 'website';
 
 const navItems = [
@@ -38,7 +38,14 @@ const navItems = [
   { href: '/course', label: 'The Course' },
   { href: '/visitors', label: 'Visitors' },
   { href: '/membership', label: 'Membership' },
-  { href: '/clubhouse', label: 'Clubhouse' },
+  { href: '/clubhouse', label: 'Clubhouse', children: [
+    { href: '/clubhouse', label: 'The Clubhouse' },
+    { href: '/clubhouse/menus', label: 'Menus' },
+  ]},
+  { href: '/results', label: 'Results', children: [
+    { href: '/results', label: 'Competition Results' },
+    { href: '/leaderboard', label: 'Live Leaderboard' },
+  ]},
   { href: '/contact', label: 'Contact' },
 ];
 
@@ -99,9 +106,23 @@ const isAdmin = !!Astro.locals.user;
 
       <nav class="nav">
         {navItems.map(item => (
-          <a href={item.href} class={`nav-link ${isActive(item.href) ? 'active' : ''}`}>
-            {item.label}
-          </a>
+          item.children ? (
+            <div class="nav-dropdown">
+              <a href={item.href} class={`nav-link ${isActive(item.href) ? 'active' : ''}`}>
+                {item.label}
+                <svg class="nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+              </a>
+              <div class="nav-dropdown-menu">
+                {item.children.map(child => (
+                  <a href={child.href} class="nav-dropdown-link">{child.label}</a>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <a href={item.href} class={`nav-link ${isActive(item.href) ? 'active' : ''}`}>
+              {item.label}
+            </a>
+          )
         ))}
         <a href="/members/login" class="nav-link nav-cta">Members</a>
         {isAdmin && <a href="/admin" class="nav-link nav-admin">Admin</a>}
@@ -118,9 +139,20 @@ const isAdmin = !!Astro.locals.user;
   <!-- Mobile Navigation -->
   <nav class="mobile-nav" id="mobile-nav">
     {navItems.map(item => (
-      <a href={item.href} class={`mobile-nav-link ${isActive(item.href) ? 'active' : ''}`}>
-        {item.label}
-      </a>
+      item.children ? (
+        <>
+          <a href={item.href} class={`mobile-nav-link ${isActive(item.href) ? 'active' : ''}`}>
+            {item.label}
+          </a>
+          {item.children.filter(c => c.href !== item.href).map(child => (
+            <a href={child.href} class="mobile-nav-link mobile-nav-sub">{child.label}</a>
+          ))}
+        </>
+      ) : (
+        <a href={item.href} class={`mobile-nav-link ${isActive(item.href) ? 'active' : ''}`}>
+          {item.label}
+        </a>
+      )
     ))}
     <a href="/members/login" class="mobile-nav-link mobile-nav-cta">Members Area</a>
     {isAdmin && <a href="/admin" class="mobile-nav-link mobile-nav-admin">Admin</a>}
@@ -146,12 +178,14 @@ const isAdmin = !!Astro.locals.user;
         )}
         <h1 class="hero-title">{heroTitle || title}</h1>
         {heroSubtitle && <p class="hero-subtitle">{heroSubtitle}</p>}
-        {heroSize === 'fullscreen' && (
-          <div class="hero-actions">
-            <a href="/visitors" class="btn btn-primary btn-large">Plan Your Visit</a>
-            <a href="/course" class="btn btn-outline btn-large">Explore the Course</a>
-          </div>
-        )}
+        <slot name="hero-actions">
+          {heroSize === 'fullscreen' && (
+            <div class="hero-actions">
+              <a href="/visitors" class="btn btn-primary btn-large">Plan Your Visit</a>
+              <a href="/course" class="btn btn-outline btn-large">Explore the Course</a>
+            </div>
+          )}
+        </slot>
       </div>
       {heroSize === 'fullscreen' && (
         <div class="hero-scroll">
@@ -207,7 +241,7 @@ const isAdmin = !!Astro.locals.user;
           <a href="/members/login">Members Login</a>
           <a href="https://members.brsgolf.com/alnmouthvillage" target="_blank" rel="noopener noreferrer">Book Tee Time</a>
           <a href="/members/handbook">Members Handbook</a>
-          <a href="/members/results">Competition Results</a>
+          <a href="/results">Competition Results</a>
         </div>
 
         <div class="footer-section">
@@ -518,6 +552,66 @@ const isAdmin = !!Astro.locals.user;
       background: #7c3aed;
       color: var(--white) !important;
       border-color: #7c3aed;
+    }
+
+    /* Nav dropdown */
+    .nav-dropdown {
+      position: relative;
+    }
+
+    .nav-dropdown .nav-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .nav-chevron {
+      transition: transform 0.2s;
+    }
+
+    .nav-dropdown-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      min-width: 180px;
+      background: var(--white);
+      border-radius: 8px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+      border: 1px solid var(--border-light);
+      padding: 0.5rem 0;
+      z-index: 1001;
+    }
+
+    .nav-dropdown:hover .nav-dropdown-menu {
+      display: block;
+    }
+
+    .nav-dropdown:hover .nav-chevron {
+      transform: rotate(180deg);
+    }
+
+    .nav-dropdown-link {
+      display: block;
+      padding: 0.6rem 1.25rem;
+      color: var(--text) !important;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: background 0.2s, color 0.2s;
+      text-shadow: none !important;
+    }
+
+    .nav-dropdown-link:hover {
+      background: var(--surface);
+      color: var(--primary) !important;
+    }
+
+    /* Mobile sub-links */
+    .mobile-nav-sub {
+      padding-left: 2.5rem;
+      font-size: 0.95rem;
+      color: var(--text-light);
     }
 
     /* Mobile menu button */

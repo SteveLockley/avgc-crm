@@ -21,7 +21,7 @@ export const CLUB_INFO = {
     'https://www.facebook.com/p/Alnmouth-Village-Golf-Club-100063579043415/',
     'https://www.instagram.com/alnmouthvillagegolf/',
   ],
-  image: 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2019/08/DSC_0178.jpg',
+  image: 'https://www.alnmouthvillage.golf/images/hero-course.jpg',
 };
 
 export interface HoursForSchema {
@@ -83,7 +83,7 @@ export function localBusinessSchema(hours?: HoursForSchema[]) {
     address: CLUB_INFO.address,
     geo: CLUB_INFO.geo,
     sameAs: CLUB_INFO.sameAs,
-    image: 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg',
+    image: 'https://www.alnmouthvillage.golf/images/clubhouse.jpg',
     ...(hours?.length ? { openingHoursSpecification: buildOpeningHoursSpec(hours) } : {}),
   };
 }

@@ -81,18 +81,6 @@ const paymentStats = await db.prepare(`
   ORDER BY total DESC
 `).bind(`${currentYear}-01-01`).all();
 
-// Monthly payment totals - last 12 months
-const monthlyPayments = await db.prepare(`
-  SELECT
-    strftime('%Y-%m', payment_date) as month,
-    SUM(amount) as total,
-    COUNT(*) as count
-  FROM payments
-  WHERE payment_date >= date('now', '-12 months')
-  GROUP BY strftime('%Y-%m', payment_date)
-  ORDER BY month
-`).all();
-
 // Outstanding balances
 const outstandingBalances = await db.prepare(`
   SELECT
@@ -122,6 +110,18 @@ const membershipYearEnd = membershipYearStart + 1;
 const aprStart = `${membershipYearStart}-04-01`;
 const marEnd = `${membershipYearEnd}-03-31`;
 
+// Monthly payment totals - membership year (Apr-Mar)
+const monthlyPayments = await db.prepare(`
+  SELECT
+    strftime('%Y-%m', payment_date) as month,
+    SUM(amount) as total,
+    COUNT(*) as count
+  FROM payments
+  WHERE payment_date >= ? AND payment_date <= ?
+  GROUP BY strftime('%Y-%m', payment_date)
+  ORDER BY month
+`).bind(aprStart, marEnd).all();
+
 // DD invoices: get subscription vs fee breakdown per invoice for schedule calculation
 const ddInvoiceBreakdown = await db.prepare(`
   SELECT
@@ -138,17 +138,26 @@ const ddInvoiceBreakdown = await db.prepare(`
   GROUP BY i.id
 `).bind(aprStart).all();
 
-// Non-DD invoices (BACS, Social, etc): full amount in invoice_date month
-const nonDDInvoices = await db.prepare(`
-  SELECT
-    strftime('%Y-%m', i.invoice_date) as month,
-    SUM(i.total) as total,
-    SUM(CASE WHEN i.status = 'paid' THEN i.total ELSE 0 END) as paid
+// Non-DD invoices: total invoiced (goes in April) and paid by payment month
+const nonDDTotal = await db.prepare(`
+  SELECT SUM(i.total) as total
   FROM invoices i
   WHERE i.status != 'cancelled'
     AND i.period_start = ?
     AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.invoice_id = i.id AND p.payment_method = 'Clubwise Direct Debit')
-  GROUP BY strftime('%Y-%m', i.invoice_date)
+`).bind(aprStart).first<{ total: number }>();
+
+const nonDDPaidByMonth = await db.prepare(`
+  SELECT
+    strftime('%Y-%m', p.payment_date) as month,
+    SUM(p.amount) as paid
+  FROM payments p
+  JOIN invoices i ON i.id = p.invoice_id
+  WHERE i.status != 'cancelled'
+    AND i.period_start = ?
+    AND p.payment_method != 'Clubwise Direct Debit'
+    AND p.amount > 0
+  GROUP BY strftime('%Y-%m', p.payment_date)
   ORDER BY month
 `).bind(aprStart).all();
 
@@ -176,10 +185,11 @@ for (const inv of (ddInvoiceBreakdown.results || []) as any[]) {
   }
 }
 
-// Add non-DD invoices to their respective months
-for (const row of (nonDDInvoices.results || []) as any[]) {
+// Non-DD: all invoiced goes in April (index 0), paid distributed by payment month
+invoicedByMonth[0] += (nonDDTotal?.total || 0);
+
+for (const row of (nonDDPaidByMonth.results || []) as any[]) {
   const month = row.month as string;
-  // Find which index this month maps to in Apr-Mar
   const [yr, mo] = month.split('-').map(Number);
   let idx: number;
   if (mo >= 4) {
@@ -188,7 +198,6 @@ for (const row of (nonDDInvoices.results || []) as any[]) {
     idx = mo + 8; // Jan=9, Feb=10, Mar=11
   }
   if (idx >= 0 && idx < 12) {
-    invoicedByMonth[idx] += row.total as number;
     paidByMonth[idx] += row.paid as number;
   }
 }
@@ -214,18 +223,6 @@ const totalPaid = Math.round(subRevenueData.reduce((sum, d) => sum + d.paid, 0) 
 const totalUnpaid = Math.max(Math.round((totalInvoiced - totalPaid) * 100) / 100, 0);
 const maxBarValue = Math.max(...subRevenueData.map(d => Math.max(d.invoiced, d.paid)), 1);
 
-// Age group breakdown
-const ageStats = await db.prepare(`
-  SELECT
-    age_group,
-    COUNT(*) as count,
-    AVG(handicap_index) as avg_handicap
-  FROM members
-  WHERE age_group IS NOT NULL
-  GROUP BY age_group
-  ORDER BY count DESC
-`).all();
-
 // Recent membership activity
 const recentJoins = await db.prepare(`
   SELECT COUNT(*) as count
@@ -242,41 +239,14 @@ const paymentMethodStats = await db.prepare(`
   GROUP BY COALESCE(default_payment_method, 'Not Set')
   ORDER BY count DESC
 `).all();
-
-// Handicap distribution
-const handicapStats = await db.prepare(`
-  SELECT
-    CASE
-      WHEN handicap_index IS NULL THEN 'No Handicap'
-      WHEN handicap_index <= 5 THEN '0-5'
-      WHEN handicap_index <= 10 THEN '6-10'
-      WHEN handicap_index <= 15 THEN '11-15'
-      WHEN handicap_index <= 20 THEN '16-20'
-      WHEN handicap_index <= 28 THEN '21-28'
-      ELSE '29+'
-    END as bracket,
-    COUNT(*) as count
-  FROM members
-  GROUP BY bracket
-  ORDER BY
-    CASE bracket
-      WHEN '0-5' THEN 1
-      WHEN '6-10' THEN 2
-      WHEN '11-15' THEN 3
-      WHEN '16-20' THEN 4
-      WHEN '21-28' THEN 5
-      WHEN '29+' THEN 6
-      ELSE 7
-    END
-`).all();
 ---
 
-<AdminLayout title="Reports">
+<AdminLayout title="Revenue">
   <!-- Page Header -->
   <div class="page-header">
     <div class="header-content">
-      <h1>Reports</h1>
-      <p class="subtitle">Membership and financial analytics</p>
+      <h1>Revenue</h1>
+      <p class="subtitle">Revenue and financial analytics</p>
     </div>
   </div>
 
@@ -327,6 +297,54 @@ const handicapStats = await db.prepare(`
   <div class="reports-grid">
     <!-- Left Column -->
     <div class="reports-main">
+      <!-- Subscription Revenue Chart -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span>Subscription Revenue</span>
+          </div>
+          <span class="card-badge">{membershipYearStart}/{membershipYearEnd}</span>
+        </div>
+        <div class="card-content">
+          <div class="chart-summary">
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-invoiced"></span>
+              Invoiced: <strong>{formatCurrency(totalInvoiced)}</strong>
+            </div>
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-paid"></span>
+              Paid: <strong>{formatCurrency(totalPaid)}</strong>
+            </div>
+            <div class="chart-summary-item">
+              <span class="chart-legend-dot legend-unpaid"></span>
+              Unpaid: <strong>{formatCurrency(totalUnpaid)}</strong>
+            </div>
+          </div>
+          <div class="bar-chart">
+            {subRevenueData.map((d) => (
+              <div class="bar-col">
+                <div class="bar-value">{d.invoiced > 0 ? formatCurrency(d.invoiced) : ''}</div>
+                <div class="bar-track">
+                  <div class="bar-stack" style={`height: ${maxBarValue > 0 ? (d.invoiced / maxBarValue) * 100 : 0}%`}>
+                    <a href="/admin/invoices?status=draft" class="bar-segment-unpaid" style={`flex: ${d.unpaid}`}></a>
+                    <div class="bar-segment-paid" style={`flex: ${d.paid}`}></div>
+                  </div>
+                </div>
+                <div class="bar-label">{d.label}</div>
+              </div>
+            ))}
+          </div>
+          {totalInvoiced === 0 && (
+            <div class="empty-row" style="text-align: center; color: #999; padding: 1rem;">No invoices recorded for this period</div>
+          )}
+        </div>
+      </div>
+
       <!-- Revenue by Payment Item -->
       <div class="m3-card">
         <div class="card-header">
@@ -442,54 +460,6 @@ const handicapStats = await db.prepare(`
         </div>
       </div>
 
-      <!-- Subscription Revenue Chart -->
-      <div class="m3-card">
-        <div class="card-header">
-          <div class="card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="20" x2="18" y2="10"/>
-              <line x1="12" y1="20" x2="12" y2="4"/>
-              <line x1="6" y1="20" x2="6" y2="14"/>
-            </svg>
-            <span>Subscription Revenue</span>
-          </div>
-          <span class="card-badge">{membershipYearStart}/{membershipYearEnd}</span>
-        </div>
-        <div class="card-content">
-          <div class="chart-summary">
-            <div class="chart-summary-item">
-              <span class="chart-legend-dot legend-invoiced"></span>
-              Invoiced: <strong>{formatCurrency(totalInvoiced)}</strong>
-            </div>
-            <div class="chart-summary-item">
-              <span class="chart-legend-dot legend-paid"></span>
-              Paid: <strong>{formatCurrency(totalPaid)}</strong>
-            </div>
-            <div class="chart-summary-item">
-              <span class="chart-legend-dot legend-unpaid"></span>
-              Unpaid: <strong>{formatCurrency(totalUnpaid)}</strong>
-            </div>
-          </div>
-          <div class="bar-chart">
-            {subRevenueData.map((d) => (
-              <div class="bar-col">
-                <div class="bar-value">{d.invoiced > 0 ? formatCurrency(d.invoiced) : ''}</div>
-                <div class="bar-track">
-                  <div class="bar-stack" style={`height: ${maxBarValue > 0 ? (d.invoiced / maxBarValue) * 100 : 0}%`}>
-                    <div class="bar-segment-unpaid" style={`flex: ${d.unpaid}`}></div>
-                    <div class="bar-segment-paid" style={`flex: ${d.paid}`}></div>
-                  </div>
-                </div>
-                <div class="bar-label">{d.label}</div>
-              </div>
-            ))}
-          </div>
-          {totalInvoiced === 0 && (
-            <div class="empty-row" style="text-align: center; color: #999; padding: 1rem;">No invoices recorded for this period</div>
-          )}
-        </div>
-      </div>
-
       <!-- Monthly Payments -->
       <div class="m3-card">
         <div class="card-header">
@@ -502,7 +472,7 @@ const handicapStats = await db.prepare(`
             </svg>
             <span>Monthly Payments</span>
           </div>
-          <span class="card-badge">Last 12 months</span>
+          <span class="card-badge">{membershipYearStart}/{membershipYearEnd}</span>
         </div>
         <div class="card-content">
           <table class="m3-table">
@@ -535,12 +505,11 @@ const handicapStats = await db.prepare(`
     <!-- Right Column -->
     <div class="reports-sidebar">
       <!-- Payments by Type -->
-      <div class="m3-card accent-card">
+      <div class="m3-card">
         <div class="card-header">
           <div class="card-title">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="12" y1="1" x2="12" y2="23"/>
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+              <path d="M7 18h10M7 14h6a4 4 0 0 0 0-8H7v12"/>
             </svg>
             <span>Payments by Type</span>
           </div>
@@ -560,33 +529,6 @@ const handicapStats = await db.prepare(`
             {(!paymentStats.results || paymentStats.results.length === 0) && (
               <div class="empty-state-light">No payments this year</div>
             )}
-          </div>
-        </div>
-      </div>
-
-      <!-- Handicap Distribution -->
-      <div class="m3-card">
-        <div class="card-header">
-          <div class="card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="20" x2="18" y2="10"/>
-              <line x1="12" y1="20" x2="12" y2="4"/>
-              <line x1="6" y1="20" x2="6" y2="14"/>
-            </svg>
-            <span>Handicap Distribution</span>
-          </div>
-        </div>
-        <div class="card-content">
-          <div class="distribution-list">
-            {handicapStats.results?.map((h) => (
-              <div class="distribution-item">
-                <span class="distribution-label">{h.bracket}</span>
-                <div class="distribution-bar-container">
-                  <div class="distribution-bar" style={`width: ${Math.min((h.count as number) / Math.max(...(handicapStats.results?.map(x => x.count as number) || [1])) * 100, 100)}%`}></div>
-                </div>
-                <span class="distribution-value">{h.count}</span>
-              </div>
-            ))}
           </div>
         </div>
       </div>
@@ -641,21 +583,28 @@ const handicapStats = await db.prepare(`
               </svg>
               Export Members (CSV)
             </a>
-            <a href="/admin/reports/expiring" class="export-btn">
+            <a href="/admin/revenue/expiring" class="export-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <polyline points="12 6 12 12 16 14"/>
               </svg>
               Expiring Members
             </a>
-            <a href="/admin/reports/renewals" class="export-btn">
+            <a href="/admin/revenue/renewals" class="export-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="23 4 23 10 17 10"/>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
               </svg>
               Renewal Reminders
             </a>
-            <a href="/admin/reports/clubhouse" class="export-btn primary">
+            <a href="/admin/members/clubwise-first-month" class="export-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                <line x1="1" y1="10" x2="23" y2="10"/>
+              </svg>
+              Clubwise First Month (CSV)
+            </a>
+            <a href="/admin/revenue/clubhouse" class="export-btn primary">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                 <polyline points="9 22 9 12 15 12 15 22"/>
@@ -817,25 +766,6 @@ const handicapStats = await db.prepare(`
       padding: 1.25rem;
     }
 
-    /* Accent Card */
-    .accent-card {
-      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
-      border: none;
-    }
-
-    .accent-card .card-header {
-      background: transparent;
-      border-bottom-color: rgba(255,255,255,0.15);
-    }
-
-    .accent-card .card-title {
-      color: #fff;
-    }
-
-    .accent-card .card-title svg {
-      color: rgba(255,255,255,0.9);
-    }
-
     /* M3 Table */
     .m3-table {
       width: 100%;
@@ -946,49 +876,6 @@ const handicapStats = await db.prepare(`
       text-align: center;
       color: rgba(255,255,255,0.7);
       padding: 1.5rem;
-    }
-
-    /* Distribution List */
-    .distribution-list {
-      display: flex;
-      flex-direction: column;
-      gap: 0.625rem;
-    }
-
-    .distribution-item {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .distribution-label {
-      width: 80px;
-      font-size: 0.85rem;
-      color: #666;
-      flex-shrink: 0;
-    }
-
-    .distribution-bar-container {
-      flex: 1;
-      height: 8px;
-      background: #f0f0f0;
-      border-radius: 4px;
-      overflow: hidden;
-    }
-
-    .distribution-bar {
-      height: 100%;
-      background: linear-gradient(90deg, #1e5631 0%, #2d7a45 100%);
-      border-radius: 4px;
-      transition: width 0.3s ease;
-    }
-
-    .distribution-value {
-      width: 40px;
-      text-align: right;
-      font-weight: 600;
-      font-size: 0.875rem;
-      color: #1a1a1a;
     }
 
     /* Method List */
@@ -1152,6 +1039,13 @@ const handicapStats = await db.prepare(`
 
     .bar-segment-unpaid {
       background: #dc3545;
+      cursor: pointer;
+      text-decoration: none;
+      display: block;
+    }
+
+    .bar-segment-unpaid:hover {
+      background: #c82333;
     }
 
     .bar-label {

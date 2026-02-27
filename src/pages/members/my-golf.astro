@@ -39,7 +39,7 @@ if (msbConfigured && memberDetails?.national_id) {
     const handicapList = await getHandicapList(env);
     msbPlayer = findPlayerByNationalId(handicapList, memberDetails.national_id);
     if (msbPlayer) {
-      msbPlayerId = msbPlayer.PlayerID || msbPlayer.playerId;
+      msbPlayerId = msbPlayer.playerId;
 
       // Fetch handicap record
       if (msbPlayerId) {
@@ -47,15 +47,22 @@ if (msbConfigured && memberDetails?.national_id) {
       }
 
       // Sync handicap index to DB if changed
-      const msbHcap = msbPlayer.HandicapIndex ?? msbPlayer.handicapIndex ?? null;
-      if (msbHcap !== null && db && memberDetails.handicap_index !== parseFloat(msbHcap)) {
-        try {
-          await db.prepare(
-            `UPDATE members SET handicap_index = ?, updated_at = datetime('now') WHERE id = ?`
-          ).bind(parseFloat(msbHcap), member.id).run();
-          memberDetails.handicap_index = parseFloat(msbHcap);
-        } catch (e) {
-          console.error('Error syncing handicap:', e);
+      // MSB returns handicap as string: "30.8", "-" (no index), "Away", or "+2.1" (plus handicap)
+      const msbHcapStr = msbPlayer.handicap;
+      if (msbHcapStr && msbHcapStr !== '-' && msbHcapStr !== 'Away') {
+        // Convert "+2.1" display format back to -2.1 for storage
+        const numVal = msbHcapStr.startsWith('+')
+          ? -parseFloat(msbHcapStr.substring(1))
+          : parseFloat(msbHcapStr);
+        if (!isNaN(numVal) && db && memberDetails.handicap_index !== numVal) {
+          try {
+            await db.prepare(
+              `UPDATE members SET handicap_index = ?, updated_at = datetime('now') WHERE id = ?`
+            ).bind(numVal, member.id).run();
+            memberDetails.handicap_index = numVal;
+          } catch (e) {
+            console.error('Error syncing handicap:', e);
+          }
         }
       }
     }
@@ -71,14 +78,20 @@ if (msbConfigured && memberDetails?.national_id) {
 const handicapIndex = memberDetails?.handicap_index;
 const purseBalance = memberDetails?.competition_fee_purse ?? 0;
 const nationalId = memberDetails?.national_id || '';
-const effectiveDate = msbPlayer?.EffectiveDate || msbPlayer?.effectiveDate || '';
+const effectiveDate = '';
 
-// Get next 5 fixtures
+// Get next 5 fixtures — API returns {month: [{monthTitle, entry: [{date, title, subTitle, ...}]}]}
 let upcomingFixtures: any[] = [];
-if (fixtures?.Fixtures) {
-  upcomingFixtures = fixtures.Fixtures.slice(0, 5);
-} else if (Array.isArray(fixtures)) {
-  upcomingFixtures = fixtures.slice(0, 5);
+if (fixtures?.month && Array.isArray(fixtures.month)) {
+  for (const m of fixtures.month) {
+    if (m.entry && Array.isArray(m.entry)) {
+      for (const e of m.entry) {
+        upcomingFixtures.push(e);
+        if (upcomingFixtures.length >= 5) break;
+      }
+    }
+    if (upcomingFixtures.length >= 5) break;
+  }
 }
 ---
 
@@ -223,12 +236,12 @@ if (fixtures?.Fixtures) {
           {upcomingFixtures.map((f: any) => (
             <div class="fixture-item">
               <div class="fixture-date">
-                {f.Date || f.date || ''}
+                {f.date || ''}
               </div>
               <div class="fixture-details">
-                <span class="fixture-name">{f.Name || f.name || f.CompetitionName || ''}</span>
-                {(f.Type || f.type || f.CompetitionType) && (
-                  <span class="fixture-type">{f.Type || f.type || f.CompetitionType}</span>
+                <span class="fixture-name">{f.title || ''}</span>
+                {f.subTitle && (
+                  <span class="fixture-type">{f.subTitle}</span>
                 )}
               </div>
             </div>
@@ -294,60 +307,105 @@ if (fixtures?.Fixtures) {
           if (loading) loading.style.display = 'none';
 
           if (tab === 'history') {
-            const rows = data.PlayRecord || data.Records || data.records || [];
+            // API returns {headings: {"1":"Date","2":"Competition",...}, rows: [{"1":"7 Jun 22","2":"Medal",...}]}
+            const rows = data.rows || [];
+            const headings = data.headings || {};
             if (rows.length === 0) {
               if (empty) empty.style.display = 'block';
               return;
             }
+            // Build dynamic table from numbered columns
+            const keys = Object.keys(headings).sort((a,b) => parseInt(a) - parseInt(b));
+            const thead = table.querySelector('thead tr');
+            thead.innerHTML = keys.map(k => '<th>' + headings[k] + '</th>').join('');
             const tbody = table.querySelector('tbody');
             tbody.innerHTML = rows.map(r =>
-              '<tr>' +
-              '<td data-label="Date">' + (r.Date || r.date || '') + '</td>' +
-              '<td data-label="Competition">' + (r.CompetitionName || r.Competition || r.competitionName || '') + '</td>' +
-              '<td data-label="Course">' + (r.CourseName || r.Course || r.courseName || '') + '</td>' +
-              '<td data-label="Score">' + (r.Score || r.score || '') + '</td>' +
-              '<td data-label="CSS">' + (r.CSS || r.css || '') + '</td>' +
-              '<td data-label="Handicap">' + fmtHcap(r.Handicap || r.handicap) + '</td>' +
-              '</tr>'
+              '<tr>' + keys.map(k => '<td data-label="' + headings[k] + '">' + (r[k] || '') + '</td>').join('') + '</tr>'
             ).join('');
             table.style.display = '';
+            if (data.note) {
+              const noteEl = document.createElement('p');
+              noteEl.style.cssText = 'margin:0.75rem 0 0;color:var(--text-light,#666);font-size:0.8rem';
+              noteEl.textContent = data.note;
+              table.parentElement.appendChild(noteEl);
+            }
           } else if (tab === 'handicap-scores') {
-            const rows = data.HandicapRecord || data.Records || data.records || [];
+            // Same numbered columns format
+            const rows = data.rows || [];
+            const headings = data.headings || {};
             if (rows.length === 0) {
               if (empty) empty.style.display = 'block';
               return;
             }
+            const keys = Object.keys(headings).sort((a,b) => parseInt(a) - parseInt(b));
+            const thead = table.querySelector('thead tr');
+            thead.innerHTML = keys.map(k => '<th>' + headings[k] + '</th>').join('');
             const tbody = table.querySelector('tbody');
             tbody.innerHTML = rows.map(r =>
-              '<tr>' +
-              '<td data-label="Date">' + (r.Date || r.date || '') + '</td>' +
-              '<td data-label="Competition">' + (r.CompetitionName || r.Competition || r.competitionName || '') + '</td>' +
-              '<td data-label="Adj. Gross">' + (r.AdjustedGross || r.adjustedGross || '') + '</td>' +
-              '<td data-label="PCC">' + (r.PCC || r.pcc || '') + '</td>' +
-              '<td data-label="Differential">' + (r.ScoreDifferential || r.Differential || r.differential || '') + '</td>' +
-              '<td data-label="Index">' + fmtHcap(r.HandicapIndex || r.handicapIndex) + '</td>' +
-              '</tr>'
+              '<tr>' + keys.map(k => '<td data-label="' + headings[k] + '">' + (r[k] || '') + '</td>').join('') + '</tr>'
             ).join('');
             table.style.display = '';
+            // Show mandatory notice
+            if (data.mandatoryNotice) {
+              const notice = document.createElement('p');
+              notice.style.cssText = 'margin:0.75rem 0 0;color:var(--text-light,#666);font-size:0.8rem;font-style:italic';
+              notice.textContent = data.mandatoryNotice;
+              table.parentElement.appendChild(notice);
+            }
           } else if (tab === 'analysis') {
-            const holes = data.Scores || data.HoleScores || data.scores || [];
-            if (holes.length === 0) {
+            // API returns {courses: [{courseName, scores: [{compName, date, holes: [{hole, score, result}]}], summary: {lowestScores, highestScores}}]}
+            const courses = data.courses || [];
+            if (courses.length === 0) {
               if (empty) empty.style.display = 'block';
               return;
             }
-            grid.innerHTML = holes.map(h =>
-              '<div class="hole-card">' +
-              '<div class="hole-number">Hole ' + (h.Hole || h.hole || '') + '</div>' +
-              '<div class="hole-stats">' +
-              '<div class="stat"><span class="stat-label">Par</span><span class="stat-value">' + (h.Par || h.par || '') + '</span></div>' +
-              '<div class="stat"><span class="stat-label">Avg</span><span class="stat-value">' + formatAvg(h.Average || h.average || h.Avg) + '</span></div>' +
-              '<div class="stat"><span class="stat-label">Birdies</span><span class="stat-value birdie">' + (h.Birdies || h.birdies || 0) + '</span></div>' +
-              '<div class="stat"><span class="stat-label">Pars</span><span class="stat-value par">' + (h.Pars || h.pars || 0) + '</span></div>' +
-              '<div class="stat"><span class="stat-label">Bogeys</span><span class="stat-value bogey">' + (h.Bogeys || h.bogeys || 0) + '</span></div>' +
-              '<div class="stat"><span class="stat-label">Doubles+</span><span class="stat-value double">' + (h.DoublesOrWorse || h.doublesOrWorse || h.Doubles || 0) + '</span></div>' +
-              '</div>' +
-              '</div>'
-            ).join('');
+            let html = '';
+            courses.forEach(function(course) {
+              html += '<h4 style="margin:0 0 1rem;font-size:1rem">' + course.courseName + '</h4>';
+              // Show summary: best scores per hole
+              if (course.summary && course.summary.lowestScores) {
+                html += '<div class="analysis-grid">';
+                course.summary.lowestScores.forEach(function(h) {
+                  var best = h.score || '';
+                  var bestResult = h.result || '';
+                  var worst = '';
+                  if (course.summary.highestScores) {
+                    var highHole = course.summary.highestScores.find(function(x) { return x.hole === h.hole; });
+                    if (highHole) worst = highHole.score || '';
+                  }
+                  var resultClass = '';
+                  if (bestResult === '-1') resultClass = 'birdie';
+                  else if (bestResult === '-2<' || bestResult.startsWith('-')) resultClass = 'birdie';
+                  else if (bestResult === '0') resultClass = 'par';
+                  else if (bestResult === '+1') resultClass = 'bogey';
+                  else resultClass = 'double';
+                  html += '<div class="hole-card">' +
+                    '<div class="hole-number">Hole ' + h.hole + '</div>' +
+                    '<div class="hole-stats">' +
+                    '<div class="stat"><span class="stat-label">Best</span><span class="stat-value ' + resultClass + '">' + best + '</span></div>' +
+                    '<div class="stat"><span class="stat-label">Worst</span><span class="stat-value">' + worst + '</span></div>' +
+                    '</div></div>';
+                });
+                html += '</div>';
+              }
+              // Show round-by-round scores
+              if (course.scores && course.scores.length > 0) {
+                html += '<details style="margin-top:1rem"><summary style="cursor:pointer;font-weight:500;font-size:0.9rem;color:var(--primary,#1e5631);margin-bottom:0.75rem">' + course.scores.length + ' round(s) played</summary>';
+                course.scores.forEach(function(round) {
+                  html += '<div style="margin-bottom:1rem"><p style="margin:0 0 0.5rem;font-weight:500;font-size:0.85rem">' + round.compName + ' (' + round.date + ')</p>';
+                  html += '<div style="display:flex;flex-wrap:wrap;gap:0.25rem">';
+                  if (round.holes) {
+                    round.holes.forEach(function(h) {
+                      var cls = h.result === '0' ? 'par' : (h.result === '-1' || h.result === '-2<') ? 'birdie' : h.result === '+1' ? 'bogey' : 'double';
+                      html += '<span style="display:inline-block;width:2rem;text-align:center;padding:0.25rem;border-radius:4px;font-size:0.8rem" class="score-' + cls + '">' + (h.score || '') + '</span>';
+                    });
+                  }
+                  html += '</div></div>';
+                });
+                html += '</details>';
+              }
+            });
+            grid.innerHTML = html;
             grid.style.display = '';
           }
         } catch (err) {

@@ -13,7 +13,7 @@ const invoice = await db.prepare(
 ).bind(id).first<Invoice>();
 
 if (!invoice) {
-  return Astro.redirect('/invoices');
+  return Astro.redirect('/admin/invoices');
 }
 
 // Get member
@@ -22,7 +22,7 @@ const member = await db.prepare(
 ).bind(invoice.member_id).first<Member>();
 
 if (!member) {
-  return Astro.redirect('/invoices');
+  return Astro.redirect('/admin/invoices');
 }
 
 // Get invoice items
@@ -53,16 +53,35 @@ if (Astro.request.method === 'POST') {
   const action = formData.get('action');
 
   if (action === 'mark_paid') {
+    const paymentMethod = formData.get('payment_method') as string || 'BACS';
+
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
 
-    // Decrement member's balance and set renewal date
+    // Decrement member's balance, set paid/renewal/expires dates, and update default payment method
     await db.prepare(
-      `UPDATE members SET account_balance = account_balance - ?, date_renewed = date('now') WHERE id = ?`
-    ).bind(invoice.total, invoice.member_id).run();
+      `UPDATE members SET account_balance = account_balance - ?, date_subscription_paid = date('now'), date_renewed = date('now'), date_expires = ?, default_payment_method = ? WHERE id = ?`
+    ).bind(invoice.total, invoice.period_end, paymentMethod, invoice.member_id).run();
 
-    success = 'Invoice marked as paid, renewal date updated, and member balance adjusted';
+    // Create payment record
+    const paymentResult = await db.prepare(
+      `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
+       VALUES (?, ?, ?, date('now'), ?, 'subscription', ?, 'Recorded when invoice marked as paid', ?)`
+    ).bind(member.id, id, invoice.total, paymentMethod, invoice.invoice_number, user?.email || 'system').run();
+
+    // Create payment line items from invoice items
+    const paymentId = paymentResult.meta?.last_row_id;
+    if (paymentId) {
+      for (const item of items) {
+        await db.prepare(
+          `INSERT INTO payment_line_items (payment_id, invoice_item_id, payment_item_id, description, amount)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(paymentId, item.id, item.payment_item_id, item.description, item.line_total).run();
+      }
+    }
+
+    success = `Invoice marked as paid via ${paymentMethod}, payment recorded, renewal date updated, and member balance adjusted`;
 
     // Refresh invoice data
     const refreshed = await db.prepare(
@@ -136,7 +155,7 @@ if (Astro.request.method === 'POST') {
     await db.prepare(
       `UPDATE invoices SET status = 'draft', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
-    success = 'Invoice reverted to draft and member balance adjusted';
+    success = 'Invoice reverted to unpaid and member balance adjusted';
 
     const refreshed = await db.prepare(
       `SELECT * FROM invoices WHERE id = ?`
@@ -220,12 +239,22 @@ const emailPreview = generateInvoiceEmail({
   <!-- Header Actions -->
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
     <div>
-      <a href="/invoices" class="btn btn-secondary">&larr; Back to Invoices</a>
+      <a href="/admin/invoices" class="btn btn-secondary">&larr; Back to Invoices</a>
     </div>
     <div style="display: flex; gap: 0.5rem;">
       {invoice.status === 'draft' && (
         <>
-          <a href={`/invoices/preview?ids=${invoice.id}`} class="btn btn-primary">Send Invoice</a>
+          <form method="POST" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+            <input type="hidden" name="action" value="mark_paid" />
+            <select name="payment_method" class="btn btn-secondary" style="padding: 0.4rem 0.5rem; font-size: 0.85rem;">
+              <option value="BACS" selected={member.default_payment_method === 'BACS'}>BACS</option>
+              <option value="Over the Till" selected={member.default_payment_method === 'Over the Till'}>Over the Till</option>
+              <option value="Standing Order" selected={member.default_payment_method === 'Standing Order'}>Standing Order</option>
+              <option value="Cheque" selected={member.default_payment_method === 'Cheque'}>Cheque</option>
+            </select>
+            <button type="submit" class="btn btn-primary">Mark as Paid</button>
+          </form>
+          <a href={`/admin/invoices/preview?ids=${invoice.id}`} class="btn btn-secondary">Resend</a>
           <form method="POST" style="display: inline;" data-confirm="cancel">
             <input type="hidden" name="action" value="cancel" />
             <button type="submit" class="btn btn-danger">Cancel</button>
@@ -234,10 +263,17 @@ const emailPreview = generateInvoiceEmail({
       )}
       {invoice.status === 'sent' && (
         <>
-          <form method="POST" style="display: inline;">
+          <form method="POST" style="display: inline-flex; align-items: center; gap: 0.25rem;">
             <input type="hidden" name="action" value="mark_paid" />
+            <select name="payment_method" class="btn btn-secondary" style="padding: 0.4rem 0.5rem; font-size: 0.85rem;">
+              <option value="BACS" selected={member.default_payment_method === 'BACS'}>BACS</option>
+              <option value="Over the Till" selected={member.default_payment_method === 'Over the Till'}>Over the Till</option>
+              <option value="Standing Order" selected={member.default_payment_method === 'Standing Order'}>Standing Order</option>
+              <option value="Cheque" selected={member.default_payment_method === 'Cheque'}>Cheque</option>
+            </select>
             <button type="submit" class="btn btn-primary">Mark as Paid</button>
           </form>
+          <a href={`/admin/invoices/preview?ids=${invoice.id}`} class="btn btn-secondary">Resend</a>
           <form method="POST" style="display: inline;" data-confirm="cancel">
             <input type="hidden" name="action" value="cancel" />
             <button type="submit" class="btn btn-danger">Cancel</button>
@@ -247,7 +283,7 @@ const emailPreview = generateInvoiceEmail({
       {(invoice.status === 'cancelled' || invoice.status === 'paid') && (
         <form method="POST" style="display: inline;">
           <input type="hidden" name="action" value="revert_draft" />
-          <button type="submit" class="btn btn-secondary">Revert to Draft</button>
+          <button type="submit" class="btn btn-secondary">Revert to Unpaid</button>
         </form>
       )}
       {(invoice.status === 'draft' || invoice.status === 'cancelled') && (
@@ -268,7 +304,7 @@ const emailPreview = generateInvoiceEmail({
         <div class="card-header">
           <h3 class="card-title">Invoice Details</h3>
           <span class={`badge ${getInvoiceStatusBadge(invoice.status)}`} style="font-size: 1rem; padding: 0.5rem 1rem;">
-            {invoice.status.toUpperCase()}
+            {invoice.status === 'draft' ? 'UNPAID' : invoice.status.toUpperCase()}
           </span>
         </div>
 

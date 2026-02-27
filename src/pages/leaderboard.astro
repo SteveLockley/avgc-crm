@@ -128,7 +128,7 @@
           .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
           .then(function(data) {
             loadingState.style.display = 'none';
-            var list = data.Competitions || data.competitions || data.Leaderboards || [];
+            var list = data.competitions || data.Competitions || data.Leaderboards || [];
             if (!Array.isArray(list)) list = [];
 
             competitions = list;
@@ -146,7 +146,7 @@
             // Populate selector
             if (competitions.length > 1) {
               compSelect.innerHTML = competitions.map(function(c, i) {
-                return '<option value="' + i + '">' + (c.Name || c.name || c.CompetitionName || 'Competition ' + (i + 1)) + '</option>';
+                return '<option value="' + i + '">' + (c.name || c.Name || c.CompetitionName || 'Competition ' + (i + 1)) + '</option>';
               }).join('');
               compSelect.value = currentIdx;
               compSelector.style.display = '';
@@ -170,16 +170,16 @@
         if (competitions.length === 0) return;
 
         var comp = competitions[currentIdx] || competitions[0];
-        var compId = comp.CompID || comp.compId || comp.CompetitionID;
-        var reportId = comp.ReportID || comp.reportId || 0;
-        var name = comp.Name || comp.name || comp.CompetitionName || 'Competition';
+        var compId = comp.compId || comp.CompID || comp.CompetitionID;
+        var division = comp.division || 0;
+        var name = comp.name || comp.Name || comp.CompetitionName || 'Competition';
 
         compName.textContent = name;
 
-        fetch('/api/msb/leaderboard/' + compId + '/' + reportId)
+        fetch('/api/msb/leaderboard/' + compId + '/' + division)
           .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
           .then(function(data) {
-            var rows = data.Leaderboard || data.leaderboard || data.Results || data.results || [];
+            var rows = data.scores || data.Scores || data.Leaderboard || data.leaderboard || [];
             if (!Array.isArray(rows)) rows = [];
 
             if (rows.length === 0) {
@@ -188,11 +188,11 @@
             }
 
             lbBody.innerHTML = rows.map(function(r, i) {
-              var pos = r.Position || r.position || r.Pos || (i + 1);
-              var player = r.PlayerName || r.Name || r.name || r.Player || '';
-              var score = r.Score || r.ToPar || r.score || '';
-              var thru = r.Thru || r.thru || r.HolesPlayed || '';
-              var round = r.RoundScore || r.Round || r.roundScore || '';
+              var pos = r.position || r.Position || r.Pos || (i + 1);
+              var player = r.players || r.PlayerName || r.Name || r.name || '';
+              var score = r.score || r.Score || r.ToPar || '';
+              var thru = r.thru || r.Thru || r.HolesPlayed || '';
+              var round = r.roundScore || r.RoundScore || r.Round || '';
               return '<tr class="' + (i % 2 === 0 ? 'row-even' : 'row-odd') + '">' +
                 '<td class="col-pos">' + pos + '</td>' +
                 '<td class="col-name">' + player + '</td>' +

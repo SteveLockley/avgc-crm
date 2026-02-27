@@ -1,0 +1,178 @@
+---
+import PublicLayout from '../../layouts/PublicLayout.astro';
+import '../../styles/document.css';
+
+const heroImage = '/images/clubhouse.jpg';
+---
+
+<PublicLayout
+  title="Sunday Bar Menu"
+  description="Sunday bar menu at Alnmouth Village Golf Club. Breakfast rolls, gourmet sandwiches, homemade soup, fish shop and sides served every Sunday 12:00 - 16:00."
+  heroImage={heroImage}
+  heroTitle="Sunday Bar Menu"
+  heroSubtitle="Served every Sunday, 12:00 - 16:00"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+    <section class="page-intro">
+      <p class="intro-text">
+        Our Sunday bar menu offers a range of breakfast rolls, gourmet sandwiches, homemade soup
+        and fish shop favourites. Served every Sunday from noon until 4pm.
+      </p>
+    </section>
+
+    <article class="club-document">
+      <header class="doc-header">
+        <img src="/favicon-large.PNG" alt="Alnmouth Village Golf Club crest" class="doc-crest" />
+        <h1 class="doc-club-name">Alnmouth Village Golf Club</h1>
+        <p class="doc-club-tagline">The Oldest Nine Hole Links in England &middot; Est. 1869</p>
+        <p class="doc-club-motto">Per Mare Per Terras</p>
+      </header>
+
+      <h2 class="doc-title">Sunday Bar Menu</h2>
+      <p class="doc-subtitle">Served Sunday &ndash; From 12:00 &ndash; 16:00</p>
+
+      <!-- Breakfast Rolls -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Breakfast Rolls</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Choose from bacon, sausage, egg, veggie sausage, mushroom</span>
+          <span class="menu-item-price">&pound;4</span>
+        </div>
+
+        <p class="doc-note" style="margin-top: 0.5rem; font-style: italic;">
+          (add in any extras &pound;1 per item)
+        </p>
+      </section>
+
+      <!-- Gourmet Rolls -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Gourmet Rolls</h3>
+
+        <p class="doc-note">
+          All served on white or brown roll, with dressed salad, in house slaw and tortilla chips
+        </p>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Tuna and red onion</span>
+          <span class="menu-item-price">&pound;8</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Coronation chicken</span>
+          <span class="menu-item-price">&pound;8</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Ham, cheese and chutney</span>
+          <span class="menu-item-price">&pound;8</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">BLT</span>
+          <span class="menu-item-price">&pound;8</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Cheese Savory</span>
+          <span class="menu-item-price">&pound;8</span>
+        </div>
+      </section>
+
+      <!-- Homemade Soup -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Homemade Soup</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Homemade soup of the day served with white or brown roll and butter</span>
+          <span class="menu-item-price">&pound;6</span>
+        </div>
+      </section>
+
+      <!-- Homemade Soup & Sandwich -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Homemade Soup &amp; Sandwich</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Homemade soup of the day served with ANY GOURMET Sandwich on the side</span>
+          <span class="menu-item-price">&pound;9</span>
+        </div>
+
+        <p class="doc-note" style="margin-top: 0.5rem; font-style: italic;">
+          (no salad or Tortilla Chips)
+        </p>
+      </section>
+
+      <!-- Fish Shop -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">Fish Shop</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">North Sea Cod and twice cooked chips with tartare sauce</span>
+          <span class="menu-item-price">&pound;13</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Wholetail Scampi and twice cooked chips with tartare sauce</span>
+          <span class="menu-item-price">&pound;11</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Jumbo Battered Sausage and twice cooked chips</span>
+          <span class="menu-item-price">&pound;10</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Chip Butty</span>
+          <span class="menu-item-price">&pound;6</span>
+        </div>
+
+        <p class="doc-note" style="margin-top: 0.5rem; font-style: italic;">
+          Add mushy peas, curry sauce or gravy &pound;2
+        </p>
+      </section>
+
+      <!-- All Sides -->
+      <section class="doc-section">
+        <h3 class="doc-section-title">All Sides</h3>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Twice cooked skin on Chunky Chips</span>
+          <span class="menu-item-price">&pound;4</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">Sweet Potato Fries</span>
+          <span class="menu-item-price">&pound;4</span>
+        </div>
+
+        <div class="menu-item">
+          <span class="menu-item-name">French Fries</span>
+          <span class="menu-item-price">&pound;4</span>
+        </div>
+      </section>
+
+      <footer class="doc-footer">
+        <p>Alnmouth Village Golf Club &middot; Marine Road, Alnmouth NE66 2RZ</p>
+        <p>01665 830370 &middot; www.alnmouthvillage.golf</p>
+      </footer>
+    </article>
+  </div>
+
+  <style>
+    .page-intro {
+      max-width: 680px;
+      margin: 0 auto 1rem;
+      text-align: center;
+      padding-top: 2rem;
+    }
+
+    .page-intro .intro-text {
+      font-size: 1.05rem;
+      color: var(--text-light);
+      line-height: 1.8;
+    }
+  </style>
+</PublicLayout>

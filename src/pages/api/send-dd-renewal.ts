@@ -10,6 +10,7 @@ import {
   calculateDDSchedule, generateDDRenewalEmail, generateDDRenewalSubject,
   calculateConsolidatedSchedule, generateConsolidatedDDRenewalEmail,
 } from '../../lib/dd-renewal-email';
+import { loadFeeItems, generateInvoiceForMember } from '../../lib/generate-invoice';
 
 const BATCH_SIZE = 40;
 
@@ -229,8 +230,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     const result = await sendEmail({ to: member.email, subject, html }, emailEnv);
     if (!result.success) {
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'dd_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, result.error || 'Unknown error').run();
       return new Response(JSON.stringify({ error: result.error }), { status: 500 });
     }
+
+    await env.DB.prepare(
+      `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'dd_renewal', ?, ?, 'sent')`
+    ).bind(member.id, member.email, year).run();
 
     return new Response(JSON.stringify({
       success: true,
@@ -265,6 +273,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const totalRemaining = members.results.length;
   const batch = members.results.slice(0, BATCH_SIZE);
+
+  // Load fee items for invoice generation
+  const feeItems = await loadFeeItems(env.DB);
 
   let sent = 0;
   let failed = 0;
@@ -302,6 +313,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
       await env.DB.prepare(
         `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'dd_renewal', ?, ?, 'sent')`
       ).bind(member.id, member.email, year).run();
+
+      // Generate invoice for the payer
+      await generateInvoiceForMember(env.DB, member, feeItems, { year, isDD: true, isSocial: false });
+
+      // Generate invoices for dependants too
+      for (const dep of deps) {
+        if (dep.subscription_fee !== null) {
+          await generateInvoiceForMember(env.DB, dep, feeItems, { year, isDD: true, isSocial: false });
+        }
+      }
     } else {
       failed++;
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);

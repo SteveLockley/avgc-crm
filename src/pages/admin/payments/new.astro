@@ -139,6 +139,11 @@ if (Astro.request.method === 'POST') {
           `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
         ).bind(invoiceId).run();
 
+        // Update member: decrement balance, set paid/renewal/expires dates, update payment method
+        await db.prepare(
+          `UPDATE members SET account_balance = account_balance - ?, date_subscription_paid = ?, date_renewed = ?, date_expires = ?, default_payment_method = ? WHERE id = ?`
+        ).bind(amount, paymentDate, paymentDate, invoice.period_end, paymentMethod || null, memberId).run();
+
         // Log the action
         await db.prepare(
           `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
@@ -196,7 +201,7 @@ const membersWithInvoices = await db.prepare(
     <div class="form-grid">
       <!-- Payment Form -->
       <div class="form-column">
-        <div class="m3-card accent-card">
+        <div class="m3-card">
           <h2>Invoice Payment</h2>
 
           {(!membersWithInvoices.results || membersWithInvoices.results.length === 0) && !preselectedMember ? (
@@ -469,47 +474,6 @@ const membersWithInvoices = await db.prepare(
       color: #333;
     }
 
-    .accent-card {
-      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
-      color: white;
-    }
-
-    .accent-card h2 {
-      color: white;
-    }
-
-    .accent-card label {
-      color: rgba(255,255,255,0.8);
-    }
-
-    .accent-card input,
-    .accent-card select,
-    .accent-card textarea {
-      background: rgba(255,255,255,0.15);
-      border-color: rgba(255,255,255,0.3);
-      color: white;
-    }
-
-    .accent-card input::placeholder {
-      color: rgba(255,255,255,0.5);
-    }
-
-    .accent-card input:focus,
-    .accent-card select:focus,
-    .accent-card textarea:focus {
-      border-color: rgba(255,255,255,0.6);
-      box-shadow: 0 0 0 2px rgba(255,255,255,0.2);
-    }
-
-    .accent-card option {
-      color: #333;
-      background: white;
-    }
-
-    .accent-card a {
-      color: white;
-    }
-
     /* Fields */
     .field {
       margin-bottom: 1rem;
@@ -652,7 +616,7 @@ const membersWithInvoices = await db.prepare(
       color: rgba(255,255,255,0.7);
     }
 
-    .m3-card:not(.accent-card) .empty-state {
+    .m3-card .empty-state {
       color: #666;
     }
 

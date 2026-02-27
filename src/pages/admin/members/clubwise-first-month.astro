@@ -1,0 +1,87 @@
+---
+// CSV Export: Clubwise First Month
+// DD members with extra fees in their first monthly payment
+// First month = fees (EGU + County + Locker) + first month subscription (absorbs rounding)
+
+import { loadFeeItems, calculateLineItems } from '../../../lib/generate-invoice';
+
+const db = Astro.locals.runtime.env.DB;
+
+const now = new Date();
+const year = now.getFullYear();
+const periodStart = `${year}-04-01`;
+
+// Load fee items
+const feeItems = await loadFeeItems(db);
+
+// Get all DD members with their subscription fee
+const membersResult = await db.prepare(
+  `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
+   FROM members m
+   LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+   WHERE m.default_payment_method = 'Clubwise Direct Debit'
+     AND m.category IS NOT NULL
+     AND m.category != ''
+   ORDER BY m.surname, m.first_name`
+).all();
+
+const members = membersResult.results || [];
+
+// Calculate first month for each member
+const rows: { clubwiseNo: string; surname: string; firstName: string; firstMonth: number }[] = [];
+
+for (const member of members as any[]) {
+  const isSocial = (member.category || '').toLowerCase().includes('social');
+  const items = calculateLineItems(member, feeItems, isSocial);
+
+  if (items.length === 0) continue;
+
+  const subItem = items.find(i => i.description.toLowerCase().includes('subscription'));
+  const feeOnlyItems = items.filter(i => !i.description.toLowerCase().includes('subscription'));
+  const totalFees = feeOnlyItems.reduce((sum, i) => sum + i.unitPrice, 0);
+
+  // Skip members with no extra fees
+  if (totalFees === 0) continue;
+
+  const subAmount = subItem?.unitPrice || 0;
+  const monthly = Math.floor(subAmount * 100 / 12) / 100;
+  const firstMonthSub = Math.round((subAmount - 11 * monthly) * 100) / 100;
+  const firstMonth = Math.round((totalFees + firstMonthSub) * 100) / 100;
+
+  rows.push({
+    clubwiseNo: member.direct_debit_member_id || member.club_number || '',
+    surname: member.surname || '',
+    firstName: member.first_name || '',
+    firstMonth,
+  });
+}
+
+// Sort: amount descending, then surname ascending, then firstname ascending
+rows.sort((a, b) => {
+  if (b.firstMonth !== a.firstMonth) return b.firstMonth - a.firstMonth;
+  const surnameCompare = a.surname.localeCompare(b.surname);
+  if (surnameCompare !== 0) return surnameCompare;
+  return a.firstName.localeCompare(b.firstName);
+});
+
+// Build CSV
+const csvLines = ['Clubwise Number,Surname,First Name,First Month Amount'];
+for (const row of rows) {
+  csvLines.push([
+    `"${row.clubwiseNo.replace(/"/g, '""')}"`,
+    `"${row.surname.replace(/"/g, '""')}"`,
+    `"${row.firstName.replace(/"/g, '""')}"`,
+    row.firstMonth.toFixed(2),
+  ].join(','));
+}
+
+const csv = csvLines.join('\n');
+
+return new Response(csv, {
+  status: 200,
+  headers: {
+    'Content-Type': 'text/csv',
+    'Content-Disposition': `attachment; filename="Clubwise First Month.csv"`,
+  },
+});
+---

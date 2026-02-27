@@ -44,7 +44,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   }
 
   const msbEnv: MsbEnv = {
-    MSB_CLUB_WEB_ID: env.MSB_CLUB_WEB_ID,
+    MSB_CWID: env.MSB_CWID,
     MSB_SECRET_KEY: env.MSB_SECRET_KEY,
   };
 
@@ -52,8 +52,8 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   const parts = endpoint.split('/');
   const member = (locals as any).member;
 
-  // Public endpoints (no auth required) — for clubhouse leaderboard display
-  const isPublicEndpoint = parts[0] === 'leaderboard';
+  // Public endpoints (no auth required) — competition data is read-only
+  const isPublicEndpoint = ['leaderboard', 'results', 'merit', 'eclectics', 'matchplay', 'bestof'].includes(parts[0]);
 
   // All other endpoints require member auth
   if (!isPublicEndpoint && !member) {
@@ -95,13 +95,13 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
         break;
 
       // GET /api/msb/leaderboard
-      // GET /api/msb/leaderboard/:compId/:reportId
+      // GET /api/msb/leaderboard/:compId/:division
       case 'leaderboard':
         if (parts.length >= 3) {
           const compId = parseInt(parts[1], 10);
-          const reportId = parseInt(parts[2], 10);
-          if (isNaN(compId) || isNaN(reportId)) return err('Invalid competition or report ID');
-          data = await getLiveLeaderboard(msbEnv, compId, reportId);
+          const division = parseInt(parts[2], 10);
+          if (isNaN(compId) || isNaN(division)) return err('Invalid competition or division ID');
+          data = await getLiveLeaderboard(msbEnv, compId, division);
         } else {
           data = await getLiveLeaderboardList(msbEnv);
         }
@@ -130,12 +130,12 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
         break;
 
       // GET /api/msb/bestof
-      // GET /api/msb/bestof/:compId
+      // GET /api/msb/bestof/:seriesId
       case 'bestof':
         if (parts.length >= 2 && parts[1]) {
-          const compId = parseInt(parts[1], 10);
-          if (isNaN(compId)) return err('Invalid competition ID');
-          data = await getBestOfResult(msbEnv, compId);
+          const seriesId = parseInt(parts[1], 10);
+          if (isNaN(seriesId)) return err('Invalid series ID');
+          data = await getBestOfResult(msbEnv, seriesId);
         } else {
           data = await getBestOfList(msbEnv);
         }
@@ -154,25 +154,24 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
         break;
 
       // GET /api/msb/merit
-      // GET /api/msb/merit/:meritId
+      // GET /api/msb/merit/:seriesId
       case 'merit':
         if (parts.length >= 2 && parts[1]) {
-          const meritId = parseInt(parts[1], 10);
-          if (isNaN(meritId)) return err('Invalid merit ID');
-          data = await getOrderOfMerit(msbEnv, meritId);
+          const seriesId = parseInt(parts[1], 10);
+          if (isNaN(seriesId)) return err('Invalid series ID');
+          data = await getOrderOfMerit(msbEnv, seriesId);
         } else {
           data = await getOrdersOfMeritList(msbEnv);
         }
         break;
 
       // GET /api/msb/eclectics
-      // GET /api/msb/eclectics/:eclecticId/:reportId
+      // GET /api/msb/eclectics/:eclecticId
       case 'eclectics':
-        if (parts.length >= 3) {
+        if (parts.length >= 2 && parts[1]) {
           const eclecticId = parseInt(parts[1], 10);
-          const reportId = parseInt(parts[2], 10);
-          if (isNaN(eclecticId) || isNaN(reportId)) return err('Invalid eclectic or report ID');
-          data = await getEclecticResult(msbEnv, eclecticId, reportId);
+          if (isNaN(eclecticId)) return err('Invalid eclectic ID');
+          data = await getEclecticResult(msbEnv, eclecticId);
         } else {
           data = await getEclecticsList(msbEnv);
         }

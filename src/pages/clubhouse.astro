@@ -15,8 +15,8 @@ if (db) {
 }
 
 // Images
-const heroImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2018/04/TC-clubhouse-1024x680.jpg';
-const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/uploads/sites/6949/2025/04/IMG_9895.jpg';
+const heroImage = '/images/clubhouse.jpg';
+const courseImage = '/images/course-visitors.jpg';
 ---
 
 <PublicLayout
@@ -28,6 +28,9 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
   heroSize="large"
   heroOverlay="medium"
 >
+  <div slot="hero-actions" class="hero-actions">
+    <a href="/clubhouse/menus" class="btn btn-primary btn-large">View Our Menus</a>
+  </div>
   <div class="content">
     <!-- Intro -->
     <section class="section intro-section">
@@ -155,7 +158,10 @@ const courseImage = 'https://www.alnmouthvillagegolfclub.co.uk/wp-content/upload
           <p class="food-note">
             Vegetarian and dietary options available. Please ask our staff for details.
           </p>
-          <a href="/clubhouse/sunday-menu" class="btn btn-primary" style="margin-top: 1.5rem;">Sunday Lunch Menu</a>
+          <div class="menu-links" style="display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem;">
+            <a href="/clubhouse/sunday-menu" class="btn btn-primary">Sunday Lunch Menu</a>
+            <a href="/clubhouse/sunday-bar-menu" class="btn btn-secondary">Sunday Bar Menu</a>
+          </div>
         </div>
         <div class="food-image">
           <img src={heroImage} alt="Alnmouth Village Golf Club clubhouse" loading="lazy" />

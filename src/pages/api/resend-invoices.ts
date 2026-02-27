@@ -45,12 +45,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   for (const invoiceId of body.invoiceIds) {
     const invoice = await env.DB.prepare(
-      `SELECT * FROM invoices WHERE id = ? AND status = 'sent'`
+      `SELECT * FROM invoices WHERE id = ? AND status IN ('sent', 'draft', 'paid')`
     ).bind(invoiceId).first<Invoice>();
 
     if (!invoice) {
       failed++;
-      errors.push(`Invoice ${invoiceId}: not found or not in 'sent' status`);
+      errors.push(`Invoice ${invoiceId}: not found or in cancelled status`);
       continue;
     }
 
@@ -81,9 +81,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
       await env.DB.prepare(
         `UPDATE invoices SET sent_at = datetime('now') WHERE id = ?`
       ).bind(invoiceId).run();
+      // Record in sent_emails
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'invoice_resend', ?, ?, 'sent')`
+      ).bind(member.id, member.email, periodYear).run();
     } else {
       failed++;
       errors.push(`Invoice ${invoice.invoice_number} (${member.email}): ${result.error}`);
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'invoice_resend', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, periodYear, result.error || 'Unknown error').run();
     }
 
     // Rate limit

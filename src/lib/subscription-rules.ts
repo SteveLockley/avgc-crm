@@ -127,6 +127,9 @@ export function getBaseSubscriptionType(category: string | null): string | null 
   // Remove Home/Away suffix
   base = base.replace(/\s+(Home|Away)$/i, '');
 
+  // Normalize variants to standard base types
+  if (base === 'Junior Academy') base = 'Junior';
+
   return base;
 }
 
@@ -139,7 +142,7 @@ export function isAutoManagedSubscription(category: string | null): boolean {
 
   const lower = category.toLowerCase();
 
-  // Exclude these from auto-management
+  // Exclude these from auto-management - these categories never change
   const excludedTypes = [
     'social',
     'twilight',
@@ -148,7 +151,10 @@ export function isAutoManagedSubscription(category: string | null): boolean {
     'gratis',
     'retention',
     'resigned',
-    'academy'
+    'winter',
+    'pga professional',
+    'international',
+    'life',
   ];
 
   return !excludedTypes.some(excluded => lower.includes(excluded));
@@ -175,8 +181,8 @@ export function calculateSubscriptionType(
   const currentYear = now.getFullYear();
 
   const ageOnApril1 = calculateAgeOnDate(member.date_of_birth, april1st);
+  const yearsOfMembershipOnApril1 = calculateYearsOfMembership(member.date_joined, april1st);
   const yearsOfMembershipInYear = calculateYearsOfMembershipInYear(member.date_joined, currentYear);
-  const yearsOfMembership = calculateYearsOfMembership(member.date_joined, now);
 
   const currentBase = getBaseSubscriptionType(member.category);
   const homeAway = member.home_away;
@@ -187,7 +193,6 @@ export function calculateSubscriptionType(
   }
 
   // Rule 1: Life - 50+ years of membership at any time in current year
-  // Life is the highest priority - once a Life member, always a Life member
   if (yearsOfMembershipInYear !== null && yearsOfMembershipInYear >= 50) {
     if (currentBase === 'Life') {
       return { newType: null, reason: 'Already Life member' };
@@ -195,11 +200,8 @@ export function calculateSubscriptionType(
     return { newType: SUBSCRIPTION_BASE_TYPES.LIFE, reason: `50+ years of membership (${yearsOfMembershipInYear} years)` };
   }
 
-  // Rule 2: Over 80 - Age 80+ on 1st April (but not Life members)
+  // Rule 2: Over 80 - Age 80+ on 1st April
   if (ageOnApril1 >= 80) {
-    if (currentBase === 'Life') {
-      return { newType: null, reason: 'Life member - no change needed' };
-    }
     if (currentBase === 'Over 80') {
       return { newType: null, reason: 'Already Over 80' };
     }
@@ -207,33 +209,38 @@ export function calculateSubscriptionType(
     return { newType, reason: `Age 80+ on 1st April (age ${ageOnApril1})` };
   }
 
-  // Rule 3: Senior Loyalty - Age 65+ AND 25+ years of membership
+  // Rule 3: Senior Loyalty - Age 65+ AND 25+ years of membership on 1st April
   // Skip if already Life, Over 80, or Senior Loyalty
-  if (ageOnApril1 >= 65 && yearsOfMembership !== null && yearsOfMembership >= 25) {
+  if (ageOnApril1 >= 65 && yearsOfMembershipOnApril1 !== null && yearsOfMembershipOnApril1 >= 25) {
     if (currentBase === 'Life' || currentBase === 'Over 80' || currentBase === 'Senior Loyalty') {
       return { newType: null, reason: 'Already Senior Loyalty or higher' };
     }
     const newType = getFullSubscriptionName(SUBSCRIPTION_BASE_TYPES.SENIOR_LOYALTY, homeAway);
-    return { newType, reason: `Age 65+ (${ageOnApril1}) with 25+ years membership (${yearsOfMembership} years)` };
+    return { newType, reason: `Age 65+ (${ageOnApril1}) with 25+ years membership (${yearsOfMembershipOnApril1} years) on 1st April` };
   }
 
-  // For progression rules, we need the current subscription type
-  // Rule 4: Under 30 → Full when age 30+ on 1st April
-  if (currentBase === 'Under 30' && ageOnApril1 >= 30) {
-    const newType = getFullSubscriptionName(SUBSCRIPTION_BASE_TYPES.FULL, homeAway);
-    return { newType, reason: `Under 30 member now age 30+ on 1st April (age ${ageOnApril1})` };
+  // Determine the correct age-based category and compare with current
+  // This catches both upgrades AND corrections (e.g. Full member who should be Under 30)
+  let correctBase: string;
+  let ageReason: string;
+
+  if (ageOnApril1 >= 30) {
+    correctBase = SUBSCRIPTION_BASE_TYPES.FULL;
+    ageReason = `Age 30+ on 1st April (age ${ageOnApril1})`;
+  } else if (ageOnApril1 >= 21) {
+    correctBase = SUBSCRIPTION_BASE_TYPES.UNDER_30;
+    ageReason = `Age 21-29 on 1st April (age ${ageOnApril1})`;
+  } else if (ageOnApril1 >= 18) {
+    correctBase = SUBSCRIPTION_BASE_TYPES.INTERMEDIATE;
+    ageReason = `Age 18-20 on 1st April (age ${ageOnApril1})`;
+  } else {
+    correctBase = SUBSCRIPTION_BASE_TYPES.JUNIOR;
+    ageReason = `Under 18 on 1st April (age ${ageOnApril1})`;
   }
 
-  // Rule 5: Intermediate → Under 30 when age 21+ on 1st April
-  if (currentBase === 'Intermediate' && ageOnApril1 >= 21) {
-    const newType = getFullSubscriptionName(SUBSCRIPTION_BASE_TYPES.UNDER_30, homeAway);
-    return { newType, reason: `Intermediate member now age 21+ on 1st April (age ${ageOnApril1})` };
-  }
-
-  // Rule 6: Junior → Intermediate when age 18+ on 1st April
-  if ((currentBase === 'Junior' || currentBase === 'Junior Academy') && ageOnApril1 >= 18) {
-    const newType = getFullSubscriptionName(SUBSCRIPTION_BASE_TYPES.INTERMEDIATE, homeAway);
-    return { newType, reason: `Junior member now age 18+ on 1st April (age ${ageOnApril1})` };
+  if (currentBase !== correctBase) {
+    const newType = getFullSubscriptionName(correctBase, homeAway);
+    return { newType, reason: `${currentBase || 'None'} → ${correctBase}: ${ageReason}` };
   }
 
   // No change needed

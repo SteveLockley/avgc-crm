@@ -43,7 +43,7 @@ if (Astro.request.method === 'POST') {
            VALUES (?, 'bulk_delete_invoices', 'invoices', ?)`
         ).bind(user?.email || 'system', JSON.stringify({ count: deletedCount, ids: invoiceIds })).run();
       } else {
-        deleteError = 'No invoices were deleted. Only draft and cancelled invoices can be deleted.';
+        deleteError = 'No invoices were deleted. Only unpaid and cancelled invoices can be deleted.';
       }
     }
   }
@@ -54,6 +54,7 @@ const url = Astro.url;
 const search = url.searchParams.get('search') || '';
 const status = url.searchParams.get('status') || '';
 const periodYear = url.searchParams.get('year') || '';
+const overdue = url.searchParams.get('overdue') || '';
 const page = parseInt(url.searchParams.get('page') || '1');
 const perPage = 25;
 const offset = (page - 1) * perPage;
@@ -76,6 +77,10 @@ if (status) {
 if (periodYear) {
   whereClause += ' AND i.period_start LIKE ?';
   params.push(`${periodYear}-%`);
+}
+
+if (overdue === '1') {
+  whereClause += ` AND date('now') >= date(i.period_start, '+14 days')`;
 }
 
 // Get total count
@@ -138,6 +143,7 @@ function buildQueryString(pageNum: number): string {
   if (search) params.set('search', search);
   if (status) params.set('status', status);
   if (periodYear) params.set('year', periodYear);
+  if (overdue) params.set('overdue', overdue);
   params.set('page', String(pageNum));
   return `?${params.toString()}`;
 }
@@ -151,6 +157,20 @@ function buildQueryString(pageNum: number): string {
       <p class="subtitle">Manage membership invoices and billing</p>
     </div>
     <div class="header-actions">
+      <div class="dropdown" id="fee-dropdown">
+        <button type="button" class="btn btn-primary" onclick="toggleFeeDropdown()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Raise Fee Invoice
+        </button>
+        <div class="dropdown-menu" id="fee-dropdown-menu">
+          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('locker')">Locker Fees</button>
+          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('egu')">EGU Fees</button>
+          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('county')">County Fees</button>
+          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('egu_county')">EGU + County Fees</button>
+        </div>
+      </div>
       <a href="/admin/invoices/settings" class="btn btn-secondary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
@@ -193,6 +213,19 @@ function buildQueryString(pageNum: number): string {
       <div class="stat-content">
         <span class="stat-value">{totalCount}</span>
         <span class="stat-label">Total</span>
+      </div>
+    </a>
+
+    <a href="/admin/invoices?status=draft" class="stat-card stat-draft">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{statusCountMap['draft'] || 0}</span>
+        <span class="stat-label">Unpaid</span>
       </div>
     </a>
 
@@ -243,6 +276,7 @@ function buildQueryString(pageNum: number): string {
           <label class="filter-label">Status</label>
           <select name="status" class="filter-select">
             <option value="">All Statuses</option>
+            <option value="draft" selected={status === 'draft'}>Unpaid</option>
             <option value="paid" selected={status === 'paid'}>Paid</option>
             <option value="cancelled" selected={status === 'cancelled'}>Cancelled</option>
           </select>
@@ -265,12 +299,13 @@ function buildQueryString(pageNum: number): string {
       </div>
     </form>
 
-    {(search || status || periodYear) && (
+    {(search || status || periodYear || overdue) && (
       <div class="active-filters">
         <span class="filters-label">Active filters:</span>
         {search && <span class="filter-tag">Search: {search}</span>}
-        {status && <span class="filter-tag">Status: {status}</span>}
+        {status && <span class="filter-tag">Status: {status === 'draft' ? 'unpaid' : status}</span>}
         {periodYear && <span class="filter-tag">Year: {periodYear}/{parseInt(periodYear) + 1}</span>}
+        {overdue && <span class="filter-tag filter-tag-warning">Overdue (14+ days)</span>}
       </div>
     )}
   </div>
@@ -323,7 +358,30 @@ function buildQueryString(pageNum: number): string {
           </svg>
           Resend Selected
         </button>
+        <button type="button" class="btn btn-warning btn-sm" id="bulk-remind-btn" disabled onclick="remindSelected()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          Remind Selected
+        </button>
         <span id="selected-count" class="selected-count">0 selected</span>
+        <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+          <a href="/admin/members/email-log" class="btn btn-sm btn-secondary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            Email Log
+          </a>
+          <a href={`/admin/invoices?status=draft&overdue=1`} class={`btn btn-sm ${overdue === '1' ? 'btn-warning-active' : 'btn-warning-outline'}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+            Overdue
+          </a>
+        </div>
       </div>
 
       <div class="table-container">
@@ -371,7 +429,7 @@ function buildQueryString(pageNum: number): string {
                 <td class="date-cell">{formatDate(invoice.invoice_date)}</td>
                 <td>
                   <span class={`status-badge status-${invoice.status}`}>
-                    {invoice.status}
+                    {invoice.status === 'draft' ? 'unpaid' : invoice.status}
                   </span>
                 </td>
                 <td class="method-cell">{invoice.default_payment_method || '—'}</td>
@@ -387,13 +445,19 @@ function buildQueryString(pageNum: number): string {
                       </svg>
                     </a>
                     {invoice.status === 'draft' && (
-                      <a href={`/admin/invoices/preview?ids=${invoice.id}`} class="action-btn primary" title="Send">
+                      <button type="button" class="action-btn success" title="Mark as Paid" onclick={`markPaid(${invoice.id}, '${invoice.invoice_number}', '${(invoice.default_payment_method || 'BACS').replace(/'/g, "\\'")}')`}>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                          <line x1="22" y1="2" x2="11" y2="13"/>
-                          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                          <polyline points="22 4 12 14.01 9 11.01"/>
                         </svg>
-                      </a>
+                      </button>
                     )}
+                    <a href={`/admin/invoices/preview?ids=${invoice.id}`} class="action-btn primary" title="Resend">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                      </svg>
+                    </a>
                     <button type="button" class="action-btn danger" title="Delete" onclick={`deleteInvoice(${invoice.id}, '${invoice.invoice_number}')`}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"/>
@@ -502,6 +566,46 @@ function buildQueryString(pageNum: number): string {
       height: 18px;
     }
 
+    /* Dropdown */
+    .dropdown {
+      position: relative;
+    }
+
+    .dropdown-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      margin-top: 0.25rem;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      min-width: 200px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .dropdown-menu.open {
+      display: block;
+    }
+
+    .dropdown-item {
+      display: block;
+      width: 100%;
+      padding: 0.6rem 1rem;
+      border: none;
+      background: none;
+      text-align: left;
+      font-size: 0.9rem;
+      color: #333;
+      cursor: pointer;
+    }
+
+    .dropdown-item:hover {
+      background: #f5f5f5;
+    }
+
     /* Alert */
     .alert {
       display: flex;
@@ -533,7 +637,7 @@ function buildQueryString(pageNum: number): string {
     /* Stats Row */
     .stats-row {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 1rem;
       margin-bottom: 1.5rem;
     }
@@ -573,6 +677,7 @@ function buildQueryString(pageNum: number): string {
       color: #fff;
     }
 
+    .stat-draft .stat-icon { background: linear-gradient(135deg, #f57c00 0%, #ff9800 100%); }
     .stat-paid .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
     .stat-cancelled .stat-icon { background: linear-gradient(135deg, #c62828 0%, #e53935 100%); }
 
@@ -823,6 +928,47 @@ function buildQueryString(pageNum: number): string {
       color: #666;
     }
 
+    .btn-warning {
+      background: #f57c00;
+      color: #fff;
+    }
+
+    .btn-warning:hover {
+      background: #e65100;
+    }
+
+    .btn-warning:disabled {
+      background: #ccc;
+      color: #999;
+      cursor: not-allowed;
+    }
+
+    .btn-warning-outline {
+      background: #fff;
+      color: #f57c00;
+      border: 1px solid #f57c00;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .btn-warning-outline:hover {
+      background: #fff3e0;
+    }
+
+    .btn-warning-active {
+      background: #f57c00;
+      color: #fff;
+      border: 1px solid #f57c00;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .filter-tag-warning {
+      background: #f57c00;
+    }
+
     .table-container {
       overflow-x: auto;
     }
@@ -997,6 +1143,18 @@ function buildQueryString(pageNum: number): string {
       background: #164024;
     }
 
+    .action-btn.success {
+      background: #28a745;
+      color: #fff;
+      cursor: pointer;
+      border: none;
+      font: inherit;
+    }
+
+    .action-btn.success:hover {
+      background: #218838;
+    }
+
     .action-btn.danger {
       color: #999;
       cursor: pointer;
@@ -1162,6 +1320,7 @@ function buildQueryString(pageNum: number): string {
     const selectedIdsInput = document.getElementById('selected-invoice-ids') as HTMLInputElement;
     const deleteBtn = document.getElementById('bulk-delete-btn') as HTMLButtonElement;
     const resendBtn = document.getElementById('bulk-resend-btn') as HTMLButtonElement;
+    const remindBtn = document.getElementById('bulk-remind-btn') as HTMLButtonElement;
 
     function updateSelection() {
       const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
@@ -1169,7 +1328,10 @@ function buildQueryString(pageNum: number): string {
         cb.dataset.status === 'draft' || cb.dataset.status === 'cancelled'
       );
       const resendableSelected = Array.from(selected).filter(cb =>
-        cb.dataset.status === 'sent'
+        cb.dataset.status !== 'cancelled'
+      );
+      const remindableSelected = Array.from(selected).filter(cb =>
+        cb.dataset.status === 'draft'
       );
 
       if (selectedCount) {
@@ -1183,6 +1345,9 @@ function buildQueryString(pageNum: number): string {
       }
       if (resendBtn) {
         resendBtn.disabled = resendableSelected.length === 0;
+      }
+      if (remindBtn) {
+        remindBtn.disabled = remindableSelected.length === 0;
       }
     }
 
@@ -1206,7 +1371,7 @@ function buildQueryString(pageNum: number): string {
       ).length;
 
       const confirmed = await m3Confirm(
-        `Delete ${deletableCount} invoice(s)? Only draft and cancelled invoices will be deleted.`,
+        `Delete ${deletableCount} invoice(s)? Only unpaid and cancelled invoices will be deleted.`,
         {
           title: 'Delete Invoices?',
           type: 'delete',
@@ -1271,6 +1436,55 @@ function buildQueryString(pageNum: number): string {
     // Expose to window for onclick
     (window as any).resendSelected = resendSelected;
 
+    // Send reminder emails to selected unpaid invoices
+    async function remindSelected() {
+      const selected = document.querySelectorAll('.invoice-checkbox:checked') as NodeListOf<HTMLInputElement>;
+      const remindableIds = Array.from(selected)
+        .filter(cb => cb.dataset.status === 'draft')
+        .map(cb => parseInt(cb.value));
+
+      if (remindableIds.length === 0) return;
+
+      const confirmed = await (window as any).m3Confirm(
+        `Send reminder emails for ${remindableIds.length} unpaid invoice(s)? This will resend the renewal email with a REMINDER prefix and payment deadline notice.`,
+        {
+          title: 'Send Reminders?',
+          type: 'warning',
+          confirmText: 'Send Reminders',
+          cancelText: 'Cancel',
+        }
+      );
+
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch('/api/send-invoice-reminder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceIds: remindableIds }),
+        });
+        const data = await response.json();
+
+        if (data.sent > 0) {
+          await (window as any).m3Alert(
+            `${data.sent} reminder(s) sent successfully${data.failed > 0 ? `, ${data.failed} failed` : ''}.`,
+            { title: 'Reminders Sent', type: data.failed > 0 ? 'warning' : 'success' }
+          );
+        } else {
+          await (window as any).m3Alert(
+            data.error || 'No reminders were sent.',
+            { title: 'Send Failed', type: 'error' }
+          );
+        }
+      } catch (error: any) {
+        await (window as any).m3Alert(
+          'Send failed: ' + error.message,
+          { title: 'Error', type: 'error' }
+        );
+      }
+    }
+    (window as any).remindSelected = remindSelected;
+
     async function deleteInvoice(invoiceId: number, invoiceNumber: string) {
       const confirmed = await (window as any).m3Confirm(
         `Delete invoice ${invoiceNumber} and all associated payments? This will also clear the member's renewal date. This cannot be undone.`,
@@ -1295,5 +1509,106 @@ function buildQueryString(pageNum: number): string {
       }
     }
     (window as any).deleteInvoice = deleteInvoice;
+
+    async function markPaid(invoiceId: number, invoiceNumber: string, defaultMethod: string) {
+      const methods = ['BACS', 'Over the Till', 'Standing Order', 'Cheque'];
+      const paymentMethod = await (window as any).m3Select(
+        `Mark invoice ${invoiceNumber} as paid. Select the payment method:`,
+        methods,
+        { title: 'Mark as Paid', type: 'warning', confirmText: 'Mark Paid', cancelText: 'Cancel', defaultValue: defaultMethod }
+      );
+      if (!paymentMethod) return;
+
+      try {
+        const form = new FormData();
+        form.append('action', 'mark_paid');
+        form.append('payment_method', paymentMethod);
+        const response = await fetch(`/admin/invoices/${invoiceId}`, {
+          method: 'POST',
+          body: form,
+        });
+
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          await (window as any).m3Alert('Failed to mark invoice as paid.', { title: 'Error', type: 'error' });
+        }
+      } catch (error: any) {
+        await (window as any).m3Alert('Error: ' + error.message, { title: 'Error', type: 'error' });
+      }
+    }
+    (window as any).markPaid = markPaid;
+
+    // Fee invoice dropdown
+    function toggleFeeDropdown() {
+      const menu = document.getElementById('fee-dropdown-menu');
+      if (menu) menu.classList.toggle('open');
+    }
+    (window as any).toggleFeeDropdown = toggleFeeDropdown;
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      const dropdown = document.getElementById('fee-dropdown');
+      const menu = document.getElementById('fee-dropdown-menu');
+      if (dropdown && menu && !dropdown.contains(e.target as Node)) {
+        menu.classList.remove('open');
+      }
+    });
+
+    const FEE_LABELS: Record<string, string> = {
+      locker: 'Locker',
+      egu: 'EGU',
+      county: 'County',
+      egu_county: 'EGU + County',
+    };
+
+    async function generateFeeInvoices(feeType: string) {
+      const menu = document.getElementById('fee-dropdown-menu');
+      if (menu) menu.classList.remove('open');
+
+      const label = FEE_LABELS[feeType] || feeType;
+      const confirmed = await (window as any).m3Confirm(
+        `Generate ${label} fee invoices for all eligible members who don't already have this fee invoiced?`,
+        { title: `Raise ${label} Invoices`, type: 'warning', confirmText: 'Generate', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      let totalCreated = 0;
+      let totalFailed = 0;
+      let allErrors: string[] = [];
+
+      try {
+        while (true) {
+          const res = await fetch('/api/generate-fee-invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feeType }),
+          });
+          const data = await res.json();
+
+          if (data.error) {
+            await (window as any).m3Alert(data.error, { title: 'Error', type: 'error' });
+            return;
+          }
+
+          totalCreated += (data.created || 0);
+          totalFailed += (data.failed || 0);
+          if (data.errors) allErrors = allErrors.concat(data.errors);
+
+          if (!data.remaining || data.remaining <= 0) break;
+        }
+
+        const msg = totalCreated > 0
+          ? `Created ${totalCreated} ${label} fee invoice(s).` + (totalFailed > 0 ? ` ${totalFailed} failed.` : '')
+          : `No eligible members found for ${label} fees.`;
+
+        await (window as any).m3Alert(msg, { title: totalFailed > 0 ? 'Completed with Errors' : 'Complete', type: totalFailed > 0 ? 'warning' : 'success' });
+
+        if (totalCreated > 0) window.location.reload();
+      } catch (error: any) {
+        await (window as any).m3Alert('Error: ' + error.message, { title: 'Error', type: 'error' });
+      }
+    }
+    (window as any).generateFeeInvoices = generateFeeInvoices;
   </script>
 </AdminLayout>

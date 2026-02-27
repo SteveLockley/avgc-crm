@@ -3,6 +3,7 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { formatCurrency, getFullName, type Invoice, type InvoiceItem, type Member } from '../../../lib/db';
 import { generateInvoiceEmail, generateInvoiceSubject } from '../../../lib/email-template';
 import { sendEmail, isEmailConfigured, isValidEmail } from '../../../lib/email';
+import { loadFeeItems, calculateLineItems } from '../../../lib/generate-invoice';
 
 const db = Astro.locals.runtime.env.DB;
 const user = Astro.locals.user;
@@ -14,7 +15,7 @@ const idsParam = url.searchParams.get('ids') || '';
 const invoiceIds = idsParam.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
 
 if (invoiceIds.length === 0) {
-  return Astro.redirect('/invoices');
+  return Astro.redirect('/admin/invoices');
 }
 
 // Get settings
@@ -26,28 +27,82 @@ settingsResult.results?.forEach((row: any) => {
   settings[row.setting_key] = row.setting_value;
 });
 
-// Get invoices with member data
+// Get custom message from query params (persisted across navigation)
+const customMessage = url.searchParams.get('message') || '';
+
+// Load fee items for recalculation
+const feeItems = await loadFeeItems(db);
+
+// Get invoices with member data, recalculating fees
 const invoices: Array<{
   invoice: Invoice;
   member: Member;
   items: InvoiceItem[];
   emailHtml: string;
   emailSubject: string;
+  revised: boolean;
 }> = [];
 
 for (const invoiceId of invoiceIds) {
   const invoice = await db.prepare(
-    `SELECT * FROM invoices WHERE id = ? AND status = 'draft'`
+    `SELECT * FROM invoices WHERE id = ? AND status IN ('draft', 'sent', 'paid')`
   ).bind(invoiceId).first<Invoice>();
 
   if (!invoice) continue;
 
+  // Load member with subscription fee for their current category
   const member = await db.prepare(
-    `SELECT * FROM members WHERE id = ?`
-  ).bind(invoice.member_id).first<Member>();
+    `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
+     FROM members m
+     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     WHERE m.id = ?`
+  ).bind(invoice.member_id).first<any>();
 
   if (!member) continue;
 
+  // Recalculate what the line items should be based on current member data + fees
+  const isSocial = (member.category || '').toLowerCase().includes('social');
+  const correctItems = calculateLineItems(member, feeItems, isSocial);
+  const correctTotal = correctItems.reduce((sum: number, item: any) => sum + item.unitPrice, 0);
+
+  let revised = false;
+
+  // If the total differs, revise the invoice
+  if (Math.abs(correctTotal - (invoice.total as number)) > 0.005 && correctItems.length > 0) {
+    // Adjust member account balance only for unpaid invoices (draft/sent)
+    // Paid invoices already had balance settled, so don't touch it
+    if (invoice.status !== 'paid') {
+      const oldTotal = invoice.total as number;
+      const diff = correctTotal - oldTotal;
+      if (Math.abs(diff) > 0.005) {
+        await db.prepare(
+          `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+        ).bind(diff, member.id).run();
+      }
+    }
+
+    // Delete old line items and insert new ones
+    await db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`).bind(invoiceId).run();
+
+    for (const item of correctItems) {
+      await db.prepare(
+        `INSERT INTO invoice_items (invoice_id, payment_item_id, description, quantity, unit_price, line_total)
+         VALUES (?, ?, ?, 1, ?, ?)`
+      ).bind(invoiceId, item.paymentItemId, item.description, item.unitPrice, item.unitPrice).run();
+    }
+
+    // Update invoice totals
+    await db.prepare(
+      `UPDATE invoices SET subtotal = ?, total = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(correctTotal, correctTotal, invoiceId).run();
+
+    // Update the invoice object in memory
+    (invoice as any).subtotal = correctTotal;
+    (invoice as any).total = correctTotal;
+    revised = true;
+  }
+
+  // Load the (possibly updated) line items
   const itemsResult = await db.prepare(
     `SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id`
   ).bind(invoiceId).all();
@@ -59,14 +114,15 @@ for (const invoiceId of invoiceIds) {
     invoice,
     items,
     settings,
+    customMessage: customMessage || undefined,
   });
   const emailSubject = generateInvoiceSubject(invoice, periodYear);
 
-  invoices.push({ invoice, member, items, emailHtml, emailSubject });
+  invoices.push({ invoice, member, items, emailHtml, emailSubject, revised });
 }
 
 if (invoices.length === 0) {
-  return Astro.redirect('/invoices?error=no_valid_invoices');
+  return Astro.redirect('/admin/invoices?error=no_valid_invoices');
 }
 
 // Check email configuration
@@ -138,6 +194,8 @@ if (Astro.request.method === 'POST') {
           AZURE_SERVICE_PASSWORD: env.AZURE_SERVICE_PASSWORD,
         });
 
+        const periodYear = parseInt(invoice.period_start.substring(0, 4));
+
         if (result.success) {
           // Update invoice status
           await db.prepare(
@@ -149,9 +207,19 @@ if (Astro.request.method === 'POST') {
             WHERE id = ?`
           ).bind(member.email, invoice.id).run();
 
+          // Record in sent_emails
+          await db.prepare(
+            `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'invoice_send', ?, ?, 'sent')`
+          ).bind(member.id, member.email, periodYear).run();
+
           sentCount++;
         } else {
           failedCount++;
+
+          // Record failure in sent_emails
+          await db.prepare(
+            `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'invoice_send', ?, ?, 'failed', ?)`
+          ).bind(member.id, member.email, periodYear, result.error || 'Unknown error').run();
         }
 
         // Small delay between emails
@@ -196,6 +264,12 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
     </div>
   )}
 
+  {invoices.some(i => i.revised) && (
+    <div class="alert alert-success">
+      <strong>Invoices revised:</strong> {invoices.filter(i => i.revised).length} invoice(s) were recalculated with updated fees.
+    </div>
+  )}
+
   <!-- Header -->
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
     <div>
@@ -227,7 +301,7 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
         <div style="max-height: 400px; overflow-y: auto;">
           {invoices.map((data, index) => (
             <a
-              href={`?ids=${idsParam}&preview=${index}`}
+              href={`?ids=${idsParam}&preview=${index}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`}
               style={`
                 display: block;
                 padding: 0.75rem;
@@ -248,12 +322,35 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
                   <span style="color: #dc3545;">No email</span>
                 )}
               </div>
-              <div style="font-size: 0.875rem; font-weight: 500;">
+              <div style="font-size: 0.875rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
                 {formatCurrency(data.invoice.total)}
+                {data.revised && <span style="font-size: 0.7rem; background: #fff3cd; color: #856404; padding: 0.125rem 0.375rem; border-radius: 3px;">Revised</span>}
               </div>
             </a>
           ))}
         </div>
+      </div>
+
+      <!-- Custom Message -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Custom Message</h3>
+        </div>
+        <div style="font-size: 0.8125rem; color: #666; margin-bottom: 0.5rem;">
+          Optional text shown at the top of the invoice email.
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <textarea
+            id="custom-message"
+            class="form-input"
+            rows="3"
+            placeholder="e.g. Your subscription has been updated..."
+            style="flex: 1; font-size: 0.85rem;"
+          >{customMessage}</textarea>
+        </div>
+        <button id="apply-message-btn" class="btn btn-secondary" style="width: 100%; margin-top: 0.5rem;">
+          Update Preview
+        </button>
       </div>
 
       <!-- Actions -->
@@ -338,7 +435,7 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
           <h3 class="card-title">Email Preview</h3>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
             {previewIndex > 0 && (
-              <a href={`?ids=${idsParam}&preview=${previewIndex - 1}`} class="btn btn-secondary btn-sm">
+              <a href={`?ids=${idsParam}&preview=${previewIndex - 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="btn btn-secondary btn-sm">
                 &larr; Previous
               </a>
             )}
@@ -346,7 +443,7 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
               {previewIndex + 1} of {invoices.length}
             </span>
             {previewIndex < invoices.length - 1 && (
-              <a href={`?ids=${idsParam}&preview=${previewIndex + 1}`} class="btn btn-secondary btn-sm">
+              <a href={`?ids=${idsParam}&preview=${previewIndex + 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="btn btn-secondary btn-sm">
                 Next &rarr;
               </a>
             )}
@@ -373,6 +470,19 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
   </div>
 
   <script is:inline>
+    // Update Preview button - reloads page with custom message in URL
+    document.getElementById('apply-message-btn')?.addEventListener('click', () => {
+      const msg = document.getElementById('custom-message').value.trim();
+      const url = new URL(window.location.href);
+      if (msg) {
+        url.searchParams.set('message', msg);
+      } else {
+        url.searchParams.delete('message');
+      }
+      window.location.href = url.toString();
+    });
+
+    // Send all confirmation
     document.getElementById('send-all-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const count = e.target.dataset.count;

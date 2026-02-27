@@ -299,7 +299,7 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
     <!-- Right Column -->
     <div class="dashboard-sidebar">
       <!-- Financial Summary Card -->
-      <div class="m3-card accent-card">
+      <div class="m3-card">
         <div class="card-header">
           <div class="card-title">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -400,7 +400,7 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
               </svg>
               Generate Invoices
             </a>
-            <a href="/admin/reports" class="action-btn">
+            <a href="/admin/revenue" class="action-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="20" x2="18" y2="10"/>
                 <line x1="12" y1="20" x2="12" y2="4"/>
@@ -571,25 +571,6 @@ const totalEguFees = eguCategoryWithFees.reduce((sum, cat) => sum + cat.fees, 0)
 
     .card-content {
       padding: 1.25rem;
-    }
-
-    /* Accent Card */
-    .accent-card {
-      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
-      border: none;
-    }
-
-    .accent-card .card-header {
-      background: transparent;
-      border-bottom-color: rgba(255,255,255,0.15);
-    }
-
-    .accent-card .card-title {
-      color: #fff;
-    }
-
-    .accent-card .card-title svg {
-      color: rgba(255,255,255,0.9);
     }
 
     /* Financial Grid */

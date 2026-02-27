@@ -1,16 +1,57 @@
 import type { OpeningHours } from './opening-hours';
 
 export interface GoogleEnv {
-  GOOGLE_CLIENT_ID: string;
-  GOOGLE_CLIENT_SECRET: string;
-  GOOGLE_REFRESH_TOKEN: string;
-  GOOGLE_LOCATION_ID: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_REFRESH_TOKEN?: string;
+  GOOGLE_LOCATION_ID?: string;
+  GOOGLE_APPS_SCRIPT_URL?: string;
+  GOOGLE_APPS_SCRIPT_SECRET?: string;
 }
 
-export function isGoogleConfigured(env: any): boolean {
+function isProxyMode(env: any): boolean {
+  return !!(env?.GOOGLE_APPS_SCRIPT_URL && env?.GOOGLE_APPS_SCRIPT_SECRET);
+}
+
+function isDirectMode(env: any): boolean {
   return !!(env?.GOOGLE_CLIENT_ID && env?.GOOGLE_CLIENT_SECRET &&
             env?.GOOGLE_REFRESH_TOKEN && env?.GOOGLE_LOCATION_ID);
 }
+
+export function isGoogleConfigured(env: any): boolean {
+  return isProxyMode(env) || isDirectMode(env);
+}
+
+export function getGoogleMode(env: any): 'proxy' | 'direct' | null {
+  if (isProxyMode(env)) return 'proxy';
+  if (isDirectMode(env)) return 'direct';
+  return null;
+}
+
+// --- Apps Script Proxy ---
+
+async function callProxy(env: any, action: string, payload?: any): Promise<any> {
+  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      secret: env.GOOGLE_APPS_SCRIPT_SECRET,
+      action,
+      payload,
+    }),
+  });
+
+  // Apps Script web apps return 200 even for errors, with JSON body
+  // But redirects (302) happen on first deploy — follow them
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { success: false, error: `Proxy returned non-JSON (${response.status}): ${text.slice(0, 200)}` };
+  }
+}
+
+// --- Direct API ---
 
 const DAY_MAP: Record<number, string> = {
   0: 'SUNDAY', 1: 'MONDAY', 2: 'TUESDAY', 3: 'WEDNESDAY',
@@ -22,9 +63,9 @@ async function getGoogleAccessToken(env: GoogleEnv): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      refresh_token: env.GOOGLE_REFRESH_TOKEN,
+      client_id: env.GOOGLE_CLIENT_ID!,
+      client_secret: env.GOOGLE_CLIENT_SECRET!,
+      refresh_token: env.GOOGLE_REFRESH_TOKEN!,
       grant_type: 'refresh_token',
     }),
   });
@@ -59,18 +100,26 @@ function convertToGoogleHours(hours: OpeningHours[]) {
   return { periods };
 }
 
+// --- Exported Functions ---
+
 export async function updateGoogleBusinessHours(
   hours: OpeningHours[],
   env: GoogleEnv
 ): Promise<{ success: boolean; error?: string; skippedDays?: string[] }> {
   try {
-    // Check for non-numeric close times that can't be sent to Google
     const skippedDays = hours
       .filter(h => !h.is_closed && h.day_of_week !== null && (!isValidTime(h.open_time) || !isValidTime(h.close_time)))
       .map(h => DAY_MAP[h.day_of_week!]);
 
-    const accessToken = await getGoogleAccessToken(env);
     const regularHours = convertToGoogleHours(hours);
+
+    if (isProxyMode(env)) {
+      const result = await callProxy(env, 'updateHours', { regularHours });
+      if (result.success && skippedDays.length > 0) result.skippedDays = skippedDays;
+      return result;
+    }
+
+    const accessToken = await getGoogleAccessToken(env);
     const locationId = env.GOOGLE_LOCATION_ID;
 
     const response = await fetch(
@@ -100,6 +149,10 @@ export async function getGoogleBusinessProfile(
   env: GoogleEnv
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   try {
+    if (isProxyMode(env)) {
+      return await callProxy(env, 'getProfile');
+    }
+
     const accessToken = await getGoogleAccessToken(env);
     const locationId = env.GOOGLE_LOCATION_ID;
 
@@ -135,6 +188,10 @@ export async function updateGoogleBusinessInfo(
   info: { description?: string; primaryPhone?: string; websiteUri?: string }
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (isProxyMode(env)) {
+      return await callProxy(env, 'updateProfile', info);
+    }
+
     const accessToken = await getGoogleAccessToken(env);
     const locationId = env.GOOGLE_LOCATION_ID;
 
@@ -193,9 +250,6 @@ export async function updateGoogleSpecialHours(
   entries: SpecialHourEntry[]
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const accessToken = await getGoogleAccessToken(env);
-    const locationId = env.GOOGLE_LOCATION_ID;
-
     const specialHourPeriods = entries.map(entry => {
       const [year, month, day] = entry.date.split('-').map(Number);
       const period: any = {
@@ -210,6 +264,13 @@ export async function updateGoogleSpecialHours(
       }
       return period;
     });
+
+    if (isProxyMode(env)) {
+      return await callProxy(env, 'updateSpecialHours', { specialHours: { specialHourPeriods } });
+    }
+
+    const accessToken = await getGoogleAccessToken(env);
+    const locationId = env.GOOGLE_LOCATION_ID;
 
     const response = await fetch(
       `https://mybusinessbusinessinformation.googleapis.com/v1/${locationId}?updateMask=specialHours`,

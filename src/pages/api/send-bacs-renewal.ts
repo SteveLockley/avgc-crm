@@ -6,6 +6,7 @@
 import type { APIRoute } from 'astro';
 import { sendEmail } from '../../lib/email';
 import { generateBACSRenewalEmail, generateBACSRenewalSubject } from '../../lib/bacs-renewal-email';
+import { loadFeeItems, generateInvoiceForMember } from '../../lib/generate-invoice';
 
 const BATCH_SIZE = 40;
 const BACS_PAYMENT_METHODS = ['BACS', 'Over the Till', 'Standing Order', 'Cheque'];
@@ -175,7 +176,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
     );
 
     const result = await sendEmail({ to: member.email, subject, html }, emailEnv);
-    if (!result.success) return new Response(JSON.stringify({ error: result.error }), { status: 500 });
+    if (!result.success) {
+      await env.DB.prepare(
+        `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error) VALUES (?, 'bacs_renewal', ?, ?, 'failed', ?)`
+      ).bind(member.id, member.email, year, result.error || 'Unknown error').run();
+      return new Response(JSON.stringify({ error: result.error }), { status: 500 });
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'bacs_renewal', ?, ?, 'sent')`
+    ).bind(member.id, member.email, year).run();
 
     return new Response(JSON.stringify({
       success: true, mode: 'single',
@@ -205,6 +215,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const totalRemaining = members.results.length;
   const batch = members.results.slice(0, BATCH_SIZE);
+
+  // Load fee items for invoice generation
+  const feeItems = await loadFeeItems(env.DB);
 
   let sent = 0;
   let failed = 0;
@@ -240,6 +253,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
       await env.DB.prepare(
         `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'bacs_renewal', ?, ?, 'sent')`
       ).bind(member.id, member.email, year).run();
+
+      // Generate invoice for this member
+      await generateInvoiceForMember(env.DB, member, feeItems, { year, isDD: false, isSocial: false });
     } else {
       failed++;
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);

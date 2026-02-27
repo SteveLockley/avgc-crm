@@ -1,0 +1,530 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Subscription type breakdown
+const subscriptionStats = await db.prepare(`
+  SELECT
+    category,
+    COUNT(*) as count,
+    SUM(CASE WHEN home_away = 'H' THEN 1 ELSE 0 END) as home,
+    SUM(CASE WHEN home_away = 'A' THEN 1 ELSE 0 END) as away
+  FROM members
+  WHERE category IS NOT NULL AND category != ''
+  GROUP BY category
+  ORDER BY count DESC
+`).all();
+
+// Age/sex demographic breakdown (calculated from date_of_birth and gender)
+const demographicStats = await db.prepare(`
+  SELECT
+    SUM(CASE WHEN date_of_birth IS NOT NULL AND (julianday('now') - julianday(date_of_birth)) / 365.25 < 18 THEN 1 ELSE 0 END) as juniors,
+    SUM(CASE WHEN gender = 'F' AND (date_of_birth IS NULL OR (julianday('now') - julianday(date_of_birth)) / 365.25 >= 18) THEN 1 ELSE 0 END) as ladies,
+    SUM(CASE WHEN gender = 'M' AND (date_of_birth IS NULL OR (julianday('now') - julianday(date_of_birth)) / 365.25 >= 18) THEN 1 ELSE 0 END) as mens,
+    SUM(CASE WHEN date_of_birth IS NOT NULL AND (julianday('now') - julianday(date_of_birth)) / 365.25 >= 55 THEN 1 ELSE 0 END) as seniors,
+    COUNT(*) as total
+  FROM members
+`).first<{ juniors: number; ladies: number; mens: number; seniors: number; total: number }>();
+
+// Handicap distribution
+const handicapStats = await db.prepare(`
+  SELECT
+    CASE
+      WHEN handicap_index IS NULL THEN 'No Handicap'
+      WHEN handicap_index <= 5 THEN '0-5'
+      WHEN handicap_index <= 10 THEN '6-10'
+      WHEN handicap_index <= 15 THEN '11-15'
+      WHEN handicap_index <= 20 THEN '16-20'
+      WHEN handicap_index <= 28 THEN '21-28'
+      ELSE '29+'
+    END as bracket,
+    COUNT(*) as count
+  FROM members
+  GROUP BY bracket
+  ORDER BY
+    CASE bracket
+      WHEN '0-5' THEN 1
+      WHEN '6-10' THEN 2
+      WHEN '11-15' THEN 3
+      WHEN '16-20' THEN 4
+      WHEN '21-28' THEN 5
+      WHEN '29+' THEN 6
+      ELSE 7
+    END
+`).all();
+
+// Total members
+const totalMembers = await db.prepare(`SELECT COUNT(*) as count FROM members`).first<{ count: number }>();
+---
+
+<AdminLayout title="Statistics">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Statistics</h1>
+      <p class="subtitle">Membership statistics and demographics</p>
+    </div>
+  </div>
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{totalMembers?.count || 0}</span>
+        <span class="stat-label">Total Members</span>
+      </div>
+    </div>
+
+    <div class="stat-card stat-success">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{subscriptionStats.results?.length || 0}</span>
+        <span class="stat-label">Categories</span>
+      </div>
+    </div>
+
+    <div class="stat-card stat-info">
+      <div class="stat-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="8.5" cy="7" r="4"/>
+          <line x1="20" y1="8" x2="20" y2="14"/>
+          <line x1="23" y1="11" x2="17" y2="11"/>
+        </svg>
+      </div>
+      <div class="stat-content">
+        <span class="stat-value">{demographicStats?.seniors || 0}</span>
+        <span class="stat-label">Seniors (55+)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Grid -->
+  <div class="stats-grid">
+    <!-- Left Column -->
+    <div class="stats-main">
+      <!-- Handicap Distribution -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span>Handicap Distribution</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <div class="distribution-list">
+            {handicapStats.results?.map((h) => (
+              <div class="distribution-item">
+                <span class="distribution-label">{h.bracket}</span>
+                <div class="distribution-bar-container">
+                  <div class="distribution-bar" style={`width: ${Math.min((h.count as number) / Math.max(...(handicapStats.results?.map(x => x.count as number) || [1])) * 100, 100)}%`}></div>
+                </div>
+                <span class="distribution-value">{h.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <!-- Members by Subscription -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span>Members by Subscription</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <table class="m3-table">
+            <thead>
+              <tr>
+                <th>Subscription Type</th>
+                <th class="text-right">Home</th>
+                <th class="text-right">Away</th>
+                <th class="text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subscriptionStats.results?.map((sub) => (
+                <tr>
+                  <td>
+                    <a href={`/admin/members?subscription_type=${encodeURIComponent(sub.category as string)}`} class="table-link">
+                      {sub.category}
+                    </a>
+                  </td>
+                  <td class="text-right">{sub.home}</td>
+                  <td class="text-right">{sub.away}</td>
+                  <td class="text-right"><strong>{sub.count}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column -->
+    <div class="stats-sidebar">
+      <!-- Demographics -->
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+            </svg>
+            <span>Demographics</span>
+          </div>
+        </div>
+        <div class="card-content">
+          {(() => {
+            const juniors = demographicStats?.juniors || 0;
+            const ladies = demographicStats?.ladies || 0;
+            const mens = demographicStats?.mens || 0;
+            const total = juniors + ladies + mens;
+            const seniors = demographicStats?.seniors || 0;
+            const maxVal = Math.max(juniors, ladies, mens, 1);
+            return (
+              <div class="demo-list">
+                <div class="demo-item">
+                  <span class="demo-label">Juniors (U18)</span>
+                  <div class="distribution-bar-container">
+                    <div class="distribution-bar" style={`width: ${(juniors / maxVal) * 100}%`}></div>
+                  </div>
+                  <span class="distribution-value">{juniors}</span>
+                </div>
+                <div class="demo-item">
+                  <span class="demo-label">Ladies</span>
+                  <div class="distribution-bar-container">
+                    <div class="distribution-bar bar-ladies" style={`width: ${(ladies / maxVal) * 100}%`}></div>
+                  </div>
+                  <span class="distribution-value">{ladies}</span>
+                </div>
+                <div class="demo-item">
+                  <span class="demo-label">Men</span>
+                  <div class="distribution-bar-container">
+                    <div class="distribution-bar" style={`width: ${(mens / maxVal) * 100}%`}></div>
+                  </div>
+                  <span class="distribution-value">{mens}</span>
+                </div>
+                <div class="demo-total">
+                  <span class="demo-label">Total</span>
+                  <span class="distribution-value">{total}</span>
+                </div>
+                <div class="demo-item demo-senior">
+                  <span class="demo-label">Seniors (55+)</span>
+                  <div class="distribution-bar-container">
+                    <div class="distribution-bar bar-senior" style={`width: ${(seniors / Math.max(total, 1)) * 100}%`}></div>
+                  </div>
+                  <span class="distribution-value">{seniors}</span>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .page-header {
+      margin-bottom: 2rem;
+    }
+
+    .header-content h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      margin: 0.25rem 0 0 0;
+      color: #666;
+      font-size: 0.95rem;
+    }
+
+    /* Stats Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .stat-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .stat-icon svg {
+      width: 24px;
+      height: 24px;
+      color: #fff;
+    }
+
+    .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+    .stat-info .stat-icon { background: linear-gradient(135deg, #dc3545 0%, #e85d6a 100%); }
+
+    .stat-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1a1a1a;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 1.5rem;
+    }
+
+    .stats-main {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .stats-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* M3 Card */
+    .m3-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-content {
+      padding: 1.25rem;
+    }
+
+    /* Distribution List */
+    .distribution-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.625rem;
+    }
+
+    .distribution-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .distribution-label {
+      width: 100px;
+      font-size: 0.85rem;
+      color: #666;
+      flex-shrink: 0;
+    }
+
+    .distribution-bar-container {
+      flex: 1;
+      height: 8px;
+      background: #f0f0f0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .distribution-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #1e5631 0%, #2d7a45 100%);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+
+    .distribution-value {
+      width: 40px;
+      text-align: right;
+      font-weight: 600;
+      font-size: 0.875rem;
+      color: #1a1a1a;
+    }
+
+    /* Demographics */
+    .demo-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .demo-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .demo-label {
+      width: 100px;
+      font-size: 0.85rem;
+      color: #666;
+      flex-shrink: 0;
+      font-weight: 500;
+    }
+
+    .demo-total {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.625rem 0;
+      border-top: 2px solid #e8e8e8;
+      border-bottom: 2px solid #e8e8e8;
+    }
+
+    .demo-total .demo-label {
+      font-weight: 700;
+      color: #1a1a1a;
+    }
+
+    .demo-total .distribution-value {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .demo-senior {
+      opacity: 0.85;
+    }
+
+    .bar-ladies {
+      background: linear-gradient(90deg, #7b1fa2 0%, #ab47bc 100%);
+    }
+
+    .bar-senior {
+      background: linear-gradient(90deg, #e65100 0%, #ff9800 100%);
+    }
+
+    /* M3 Table */
+    .m3-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .m3-table th {
+      text-align: left;
+      padding: 0.75rem;
+      font-weight: 600;
+      font-size: 0.75rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid #e8e8e8;
+    }
+
+    .m3-table td {
+      padding: 0.75rem;
+      font-size: 0.875rem;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .m3-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .text-right { text-align: right; }
+
+    .table-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .table-link:hover { text-decoration: underline; }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</AdminLayout>
