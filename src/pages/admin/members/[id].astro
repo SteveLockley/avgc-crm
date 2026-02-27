@@ -107,7 +107,7 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
           <h2>Membership</h2>
           <div class="info-grid">
             <div class="info-item">
-              <span class="info-label">Category</span>
+              <span class="info-label">Subscription Type</span>
               <span class="info-value highlight">{member.category || '-'}</span>
             </div>
             <div class="info-item">
@@ -121,10 +121,6 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
             <div class="info-item">
               <span class="info-label">Home Club</span>
               <span class="info-value">{member.home_club || '-'}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Subscription</span>
-              <span class="info-value">{member.subscription_template || '-'}</span>
             </div>
           </div>
           <div class="divider"></div>

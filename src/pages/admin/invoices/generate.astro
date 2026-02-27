@@ -2,6 +2,7 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { formatCurrency, EGU_CATEGORIES, getRenewalPeriod, generateInvoiceNumber, calculateEguCategory, type Member, type PaymentItem } from '../../../lib/db';
 import { calculateInvoiceForMember, isMemberEligibleForInvoice, getFeeSummary } from '../../../lib/invoice';
+import { generateInvoiceForMember as generateInvoice, loadFeeItems } from '../../../lib/generate-invoice';
 
 const db = Astro.locals.runtime.env.DB;
 const user = Astro.locals.user;
@@ -93,9 +94,8 @@ if (Astro.request.method === 'POST') {
     selectedMembers = members.slice(0, 200);
 
   } else if (action === 'generate') {
-    // Generate invoices for selected members
+    // Generate invoices using shared renewal logic (handles DD auto-payment)
     const memberIdsRaw = formData.get('selected_member_ids');
-    const customMessage = formData.get('custom_message');
 
     if (!memberIdsRaw) {
       error = 'No members selected';
@@ -105,81 +105,39 @@ if (Astro.request.method === 'POST') {
       if (memberIds.length === 0) {
         error = 'No valid member IDs provided';
       } else {
-        // Get payment items
-        const paymentItemsResult = await db.prepare(
-          `SELECT * FROM payment_items WHERE active = 1`
-        ).all();
-        const paymentItems = (paymentItemsResult.results || []) as PaymentItem[];
-
-        // Get members
+        // Load fee items and members with subscription fee JOIN (same as renewal pipeline)
+        const feeItems = await loadFeeItems(db);
         const membersResult = await db.prepare(
-          `SELECT * FROM members WHERE id IN (${memberIds.map(() => '?').join(',')})`
+          `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
+           FROM members m
+           LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+           WHERE m.id IN (${memberIds.map(() => '?').join(',')})`
         ).bind(...memberIds).all();
-        const members = (membersResult.results || []) as Member[];
+        const members = (membersResult.results || []) as any[];
 
-        // Generate invoices
+        const generatedInvoiceIds: number[] = [];
+
         for (const member of members) {
-          const eligibility = isMemberEligibleForInvoice(member);
-          if (!eligibility.eligible) {
-            continue;
+          const isDD = member.default_payment_method === 'Clubwise Direct Debit';
+          const isSocial = (member.category || '').toLowerCase() === 'social';
+
+          const result = await generateInvoice(db, member, feeItems, {
+            year: period.year,
+            isDD,
+            isSocial,
+          });
+
+          if (result.success && result.invoiceNumber && result.invoiceNumber !== 'already_exists') {
+            invoicesGenerated++;
+            // Look up the invoice ID for redirect to preview
+            const inv = await db.prepare(
+              `SELECT id FROM invoices WHERE invoice_number = ? LIMIT 1`
+            ).bind(result.invoiceNumber).first<{ id: number }>();
+            if (inv) generatedInvoiceIds.push(inv.id);
           }
-
-          const calculation = calculateInvoiceForMember(member, paymentItems, period.start, period.end);
-          if (!calculation || calculation.items.length === 0) {
-            continue;
-          }
-
-          // Get next sequence number for this member/year
-          const seqResult = await db.prepare(
-            `SELECT COUNT(*) as count FROM invoices
-             WHERE member_id = ? AND invoice_number LIKE ?`
-          ).bind(member.id, `${period.year}/%`).first<{ count: number }>();
-          const sequence = (seqResult?.count || 0) + 1;
-
-          // Generate invoice number
-          const invoiceNumber = generateInvoiceNumber(period.year, member.pin || String(member.id), sequence);
-
-          // Create invoice
-          const invoiceResult = await db.prepare(
-            `INSERT INTO invoices (
-              invoice_number, member_id, invoice_date, period_start, period_end,
-              subtotal, total, status, custom_message, created_by
-            ) VALUES (?, ?, date('now'), ?, ?, ?, ?, 'draft', ?, ?)`
-          ).bind(
-            invoiceNumber,
-            member.id,
-            period.start,
-            period.end,
-            calculation.subtotal,
-            calculation.total,
-            customMessage || null,
-            user?.email || null
-          ).run();
-
-          const invoiceId = invoiceResult.meta.last_row_id;
-
-          // Create invoice items
-          for (const item of calculation.items) {
-            await db.prepare(
-              `INSERT INTO invoice_items (
-                invoice_id, payment_item_id, description, quantity, unit_price, line_total
-              ) VALUES (?, ?, ?, ?, ?, ?)`
-            ).bind(
-              invoiceId,
-              item.paymentItemId,
-              item.description,
-              item.quantity,
-              item.unitPrice,
-              item.lineTotal
-            ).run();
-          }
-
-          invoicesGenerated++;
         }
 
         if (invoicesGenerated > 0) {
-          success = `Successfully generated ${invoicesGenerated} invoice(s)`;
-
           // Log to audit
           await db.prepare(
             `INSERT INTO audit_log (user_email, action, entity_type, details)
@@ -188,8 +146,21 @@ if (Astro.request.method === 'POST') {
             user?.email || 'system',
             JSON.stringify({ count: invoicesGenerated, period: `${period.start} to ${period.end}` })
           ).run();
+
+          // Redirect to preview/send page for non-DD invoices
+          const draftIds = [];
+          for (const invId of generatedInvoiceIds) {
+            const inv = await db.prepare(`SELECT status FROM invoices WHERE id = ?`).bind(invId).first<{ status: string }>();
+            if (inv && inv.status === 'draft') draftIds.push(invId);
+          }
+
+          if (draftIds.length > 0) {
+            return Astro.redirect(`/admin/invoices/preview?ids=${draftIds.join(',')}`);
+          }
+          // DD invoices are already paid — go straight to invoice list
+          success = `Successfully generated ${invoicesGenerated} invoice(s) (marked as paid via Direct Debit)`;
         } else {
-          error = 'No invoices could be generated. Members may already have invoices for this period or lack subscription templates.';
+          error = 'No invoices could be generated. Members may already have invoices for this period or lack a subscription category.';
         }
       }
     }
@@ -238,239 +209,635 @@ allMembers.forEach(member => {
 ---
 
 <AdminLayout title="Generate Invoices">
-  {error && (
-    <div class="alert alert-error">{error}</div>
-  )}
+  <div class="gen-page">
+    {error && (
+      <div class="m3-alert m3-alert-error">{error}</div>
+    )}
 
-  {success && (
-    <div class="alert alert-success">
-      {success}
-      <a href="/admin/invoices?status=draft" style="margin-left: 1rem;">View Unpaid Invoices</a>
-    </div>
-  )}
+    {success && (
+      <div class="m3-alert m3-alert-success">
+        {success}
+        <a href="/admin/invoices?status=draft" class="m3-alert-link">View Unpaid Invoices &rarr;</a>
+      </div>
+    )}
 
-  <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">Invoice Period</h3>
-    </div>
-    <div style="background: #f8f9fa; padding: 1rem; border-radius: 4px;">
-      <p style="margin: 0; font-size: 1.125rem;">
-        <strong>Membership Year:</strong> 1st April {period.year} - 31st March {period.year + 1}
-      </p>
-      <p style="margin: 0.5rem 0 0 0; color: #666; font-size: 0.875rem;">
-        Invoices will be generated for this renewal period.
-      </p>
-    </div>
-  </div>
-
-  <!-- Step 1: Select Members -->
-  <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">Step 1: Select Members</h3>
+    <!-- Period Banner -->
+    <div class="period-banner">
+      <div class="period-icon">📋</div>
+      <div>
+        <div class="period-title">Membership Year: 1st April {period.year} &ndash; 31st March {period.year + 1}</div>
+        <div class="period-sub">Invoices will be generated for this renewal period</div>
+      </div>
     </div>
 
-    <form method="POST">
-      <input type="hidden" name="action" value="search" />
+    <!-- Step 1: Select Members -->
+    <div class="m3-card">
+      <div class="m3-card-header">
+        <span class="step-badge">1</span>
+        <h2>Select Members</h2>
+      </div>
 
-      <div class="form-group">
-        <label class="form-label">Selection Mode</label>
-        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+      <form method="POST">
+        <input type="hidden" name="action" value="search" />
+
+        <div class="mode-chips">
+          <label class="chip">
             <input type="radio" name="selection_mode" value="subscription" checked />
-            By Subscription Type
+            <span>By Subscription</span>
           </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <label class="chip">
             <input type="radio" name="selection_mode" value="egu_category" />
-            By EGU Category
+            <span>By EGU Category</span>
           </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <label class="chip">
             <input type="radio" name="selection_mode" value="search" />
-            Search by Name
+            <span>Search by Name</span>
           </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <label class="chip">
             <input type="radio" name="selection_mode" value="individual" />
-            Specific Member IDs
+            <span>Member IDs</span>
           </label>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <label class="chip">
             <input type="radio" name="selection_mode" value="all" />
-            All Renewable
+            <span>All Renewable</span>
           </label>
         </div>
-      </div>
 
-      <div class="form-row">
-        <div class="form-group" id="subscription-select">
-          <label class="form-label">Subscription Type</label>
-          <select name="subscription_template" class="form-input">
-            <option value="">Select...</option>
-            {subscriptionTypes.map(t => (
-              <option value={t}>{t} ({countByTemplate[t] || 0} members)</option>
-            ))}
-          </select>
-        </div>
+        <div class="filter-row">
+          <div class="filter-field" id="subscription-select">
+            <label class="form-label">Subscription Type</label>
+            <select name="subscription_template" class="form-input">
+              <option value="">Select...</option>
+              {subscriptionTypes.map(t => (
+                <option value={t}>{t} ({countByTemplate[t] || 0})</option>
+              ))}
+            </select>
+          </div>
 
-        <div class="form-group" id="category-select" style="display: none;">
-          <label class="form-label">EGU Category</label>
-          <select name="category" class="form-input">
-            <option value="">Select...</option>
-            {EGU_CATEGORIES.map(c => (
-              <option value={c}>{c} ({countByEguCategory[c] || 0} members)</option>
-            ))}
-          </select>
-        </div>
+          <div class="filter-field" id="category-select" style="display: none;">
+            <label class="form-label">EGU Category</label>
+            <select name="category" class="form-input">
+              <option value="">Select...</option>
+              {EGU_CATEGORIES.map(c => (
+                <option value={c}>{c} ({countByEguCategory[c] || 0})</option>
+              ))}
+            </select>
+          </div>
 
-        <div class="form-group" id="search-input" style="display: none;">
-          <label class="form-label">Search Term</label>
-          <input type="text" name="search_term" class="form-input" placeholder="Name or email..." />
-        </div>
+          <div class="filter-field" id="search-input" style="display: none;">
+            <label class="form-label">Search Term</label>
+            <input type="text" name="search_term" class="form-input" placeholder="Name or email..." />
+          </div>
 
-        <div class="form-group" id="ids-input" style="display: none;">
-          <label class="form-label">Member IDs (comma separated)</label>
-          <input type="text" name="member_ids" class="form-input" placeholder="1, 2, 3..." />
-        </div>
-      </div>
+          <div class="filter-field" id="ids-input" style="display: none;">
+            <label class="form-label">Member IDs (comma separated)</label>
+            <input type="text" name="member_ids" class="form-input" placeholder="1, 2, 3..." />
+          </div>
 
-      <button type="submit" class="btn btn-primary">Find Members</button>
-    </form>
-  </div>
-
-  <!-- Step 2: Preview & Customize -->
-  {selectedMembers.length > 0 && (
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Step 2: Review Selected Members ({selectedMembers.length})</h3>
-      </div>
-
-      <form method="POST" id="generate-form">
-        <input type="hidden" name="action" value="generate" />
-        <input type="hidden" name="selected_member_ids" id="selected-member-ids" value="" />
-
-        <div class="form-group">
-          <label class="form-label">Custom Message (optional)</label>
-          <textarea
-            name="custom_message"
-            class="form-input"
-            rows="3"
-            placeholder="Add a personal message to include in all invoices..."
-          ></textarea>
-        </div>
-
-        <div class="table-container" style="max-height: 400px; overflow-y: auto;">
-          <table>
-            <thead style="position: sticky; top: 0; background: white;">
-              <tr>
-                <th style="width: 40px;">
-                  <input type="checkbox" id="select-all" checked />
-                </th>
-                <th>Member</th>
-                <th>Email</th>
-                <th>Subscription</th>
-                <th>Fees</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {selectedMembers.map((member) => {
-                const eligibility = isMemberEligibleForInvoice(member);
-                const fees = getFeeSummary(member);
-                const calculation = calculateInvoiceForMember(member, paymentItems, period.start, period.end);
-
-                return (
-                  <tr class={!eligibility.eligible ? 'ineligible' : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        class="member-checkbox"
-                        value={member.id}
-                        checked={eligibility.eligible}
-                        disabled={!eligibility.eligible}
-                      />
-                    </td>
-                    <td>
-                      <a href={`/admin/members/${member.id}`} target="_blank">
-                        {member.surname}, {member.first_name}
-                      </a>
-                      <br>
-                      <small style="color: #666;">M{member.pin?.padStart(4, '0')}</small>
-                    </td>
-                    <td style="font-size: 0.875rem;">{member.email || '-'}</td>
-                    <td style="font-size: 0.875rem;">{member.subscription_template || '-'}</td>
-                    <td style="font-size: 0.875rem;">
-                      {fees.length > 0 ? fees.join(', ') : 'Subscription only'}
-                    </td>
-                    <td>
-                      {eligibility.eligible ? (
-                        <span class="badge badge-success">
-                          {calculation ? formatCurrency(calculation.total) : 'Ready'}
-                        </span>
-                      ) : (
-                        <span class="badge badge-danger" title={eligibility.reason}>
-                          {eligibility.reason}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div style="margin-top: 1rem; display: flex; gap: 1rem; align-items: center;">
-          <button type="submit" class="btn btn-primary" id="generate-btn">
-            Generate Invoices
-          </button>
-          <span id="selected-count" style="color: #666;">
-            {selectedMembers.filter(m => isMemberEligibleForInvoice(m).eligible).length} members selected
-          </span>
+          <div class="filter-action">
+            <button type="submit" class="m3-btn m3-btn-filled">Find Members</button>
+          </div>
         </div>
       </form>
     </div>
-  )}
 
-  <!-- Fee Reference -->
-  <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">Fee Reference</h3>
-    </div>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Category</th>
-            <th>Name</th>
-            <th style="text-align: right;">Amount</th>
-            <th>Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          {paymentItems.map((item) => (
+    <!-- Step 2: Review -->
+    {selectedMembers.length > 0 && (
+      <div class="m3-card">
+        <div class="m3-card-header">
+          <span class="step-badge">2</span>
+          <h2>Review Members</h2>
+          <span class="member-count-badge">{selectedMembers.length}</span>
+        </div>
+
+        <form method="POST" id="generate-form">
+          <input type="hidden" name="action" value="generate" />
+          <input type="hidden" name="selected_member_ids" id="selected-member-ids" value="" />
+
+          <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label class="form-label">Custom Message (optional)</label>
+            <textarea
+              name="custom_message"
+              class="form-input"
+              rows="2"
+              placeholder="Add a personal message to include in all invoices..."
+            ></textarea>
+          </div>
+
+          <div class="table-container" style="max-height: 420px; overflow-y: auto; border-radius: 12px; border: 1px solid #e5e7eb;">
+            <table class="m3-table">
+              <thead>
+                <tr>
+                  <th style="width: 40px;">
+                    <input type="checkbox" id="select-all" checked />
+                  </th>
+                  <th>Member</th>
+                  <th>Subscription</th>
+                  <th>Fees</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedMembers.map((member) => {
+                  const eligibility = isMemberEligibleForInvoice(member);
+                  const fees = getFeeSummary(member);
+                  const calculation = calculateInvoiceForMember(member, paymentItems, period.start, period.end);
+
+                  return (
+                    <tr class={!eligibility.eligible ? 'row-ineligible' : ''}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          class="member-checkbox"
+                          value={member.id}
+                          checked={eligibility.eligible}
+                          disabled={!eligibility.eligible}
+                        />
+                      </td>
+                      <td>
+                        <div class="member-cell">
+                          <a href={`/admin/members/${member.id}`} target="_blank" class="member-name">
+                            {member.surname}, {member.first_name}
+                          </a>
+                          <span class="member-meta">M{member.pin?.padStart(4, '0')} {member.email ? `· ${member.email}` : ''}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span class="sub-tag">{member.subscription_template || 'None'}</span>
+                      </td>
+                      <td class="fees-cell">
+                        {fees.length > 0 ? fees.join(', ') : 'Subscription only'}
+                      </td>
+                      <td>
+                        {eligibility.eligible ? (
+                          <span class="amount-badge">
+                            {calculation ? formatCurrency(calculation.total) : 'Ready'}
+                          </span>
+                        ) : (
+                          <span class="badge badge-danger" title={eligibility.reason}>
+                            {eligibility.reason}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="generate-actions">
+            <button type="submit" class="m3-btn m3-btn-filled" id="generate-btn">
+              Generate Invoices
+            </button>
+            <span id="selected-count" class="selected-count">
+              {selectedMembers.filter(m => isMemberEligibleForInvoice(m).eligible).length} members selected
+            </span>
+          </div>
+        </form>
+      </div>
+    )}
+
+    <!-- Fee Reference (collapsible) -->
+    <details class="m3-card fee-reference">
+      <summary class="fee-summary">
+        <h2>Fee Reference</h2>
+        <span class="expand-hint">Show fee schedule</span>
+      </summary>
+      <div class="table-container" style="border-radius: 12px; border: 1px solid #e5e7eb; margin-top: 1rem;">
+        <table class="m3-table">
+          <thead>
             <tr>
-              <td>
-                <span class={`badge ${item.category === 'Subscription' ? 'badge-info' : 'badge-warning'}`}>
-                  {item.category}
-                </span>
-              </td>
-              <td>{item.name}</td>
-              <td style="text-align: right; font-weight: 500;">
-                {formatCurrency(item.fee)}
-              </td>
-              <td style="font-size: 0.875rem; color: #666;">{item.description || '-'}</td>
+              <th>Category</th>
+              <th>Name</th>
+              <th style="text-align: right;">Amount</th>
+              <th>Description</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    <p style="margin: 1rem 0 0 0; font-size: 0.875rem; color: #666;">
-      <a href="/admin/invoices/settings">Manage payment items and fees</a>
-    </p>
+          </thead>
+          <tbody>
+            {paymentItems.map((item) => (
+              <tr>
+                <td>
+                  <span class={`cat-badge ${item.category === 'Subscription' ? 'cat-sub' : 'cat-fee'}`}>
+                    {item.category}
+                  </span>
+                </td>
+                <td class="fee-name">{item.name}</td>
+                <td style="text-align: right;" class="fee-amount">
+                  {formatCurrency(item.fee)}
+                </td>
+                <td class="fee-desc">{item.description || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="fee-link">
+        <a href="/admin/invoices/settings">Manage payment items and fees</a>
+      </p>
+    </details>
   </div>
 </AdminLayout>
 
 <style>
-  .ineligible {
-    opacity: 0.6;
-    background: #f8f8f8;
+  .gen-page {
+    max-width: 1100px;
+  }
+
+  /* Alerts */
+  .m3-alert {
+    padding: 1rem 1.25rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .m3-alert-error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+
+  .m3-alert-success {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+
+  .m3-alert-link {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    margin-left: auto;
+  }
+
+  .m3-alert-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Period Banner */
+  .period-banner {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: white;
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .period-icon {
+    font-size: 1.75rem;
+  }
+
+  .period-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+
+  .period-sub {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 0.15rem;
+  }
+
+  /* M3 Cards */
+  .m3-card {
+    background: white;
+    border-radius: 16px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .m3-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .m3-card-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .step-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #1e5631;
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .member-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 0.5rem;
+    border-radius: 12px;
+    background: #e8f5e9;
+    color: #1e5631;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  /* Chip Selectors */
+  .mode-chips {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+  }
+
+  .chip {
+    cursor: pointer;
+  }
+
+  .chip input {
+    display: none;
+  }
+
+  .chip span {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 100px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    background: #f0f0f0;
+    color: #555;
+    border: 1px solid transparent;
+    transition: all 0.2s;
+  }
+
+  .chip input:checked + span {
+    background: #e8f5e9;
+    color: #1e5631;
+    border-color: #1e5631;
+    font-weight: 600;
+  }
+
+  .chip:hover span {
+    background: #e8e8e8;
+  }
+
+  .chip input:checked + span:hover {
+    background: #dcfce7;
+  }
+
+  /* Filter Row */
+  .filter-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .filter-field {
+    flex: 1;
+    min-width: 220px;
+  }
+
+  .filter-action {
+    flex-shrink: 0;
+  }
+
+  /* M3 Table */
+  .m3-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .m3-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .m3-table th {
+    background: #f8faf8;
+    padding: 0.7rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border-bottom: 2px solid #e5e7eb;
+  }
+
+  .m3-table td {
+    padding: 0.75rem;
+    font-size: 0.875rem;
+    border-bottom: 1px solid #f0f0f0;
+    vertical-align: middle;
+  }
+
+  .m3-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .m3-table tr:hover {
+    background: #f9faf9;
+  }
+
+  /* Member cell */
+  .member-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .member-name {
+    color: #1e5631;
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .member-name:hover {
+    text-decoration: underline;
+  }
+
+  .member-meta {
+    font-size: 0.75rem;
+    color: #888;
+  }
+
+  .sub-tag {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    background: #f0f0f0;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #555;
+  }
+
+  .fees-cell {
+    font-size: 0.8rem;
+    color: #666;
+  }
+
+  .amount-badge {
+    display: inline-block;
+    padding: 0.25rem 0.65rem;
+    background: #dcfce7;
+    color: #166534;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .row-ineligible {
+    opacity: 0.5;
+  }
+
+  .row-ineligible .member-name {
+    color: #888;
+  }
+
+  /* Generate Actions */
+  .generate-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #f0f0f0;
+  }
+
+  .selected-count {
+    font-size: 0.875rem;
+    color: #666;
+  }
+
+  /* Fee Reference */
+  .fee-reference {
+    cursor: default;
+  }
+
+  .fee-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .fee-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .fee-summary h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .expand-hint {
+    font-size: 0.8rem;
+    color: #999;
+    margin-left: auto;
+  }
+
+  details[open] .expand-hint {
+    display: none;
+  }
+
+  .cat-badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .cat-sub {
+    background: #e0f2fe;
+    color: #0c5460;
+  }
+
+  .cat-fee {
+    background: #fef3c7;
+    color: #856404;
+  }
+
+  .fee-name {
+    font-weight: 500;
+  }
+
+  .fee-amount {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #333;
+  }
+
+  .fee-desc {
+    font-size: 0.8rem;
+    color: #888;
+  }
+
+  .fee-link {
+    margin: 1rem 0 0 0;
+    font-size: 0.85rem;
+  }
+
+  .fee-link a {
+    color: #1e5631;
+    text-decoration: none;
+  }
+
+  .fee-link a:hover {
+    text-decoration: underline;
+  }
+
+  /* M3 Buttons */
+  .m3-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.6rem 1.5rem;
+    border-radius: 100px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+
+  .m3-btn-filled {
+    background: #1e5631;
+    color: white;
+  }
+
+  .m3-btn-filled:hover {
+    background: #164424;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+
+  /* Form overrides for this page */
+  .form-input {
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+  }
+
+  textarea.form-input {
+    border-radius: 12px;
   }
 </style>
 
