@@ -115,11 +115,11 @@ export async function generateInvoiceForMember(
   db: any,
   member: any,
   feeItems: Record<string, { id: number; fee: number }>,
-  options: { year: number; isDD: boolean; isSocial: boolean }
+  options: { year: number; isDD: boolean; isSocial: boolean; periodStart?: string; periodEnd?: string }
 ): Promise<{ success: boolean; invoiceNumber?: string; error?: string }> {
   const { year, isDD, isSocial } = options;
-  const periodStart = `${year}-04-01`;
-  const periodEnd = `${year + 1}-03-31`;
+  const periodStart = options.periodStart || `${year}-04-01`;
+  const periodEnd = options.periodEnd || `${year + 1}-03-31`;
 
   // Check for existing non-cancelled invoice
   const existing = await db.prepare(

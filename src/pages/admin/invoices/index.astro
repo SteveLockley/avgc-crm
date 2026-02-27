@@ -69,7 +69,11 @@ if (search) {
   params.push(searchTerm, searchTerm, searchTerm);
 }
 
-if (status) {
+if (status === 'unpaid') {
+  whereClause += ` AND i.status IN ('draft', 'sent') AND i.total > 0`;
+} else if (status === 'free') {
+  whereClause += ` AND i.total = 0`;
+} else if (status) {
   whereClause += ' AND i.status = ?';
   params.push(status);
 }
@@ -109,15 +113,20 @@ const totalsResult = await db.prepare(
    WHERE ${whereClause}`
 ).bind(...params).first<{ total: number }>();
 
-// Get status counts
+// Get status counts (unpaid = draft/sent with total > 0, free = total = 0)
 const statusCounts = await db.prepare(
-  `SELECT status, COUNT(*) as count FROM invoices GROUP BY status`
-).all();
+  `SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN status IN ('draft', 'sent') AND total > 0 THEN 1 ELSE 0 END) as unpaid,
+    SUM(CASE WHEN status = 'paid' AND total > 0 THEN 1 ELSE 0 END) as paid,
+    SUM(CASE WHEN total = 0 THEN 1 ELSE 0 END) as free
+   FROM invoices`
+).first<{ total: number; unpaid: number; paid: number; free: number }>();
 
-const statusCountMap: Record<string, number> = {};
-statusCounts.results?.forEach((row: any) => {
-  statusCountMap[row.status] = row.count;
-});
+const statTotal = statusCounts?.total || 0;
+const statUnpaid = statusCounts?.unpaid || 0;
+const statPaid = statusCounts?.paid || 0;
+const statFree = statusCounts?.free || 0;
 
 // Get available years from invoices
 const years = await db.prepare(
@@ -157,20 +166,18 @@ function buildQueryString(pageNum: number): string {
       <p class="subtitle">Manage membership invoices and billing</p>
     </div>
     <div class="header-actions">
-      <div class="dropdown" id="fee-dropdown">
-        <button type="button" class="btn btn-primary" onclick="toggleFeeDropdown()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          Raise Fee Invoice
-        </button>
-        <div class="dropdown-menu" id="fee-dropdown-menu">
-          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('locker')">Locker Fees</button>
-          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('egu')">EGU Fees</button>
-          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('county')">County Fees</button>
-          <button type="button" class="dropdown-item" onclick="generateFeeInvoices('egu_county')">EGU + County Fees</button>
-        </div>
-      </div>
+      <a href="/admin/invoices/generate" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Generate Invoices
+      </a>
+      <a href="/admin/invoices/generate?selection=winter" class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+          <path d="M12 2L12 22M17 7L12 2 7 7M2 12H22M7 17L12 22 17 17"/>
+        </svg>
+        Winter Members
+      </a>
       <a href="/admin/invoices/settings" class="btn btn-secondary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
@@ -211,12 +218,12 @@ function buildQueryString(pageNum: number): string {
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{totalCount}</span>
+        <span class="stat-value">{statTotal}</span>
         <span class="stat-label">Total</span>
       </div>
     </a>
 
-    <a href="/admin/invoices?status=draft" class="stat-card stat-draft">
+    <a href="/admin/invoices?status=unpaid" class="stat-card stat-draft">
       <div class="stat-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -224,7 +231,7 @@ function buildQueryString(pageNum: number): string {
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{statusCountMap['draft'] || 0}</span>
+        <span class="stat-value">{statUnpaid}</span>
         <span class="stat-label">Unpaid</span>
       </div>
     </a>
@@ -237,22 +244,22 @@ function buildQueryString(pageNum: number): string {
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{statusCountMap['paid'] || 0}</span>
+        <span class="stat-value">{statPaid}</span>
         <span class="stat-label">Paid</span>
       </div>
     </a>
 
-    <a href="/admin/invoices?status=cancelled" class="stat-card stat-cancelled">
+    <a href="/admin/invoices?status=free" class="stat-card stat-free">
       <div class="stat-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/>
-          <line x1="15" y1="9" x2="9" y2="15"/>
-          <line x1="9" y1="9" x2="15" y2="15"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{statusCountMap['cancelled'] || 0}</span>
-        <span class="stat-label">Cancelled</span>
+        <span class="stat-value">{statFree}</span>
+        <span class="stat-label">Free</span>
       </div>
     </a>
   </div>
@@ -276,9 +283,9 @@ function buildQueryString(pageNum: number): string {
           <label class="filter-label">Status</label>
           <select name="status" class="filter-select">
             <option value="">All Statuses</option>
-            <option value="draft" selected={status === 'draft'}>Unpaid</option>
+            <option value="unpaid" selected={status === 'unpaid'}>Unpaid</option>
             <option value="paid" selected={status === 'paid'}>Paid</option>
-            <option value="cancelled" selected={status === 'cancelled'}>Cancelled</option>
+            <option value="free" selected={status === 'free'}>Free</option>
           </select>
         </div>
 
@@ -679,7 +686,7 @@ function buildQueryString(pageNum: number): string {
 
     .stat-draft .stat-icon { background: linear-gradient(135deg, #f57c00 0%, #ff9800 100%); }
     .stat-paid .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
-    .stat-cancelled .stat-icon { background: linear-gradient(135deg, #c62828 0%, #e53935 100%); }
+    .stat-free .stat-icon { background: linear-gradient(135deg, #6a1b9a 0%, #ab47bc 100%); }
 
     .stat-content {
       display: flex;

@@ -7,8 +7,26 @@ import { generateInvoiceForMember as generateInvoice, loadFeeItems } from '../..
 const db = Astro.locals.runtime.env.DB;
 const user = Astro.locals.user;
 
-// Get renewal period
-const period = getRenewalPeriod();
+// Detect winter mode
+const selection = Astro.url.searchParams.get('selection');
+const isWinterMode = selection === 'winter';
+
+// Get renewal period (winter = Oct-Mar, standard = Apr-Mar)
+function getWinterRenewalPeriod(): { start: string; end: string; year: number } {
+  const now = new Date();
+  const month = now.getMonth(); // 0-indexed
+  const year = now.getFullYear();
+  // If before October, winter period is current year Oct to next Mar
+  // If October or after, winter period is next year Oct to year+1 Mar
+  const startYear = month < 9 ? year : year + 1;
+  return {
+    start: `${startYear}-10-01`,
+    end: `${startYear + 1}-03-31`,
+    year: startYear
+  };
+}
+
+const period = isWinterMode ? getWinterRenewalPeriod() : getRenewalPeriod();
 
 let error = '';
 let success = '';
@@ -30,6 +48,23 @@ if (queryMemberId && Astro.request.method === 'GET') {
     if (selectedMembers.length === 0) {
       error = 'Member not found or already has an invoice for this period.';
     }
+  }
+}
+
+// Auto-load winter members when selection=winter
+if (isWinterMode && Astro.request.method === 'GET' && !queryMemberId) {
+  const result = await db.prepare(
+    `SELECT * FROM members
+     WHERE category = 'Winter'
+     AND id NOT IN (
+       SELECT member_id FROM invoices
+       WHERE period_start = ? AND period_end = ? AND status != 'cancelled'
+     )
+     ORDER BY surname, first_name`
+  ).bind(period.start, period.end).all();
+  selectedMembers = (result.results || []) as Member[];
+  if (selectedMembers.length === 0) {
+    error = 'All Winter members already have invoices for this period.';
   }
 }
 
@@ -121,10 +156,16 @@ if (Astro.request.method === 'POST') {
           const isDD = member.default_payment_method === 'Clubwise Direct Debit';
           const isSocial = (member.category || '').toLowerCase() === 'social';
 
+          const isWinter = (member.category || '').toLowerCase() === 'winter';
+          const memberPeriodStart = isWinter ? period.start : undefined;
+          const memberPeriodEnd = isWinter ? period.end : undefined;
+
           const result = await generateInvoice(db, member, feeItems, {
             year: period.year,
             isDD,
             isSocial,
+            periodStart: memberPeriodStart,
+            periodEnd: memberPeriodEnd,
           });
 
           if (result.success && result.invoiceNumber && result.invoiceNumber !== 'already_exists') {
@@ -147,18 +188,11 @@ if (Astro.request.method === 'POST') {
             JSON.stringify({ count: invoicesGenerated, period: `${period.start} to ${period.end}` })
           ).run();
 
-          // Redirect to preview/send page for non-DD invoices
-          const draftIds = [];
-          for (const invId of generatedInvoiceIds) {
-            const inv = await db.prepare(`SELECT status FROM invoices WHERE id = ?`).bind(invId).first<{ status: string }>();
-            if (inv && inv.status === 'draft') draftIds.push(invId);
+          // Redirect to preview/send page for all generated invoices (including DD)
+          if (generatedInvoiceIds.length > 0) {
+            return Astro.redirect(`/admin/invoices/preview?ids=${generatedInvoiceIds.join(',')}`);
           }
-
-          if (draftIds.length > 0) {
-            return Astro.redirect(`/admin/invoices/preview?ids=${draftIds.join(',')}`);
-          }
-          // DD invoices are already paid — go straight to invoice list
-          success = `Successfully generated ${invoicesGenerated} invoice(s) (marked as paid via Direct Debit)`;
+          success = `Successfully generated ${invoicesGenerated} invoice(s).`;
         } else {
           error = 'No invoices could be generated. Members may already have invoices for this period or lack a subscription category.';
         }
@@ -167,8 +201,8 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// Detect direct-link mode (single member pre-loaded from profile)
-const isDirectLink = !!queryMemberId && selectedMembers.length > 0;
+// Detect direct-link mode (single member from profile, or winter pre-selection)
+const isDirectLink = (!!queryMemberId || isWinterMode) && selectedMembers.length > 0;
 
 // Get payment items for fee preview
 const paymentItemsResult = await db.prepare(
@@ -226,10 +260,20 @@ allMembers.forEach(member => {
 
     <!-- Period Banner -->
     <div class="period-banner">
-      <div class="period-icon">📋</div>
+      <div class="period-icon">{isWinterMode ? '❄️' : '📋'}</div>
       <div>
-        <div class="period-title">Membership Year: 1st April {period.year} &ndash; 31st March {period.year + 1}</div>
-        <div class="period-sub">Invoices will be generated for this renewal period</div>
+        <div class="period-title">
+          {isWinterMode
+            ? `Winter Season: 1st October ${period.year} – 31st March ${period.year + 1}`
+            : `Membership Year: 1st April ${period.year} – 31st March ${period.year + 1}`
+          }
+        </div>
+        <div class="period-sub">
+          {isWinterMode
+            ? 'Invoices will be generated for Winter membership renewals'
+            : 'Invoices will be generated for this renewal period'
+          }
+        </div>
       </div>
     </div>
 
@@ -311,7 +355,7 @@ allMembers.forEach(member => {
       <div class="m3-card">
         <div class="m3-card-header">
           {!isDirectLink && <span class="step-badge">2</span>}
-          <h2>Review {isDirectLink ? 'Invoice' : 'Members'}</h2>
+          <h2>Review {isWinterMode ? 'Winter Members' : isDirectLink ? 'Invoice' : 'Members'}</h2>
           <span class="member-count-badge">{selectedMembers.length}</span>
         </div>
 
