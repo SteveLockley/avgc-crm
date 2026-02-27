@@ -14,6 +14,24 @@ let success = '';
 let selectedMembers: Member[] = [];
 let invoicesGenerated = 0;
 
+// Auto-load member from query param (deep-link from member profile)
+const queryMemberId = Astro.url.searchParams.get('member_id');
+if (queryMemberId && Astro.request.method === 'GET') {
+  const memberId = parseInt(queryMemberId);
+  if (!isNaN(memberId)) {
+    const result = await db.prepare(
+      `SELECT * FROM members WHERE id = ? AND id NOT IN (
+        SELECT member_id FROM invoices
+        WHERE period_start = ? AND period_end = ? AND status != 'cancelled'
+      )`
+    ).bind(memberId, period.start, period.end).all();
+    selectedMembers = (result.results || []) as Member[];
+    if (selectedMembers.length === 0) {
+      error = 'Member not found or already has an invoice for this period.';
+    }
+  }
+}
+
 // Handle form submission
 if (Astro.request.method === 'POST') {
   const formData = await Astro.request.formData();

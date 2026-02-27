@@ -54,6 +54,7 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
         </div>
       </div>
       <div class="header-actions">
+        <a href={`/admin/invoices/generate?member_id=${id}`} class="btn btn-secondary">Generate Invoice</a>
         <a href={`/admin/members/email?member_id=${id}`} class="btn btn-secondary">Email</a>
         <a href={`/admin/members/${id}/edit`} class="btn btn-primary">Edit</a>
       </div>
