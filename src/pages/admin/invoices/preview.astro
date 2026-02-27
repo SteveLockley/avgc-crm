@@ -253,116 +253,97 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
 ---
 
 <AdminLayout title="Preview & Send Invoices">
-  {error && (
-    <div class="alert alert-error">{error}</div>
-  )}
+  <div class="preview-page">
+    {error && (
+      <div class="m3-alert m3-alert-error">{error}</div>
+    )}
 
-  {success && (
-    <div class="alert alert-success">
-      {success}
-      <a href="/admin/invoices?status=sent" style="margin-left: 1rem;">View Sent Invoices</a>
-    </div>
-  )}
-
-  {invoices.some(i => i.revised) && (
-    <div class="alert alert-success">
-      <strong>Invoices revised:</strong> {invoices.filter(i => i.revised).length} invoice(s) were recalculated with updated fees.
-    </div>
-  )}
-
-  <!-- Header -->
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-    <div>
-      <a href="/admin/invoices" class="btn btn-secondary">&larr; Back to Invoices</a>
-    </div>
-    <div>
-      <span class="badge badge-info" style="font-size: 1rem; padding: 0.5rem 1rem;">
-        {invoices.length} Invoice(s) Ready to Send
-      </span>
-    </div>
-  </div>
-
-  {!emailConfigured && (
-    <div class="alert alert-error">
-      <strong>Email Not Configured:</strong> To send invoices via email, you need to configure Azure AD credentials
-      (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) in Cloudflare.
-      <a href="/admin/invoices/settings">View setup instructions</a>
-    </div>
-  )}
-
-  <div style="display: grid; grid-template-columns: 300px 1fr; gap: 1.5rem;">
-    <!-- Sidebar: Invoice List -->
-    <div>
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Invoices to Send</h3>
-        </div>
-
-        <div style="max-height: 400px; overflow-y: auto;">
-          {invoices.map((data, index) => (
-            <a
-              href={`?ids=${idsParam}&preview=${index}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`}
-              style={`
-                display: block;
-                padding: 0.75rem;
-                border-bottom: 1px solid #eee;
-                text-decoration: none;
-                color: inherit;
-                background: ${index === previewIndex ? '#f0f7f0' : 'transparent'};
-              `}
-            >
-              <div style="font-weight: 500;">{getFullName(data.member)}</div>
-              <div style="font-size: 0.875rem; color: #666;">
-                {data.invoice.invoice_number}
-              </div>
-              <div style="font-size: 0.875rem;">
-                {data.member.email ? (
-                  <span style="color: #28a745;">{data.member.email}</span>
-                ) : (
-                  <span style="color: #dc3545;">No email</span>
-                )}
-              </div>
-              <div style="font-size: 0.875rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
-                {formatCurrency(data.invoice.total)}
-                {data.revised && <span style="font-size: 0.7rem; background: #fff3cd; color: #856404; padding: 0.125rem 0.375rem; border-radius: 3px;">Revised</span>}
-              </div>
-            </a>
-          ))}
-        </div>
+    {success && (
+      <div class="m3-alert m3-alert-success">
+        {success}
+        <a href="/admin/invoices?status=sent" class="m3-alert-link">View Sent Invoices &rarr;</a>
       </div>
+    )}
 
-      <!-- Custom Message -->
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Custom Message</h3>
+    {invoices.some(i => i.revised) && (
+      <div class="m3-alert m3-alert-success">
+        <strong>Invoices revised:</strong> {invoices.filter(i => i.revised).length} invoice(s) were recalculated with updated fees.
+      </div>
+    )}
+
+    <!-- Header Banner -->
+    <div class="header-banner">
+      <a href="/admin/invoices" class="back-link">&larr; Back to Invoices</a>
+      <span class="invoice-count-badge">{invoices.length} Invoice{invoices.length !== 1 ? 's' : ''} Ready to Send</span>
+    </div>
+
+    {!emailConfigured && (
+      <div class="m3-alert m3-alert-error">
+        <strong>Email Not Configured:</strong> Configure Azure AD credentials to send invoices.
+        <a href="/admin/invoices/settings" class="m3-alert-link">Setup &rarr;</a>
+      </div>
+    )}
+
+    <div class="preview-grid">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <!-- Invoice List -->
+        <div class="m3-card">
+          <div class="m3-card-header">
+            <h2>Invoices</h2>
+            <span class="member-count-badge">{invoices.length}</span>
+          </div>
+
+          <div class="invoice-list">
+            {invoices.map((data, index) => (
+              <a
+                href={`?ids=${idsParam}&preview=${index}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`}
+                class={`invoice-list-item ${index === previewIndex ? 'active' : ''}`}
+              >
+                <div class="invoice-list-name">{getFullName(data.member)}</div>
+                <div class="invoice-list-meta">{data.invoice.invoice_number}</div>
+                <div class="invoice-list-email">
+                  {data.member.email ? (
+                    <span class="has-email">{data.member.email}</span>
+                  ) : (
+                    <span class="no-email">No email</span>
+                  )}
+                </div>
+                <div class="invoice-list-amount">
+                  {formatCurrency(data.invoice.total)}
+                  {data.revised && <span class="revised-badge">Revised</span>}
+                </div>
+              </a>
+            ))}
+          </div>
         </div>
-        <div style="font-size: 0.8125rem; color: #666; margin-bottom: 0.5rem;">
-          Optional text shown at the top of the invoice email.
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
+
+        <!-- Custom Message -->
+        <div class="m3-card">
+          <div class="m3-card-header">
+            <h2>Custom Message</h2>
+          </div>
+          <p class="card-hint">Optional text shown at the top of the invoice email.</p>
           <textarea
             id="custom-message"
             class="form-input"
             rows="3"
             placeholder="e.g. Your subscription has been updated..."
-            style="flex: 1; font-size: 0.85rem;"
           >{customMessage}</textarea>
-        </div>
-        <button id="apply-message-btn" class="btn btn-secondary" style="width: 100%; margin-top: 0.5rem;">
-          Update Preview
-        </button>
-      </div>
-
-      <!-- Actions -->
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Actions</h3>
+          <button id="apply-message-btn" class="m3-btn m3-btn-tonal" style="width: 100%; margin-top: 0.75rem;">
+            Update Preview
+          </button>
         </div>
 
-        <form method="POST" style="margin-bottom: 1rem;">
-          <input type="hidden" name="action" value="send_test" />
-          <div class="form-group">
-            <label class="form-label">Send Test Email To</label>
+        <!-- Actions -->
+        <div class="m3-card">
+          <div class="m3-card-header">
+            <h2>Send</h2>
+          </div>
+
+          <form method="POST" class="action-form">
+            <input type="hidden" name="action" value="send_test" />
+            <label class="form-label">Test Email Address</label>
             <input
               type="email"
               name="test_email"
@@ -370,100 +351,95 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
               value={user?.email || ''}
               placeholder="your@email.com"
             />
+            <button type="submit" class="m3-btn m3-btn-tonal" style="width: 100%; margin-top: 0.5rem;" disabled={!emailConfigured}>
+              Send Test Email
+            </button>
+          </form>
+
+          <div class="action-divider"></div>
+
+          <form method="POST" id="send-all-form" data-count={invoices.length}>
+            <input type="hidden" name="action" value="send_all" />
+            <button
+              type="submit"
+              class="m3-btn m3-btn-filled"
+              style="width: 100%;"
+              disabled={!emailConfigured}
+            >
+              Send {invoices.length > 1 ? `All ${invoices.length} Invoices` : 'Invoice'}
+            </button>
+          </form>
+
+          {!emailConfigured && (
+            <p class="config-warning">Email sending is disabled. Configure Azure AD credentials to enable.</p>
+          )}
+        </div>
+
+        <!-- Summary -->
+        <div class="m3-card">
+          <div class="m3-card-header">
+            <h2>Summary</h2>
           </div>
-          <button type="submit" class="btn btn-secondary" style="width: 100%;" disabled={!emailConfigured}>
-            Send Test (from shared mailbox)
-          </button>
-        </form>
-
-        <form method="POST" style="margin-bottom: 1rem;">
-          <input type="hidden" name="action" value="send_test_direct" />
-          <input type="hidden" name="test_email" value={user?.email || ''} />
-          <button type="submit" class="btn btn-secondary" style="width: 100%; font-size: 0.8rem;" disabled={!emailConfigured}>
-            Test Direct (from service account)
-          </button>
-          <p style="margin: 0.25rem 0 0; font-size: 0.75rem; color: #666;">
-            Bypasses shared mailbox - for diagnostics
-          </p>
-        </form>
-
-        <form method="POST" id="send-all-form" data-count={invoices.length}>
-          <input type="hidden" name="action" value="send_all" />
-          <button
-            type="submit"
-            class="btn btn-primary"
-            style="width: 100%;"
-            disabled={!emailConfigured}
-          >
-            Send All {invoices.length} Invoice(s)
-          </button>
-        </form>
-
-        {!emailConfigured && (
-          <p style="margin: 1rem 0 0 0; font-size: 0.875rem; color: #dc3545;">
-            Email sending is disabled. Configure Azure AD credentials to enable.
-          </p>
-        )}
-      </div>
-
-      <!-- Summary -->
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Summary</h3>
-        </div>
-        <div style="font-size: 0.875rem;">
-          <p style="margin: 0 0 0.5rem 0;">
-            <strong>Total Invoices:</strong> {invoices.length}
-          </p>
-          <p style="margin: 0 0 0.5rem 0;">
-            <strong>With Email:</strong> {invoices.filter(i => i.member.email && isValidEmail(i.member.email)).length}
-          </p>
-          <p style="margin: 0 0 0.5rem 0;">
-            <strong>Without Email:</strong> {invoices.filter(i => !i.member.email || !isValidEmail(i.member.email)).length}
-          </p>
-          <p style="margin: 0; font-weight: 600;">
-            <strong>Total Value:</strong> {formatCurrency(invoices.reduce((sum, i) => sum + i.invoice.total, 0))}
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Main: Email Preview -->
-    <div>
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Email Preview</h3>
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
-            {previewIndex > 0 && (
-              <a href={`?ids=${idsParam}&preview=${previewIndex - 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="btn btn-secondary btn-sm">
-                &larr; Previous
-              </a>
-            )}
-            <span style="color: #666; font-size: 0.875rem;">
-              {previewIndex + 1} of {invoices.length}
-            </span>
-            {previewIndex < invoices.length - 1 && (
-              <a href={`?ids=${idsParam}&preview=${previewIndex + 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="btn btn-secondary btn-sm">
-                Next &rarr;
-              </a>
-            )}
+          <div class="summary-grid">
+            <div class="summary-row">
+              <span>Total Invoices</span>
+              <span class="summary-value">{invoices.length}</span>
+            </div>
+            <div class="summary-row">
+              <span>With Email</span>
+              <span class="summary-value">{invoices.filter(i => i.member.email && isValidEmail(i.member.email)).length}</span>
+            </div>
+            <div class="summary-row">
+              <span>Without Email</span>
+              <span class="summary-value">{invoices.filter(i => !i.member.email || !isValidEmail(i.member.email)).length}</span>
+            </div>
+            <div class="summary-row summary-total">
+              <span>Total Value</span>
+              <span class="summary-value">{formatCurrency(invoices.reduce((sum, i) => sum + i.invoice.total, 0))}</span>
+            </div>
           </div>
         </div>
+      </div>
 
-        <div style="margin-bottom: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
-          <p style="margin: 0 0 0.25rem 0; font-size: 0.875rem;">
-            <strong>To:</strong> {currentPreview.member.email || 'No email address'}
-          </p>
-          <p style="margin: 0; font-size: 0.875rem;">
-            <strong>Subject:</strong> {currentPreview.emailSubject}
-          </p>
-        </div>
+      <!-- Main: Email Preview -->
+      <div class="preview-main">
+        <div class="m3-card">
+          <div class="m3-card-header">
+            <h2>Email Preview</h2>
+            {invoices.length > 1 && (
+              <div class="preview-nav">
+                {previewIndex > 0 && (
+                  <a href={`?ids=${idsParam}&preview=${previewIndex - 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="m3-btn m3-btn-tonal m3-btn-sm">
+                    &larr; Prev
+                  </a>
+                )}
+                <span class="preview-counter">{previewIndex + 1} of {invoices.length}</span>
+                {previewIndex < invoices.length - 1 && (
+                  <a href={`?ids=${idsParam}&preview=${previewIndex + 1}${customMessage ? `&message=${encodeURIComponent(customMessage)}` : ''}`} class="m3-btn m3-btn-tonal m3-btn-sm">
+                    Next &rarr;
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
 
-        <div style="border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">
-          <iframe
-            style="width: 100%; height: 700px; border: none;"
-            srcdoc={currentPreview.emailHtml}
-          ></iframe>
+          <div class="email-meta">
+            <div class="email-meta-row">
+              <span class="email-meta-label">To</span>
+              <span>{currentPreview.member.email || 'No email address'}</span>
+            </div>
+            <div class="email-meta-row">
+              <span class="email-meta-label">Subject</span>
+              <span>{currentPreview.emailSubject}</span>
+            </div>
+          </div>
+
+          <div class="email-frame-wrapper">
+            <iframe
+              class="email-frame"
+              srcdoc={currentPreview.emailHtml}
+            ></iframe>
+          </div>
         </div>
       </div>
     </div>
@@ -501,3 +477,379 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
     });
   </script>
 </AdminLayout>
+
+<style>
+  .preview-page {
+    max-width: 1400px;
+  }
+
+  /* Alerts */
+  .m3-alert {
+    padding: 1rem 1.25rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .m3-alert-error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+
+  .m3-alert-success {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+
+  .m3-alert-link {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    margin-left: auto;
+  }
+
+  .m3-alert-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Header Banner */
+  .header-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: white;
+    border-radius: 16px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .back-link {
+    color: #1e5631;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .back-link:hover {
+    text-decoration: underline;
+  }
+
+  .invoice-count-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 1rem;
+    background: #e8f5e9;
+    color: #1e5631;
+    border-radius: 100px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  /* Grid Layout */
+  .preview-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+
+  @media (max-width: 900px) {
+    .preview-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* M3 Cards */
+  .m3-card {
+    background: white;
+    border-radius: 16px;
+    padding: 1.25rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .m3-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .m3-card-header h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .member-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 0.5rem;
+    border-radius: 12px;
+    background: #e8f5e9;
+    color: #1e5631;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  /* Invoice List */
+  .invoice-list {
+    max-height: 380px;
+    overflow-y: auto;
+    margin: -0.25rem -1.25rem -1.25rem;
+    border-radius: 0 0 16px 16px;
+  }
+
+  .invoice-list-item {
+    display: block;
+    padding: 0.75rem 1.25rem;
+    text-decoration: none;
+    color: inherit;
+    border-top: 1px solid #f0f0f0;
+    transition: background 0.15s;
+  }
+
+  .invoice-list-item:first-child {
+    border-top: none;
+  }
+
+  .invoice-list-item:hover {
+    background: #f9faf9;
+  }
+
+  .invoice-list-item.active {
+    background: #e8f5e9;
+  }
+
+  .invoice-list-item:last-child {
+    border-radius: 0 0 16px 16px;
+  }
+
+  .invoice-list-name {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #1a1a1a;
+  }
+
+  .invoice-list-meta {
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 0.1rem;
+  }
+
+  .invoice-list-email {
+    font-size: 0.8rem;
+    margin-top: 0.1rem;
+  }
+
+  .has-email {
+    color: #1e5631;
+  }
+
+  .no-email {
+    color: #dc3545;
+  }
+
+  .invoice-list-amount {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .revised-badge {
+    font-size: 0.7rem;
+    font-weight: 500;
+    background: #fff3cd;
+    color: #856404;
+    padding: 0.1rem 0.4rem;
+    border-radius: 6px;
+  }
+
+  /* Card Hint */
+  .card-hint {
+    font-size: 0.8rem;
+    color: #888;
+    margin: -0.5rem 0 0.75rem;
+  }
+
+  /* Actions */
+  .action-form {
+    margin-bottom: 0;
+  }
+
+  .action-divider {
+    height: 1px;
+    background: #f0f0f0;
+    margin: 1rem 0;
+  }
+
+  .config-warning {
+    margin: 0.75rem 0 0 0;
+    font-size: 0.8rem;
+    color: #dc3545;
+  }
+
+  /* Summary */
+  .summary-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    color: #666;
+  }
+
+  .summary-value {
+    font-weight: 500;
+    color: #333;
+  }
+
+  .summary-total {
+    padding-top: 0.5rem;
+    border-top: 1px solid #f0f0f0;
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+
+  .summary-total .summary-value {
+    color: #1e5631;
+    font-weight: 700;
+  }
+
+  /* Preview Nav */
+  .preview-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
+
+  .preview-counter {
+    font-size: 0.85rem;
+    color: #888;
+  }
+
+  /* Email Meta */
+  .email-meta {
+    background: #f8faf8;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .email-meta-row {
+    font-size: 0.875rem;
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .email-meta-label {
+    font-weight: 600;
+    color: #555;
+    min-width: 55px;
+  }
+
+  /* Email Frame */
+  .email-frame-wrapper {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .email-frame {
+    width: 100%;
+    height: 700px;
+    border: none;
+    display: block;
+  }
+
+  /* M3 Buttons */
+  .m3-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.6rem 1.25rem;
+    border-radius: 100px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+
+  .m3-btn-filled {
+    background: #1e5631;
+    color: white;
+  }
+
+  .m3-btn-filled:hover {
+    background: #164424;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+
+  .m3-btn-tonal {
+    background: #e8f5e9;
+    color: #1e5631;
+  }
+
+  .m3-btn-tonal:hover {
+    background: #dcfce7;
+  }
+
+  .m3-btn-sm {
+    padding: 0.35rem 0.85rem;
+    font-size: 0.8rem;
+  }
+
+  .m3-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Form overrides */
+  .form-input {
+    width: 100%;
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    box-sizing: border-box;
+  }
+
+  textarea.form-input {
+    font-size: 0.85rem;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #555;
+    margin-bottom: 0.35rem;
+  }
+</style>

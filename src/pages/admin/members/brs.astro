@@ -343,10 +343,13 @@ if (Astro.request.method === 'POST') {
             subscription_template: string | null;
           }>;
 
-          // Create lookup map for CRM members by pin
+          // Normalise pin to 4-digit zero-padded string (CRM stores "0009", BRS may have "9")
+          const normalisePin = (pin: string) => String(parseInt(pin, 10)).padStart(4, '0');
+
+          // Create lookup map for CRM members by normalised pin
           const crmByPin = new Map<string, typeof crmMembers[0]>();
           for (const member of crmMembers) {
-            crmByPin.set(member.pin, member);
+            crmByPin.set(normalisePin(member.pin), member);
           }
 
           // Track which CRM members are matched
@@ -363,7 +366,7 @@ if (Astro.request.method === 'POST') {
 
           // Process BRS records
           for (const brs of brsRecords) {
-            const crm = crmByPin.get(brs.username);
+            const crm = crmByPin.get(normalisePin(brs.username));
 
             if (crm) {
               matchedCrmIds.add(crm.id);

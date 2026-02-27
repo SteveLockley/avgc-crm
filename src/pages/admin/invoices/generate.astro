@@ -61,14 +61,14 @@ if (Astro.request.method === 'POST') {
       const term = `%${searchTerm}%`;
       params.push(term, term, term);
     } else if (selectionMode === 'subscription' && subscriptionTemplate) {
-      whereClause += ` AND subscription_template = ?`;
+      whereClause += ` AND category = ?`;
       params.push(subscriptionTemplate);
     } else if (selectionMode === 'egu_category' && category) {
       // EGU category is calculated, so we fetch all and filter later
-      whereClause += ` AND subscription_template IS NOT NULL AND subscription_template != ''`;
+      whereClause += ` AND category IS NOT NULL AND category != ''`;
     } else if (selectionMode === 'all') {
       // All renewable members with valid email and subscription
-      whereClause += ` AND subscription_template IS NOT NULL AND subscription_template != ''`;
+      whereClause += ` AND category IS NOT NULL AND category != ''`;
       whereClause += ` AND email IS NOT NULL AND email != ''`;
     }
 
@@ -167,6 +167,9 @@ if (Astro.request.method === 'POST') {
   }
 }
 
+// Detect direct-link mode (single member pre-loaded from profile)
+const isDirectLink = !!queryMemberId && selectedMembers.length > 0;
+
 // Get payment items for fee preview
 const paymentItemsResult = await db.prepare(
   `SELECT * FROM payment_items WHERE active = 1 ORDER BY category, name`
@@ -178,23 +181,23 @@ const subscriptionTypes = paymentItems
   .filter(item => item.category === 'Subscription')
   .map(item => item.name);
 
-// Get counts for quick selection
+// Get counts for quick selection (by category, which is what the generation pipeline uses)
 const memberCounts = await db.prepare(
-  `SELECT subscription_template, COUNT(*) as count
+  `SELECT category, COUNT(*) as count
    FROM members
-   WHERE subscription_template IS NOT NULL
-   GROUP BY subscription_template`
+   WHERE category IS NOT NULL AND category != ''
+   GROUP BY category`
 ).all();
 
 const countByTemplate: Record<string, number> = {};
 memberCounts.results?.forEach((row: any) => {
-  countByTemplate[row.subscription_template] = row.count;
+  countByTemplate[row.category] = row.count;
 });
 
 // Get all members for EGU category counts
 const allMembersResult = await db.prepare(
   `SELECT gender, date_of_birth, home_away, home_club FROM members
-   WHERE subscription_template IS NOT NULL AND subscription_template != ''`
+   WHERE category IS NOT NULL AND category != ''`
 ).all();
 const allMembers = (allMembersResult.results || []) as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>[];
 
@@ -230,99 +233,91 @@ allMembers.forEach(member => {
       </div>
     </div>
 
-    <!-- Step 1: Select Members -->
-    <div class="m3-card">
-      <div class="m3-card-header">
-        <span class="step-badge">1</span>
-        <h2>Select Members</h2>
+    <!-- Step 1: Select Members (hidden when deep-linked from member profile) -->
+    {!isDirectLink && (
+      <div class="m3-card">
+        <div class="m3-card-header">
+          <span class="step-badge">1</span>
+          <h2>Select Members</h2>
+        </div>
+
+        <form method="POST">
+          <input type="hidden" name="action" value="search" />
+
+          <div class="mode-chips">
+            <label class="chip">
+              <input type="radio" name="selection_mode" value="subscription" checked />
+              <span>By Subscription</span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="selection_mode" value="egu_category" />
+              <span>By EGU Category</span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="selection_mode" value="search" />
+              <span>Search by Name</span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="selection_mode" value="individual" />
+              <span>Member IDs</span>
+            </label>
+            <label class="chip">
+              <input type="radio" name="selection_mode" value="all" />
+              <span>All Renewable</span>
+            </label>
+          </div>
+
+          <div class="filter-row">
+            <div class="filter-field" id="subscription-select">
+              <label class="form-label">Subscription Type</label>
+              <select name="subscription_template" class="form-input">
+                <option value="">Select...</option>
+                {subscriptionTypes.map(t => (
+                  <option value={t}>{t} ({countByTemplate[t] || 0})</option>
+                ))}
+              </select>
+            </div>
+
+            <div class="filter-field" id="category-select" style="display: none;">
+              <label class="form-label">EGU Category</label>
+              <select name="category" class="form-input">
+                <option value="">Select...</option>
+                {EGU_CATEGORIES.map(c => (
+                  <option value={c}>{c} ({countByEguCategory[c] || 0})</option>
+                ))}
+              </select>
+            </div>
+
+            <div class="filter-field" id="search-input" style="display: none;">
+              <label class="form-label">Search Term</label>
+              <input type="text" name="search_term" class="form-input" placeholder="Name or email..." />
+            </div>
+
+            <div class="filter-field" id="ids-input" style="display: none;">
+              <label class="form-label">Member IDs (comma separated)</label>
+              <input type="text" name="member_ids" class="form-input" placeholder="1, 2, 3..." />
+            </div>
+
+            <div class="filter-action">
+              <button type="submit" class="m3-btn m3-btn-filled">Find Members</button>
+            </div>
+          </div>
+        </form>
       </div>
+    )}
 
-      <form method="POST">
-        <input type="hidden" name="action" value="search" />
-
-        <div class="mode-chips">
-          <label class="chip">
-            <input type="radio" name="selection_mode" value="subscription" checked />
-            <span>By Subscription</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="selection_mode" value="egu_category" />
-            <span>By EGU Category</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="selection_mode" value="search" />
-            <span>Search by Name</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="selection_mode" value="individual" />
-            <span>Member IDs</span>
-          </label>
-          <label class="chip">
-            <input type="radio" name="selection_mode" value="all" />
-            <span>All Renewable</span>
-          </label>
-        </div>
-
-        <div class="filter-row">
-          <div class="filter-field" id="subscription-select">
-            <label class="form-label">Subscription Type</label>
-            <select name="subscription_template" class="form-input">
-              <option value="">Select...</option>
-              {subscriptionTypes.map(t => (
-                <option value={t}>{t} ({countByTemplate[t] || 0})</option>
-              ))}
-            </select>
-          </div>
-
-          <div class="filter-field" id="category-select" style="display: none;">
-            <label class="form-label">EGU Category</label>
-            <select name="category" class="form-input">
-              <option value="">Select...</option>
-              {EGU_CATEGORIES.map(c => (
-                <option value={c}>{c} ({countByEguCategory[c] || 0})</option>
-              ))}
-            </select>
-          </div>
-
-          <div class="filter-field" id="search-input" style="display: none;">
-            <label class="form-label">Search Term</label>
-            <input type="text" name="search_term" class="form-input" placeholder="Name or email..." />
-          </div>
-
-          <div class="filter-field" id="ids-input" style="display: none;">
-            <label class="form-label">Member IDs (comma separated)</label>
-            <input type="text" name="member_ids" class="form-input" placeholder="1, 2, 3..." />
-          </div>
-
-          <div class="filter-action">
-            <button type="submit" class="m3-btn m3-btn-filled">Find Members</button>
-          </div>
-        </div>
-      </form>
-    </div>
-
-    <!-- Step 2: Review -->
+    <!-- Step 2: Review (or just "Review" when deep-linked) -->
     {selectedMembers.length > 0 && (
       <div class="m3-card">
         <div class="m3-card-header">
-          <span class="step-badge">2</span>
-          <h2>Review Members</h2>
+          {!isDirectLink && <span class="step-badge">2</span>}
+          <h2>Review {isDirectLink ? 'Invoice' : 'Members'}</h2>
           <span class="member-count-badge">{selectedMembers.length}</span>
         </div>
 
         <form method="POST" id="generate-form">
           <input type="hidden" name="action" value="generate" />
           <input type="hidden" name="selected_member_ids" id="selected-member-ids" value="" />
-
-          <div class="form-group" style="margin-bottom: 1.25rem;">
-            <label class="form-label">Custom Message (optional)</label>
-            <textarea
-              name="custom_message"
-              class="form-input"
-              rows="2"
-              placeholder="Add a personal message to include in all invoices..."
-            ></textarea>
-          </div>
 
           <div class="table-container" style="max-height: 420px; overflow-y: auto; border-radius: 12px; border: 1px solid #e5e7eb;">
             <table class="m3-table">
@@ -363,7 +358,7 @@ allMembers.forEach(member => {
                         </div>
                       </td>
                       <td>
-                        <span class="sub-tag">{member.subscription_template || 'None'}</span>
+                        <span class="sub-tag">{member.category || 'None'}</span>
                       </td>
                       <td class="fees-cell">
                         {fees.length > 0 ? fees.join(', ') : 'Subscription only'}
@@ -837,7 +832,9 @@ allMembers.forEach(member => {
   }
 
   textarea.form-input {
+    width: 100%;
     border-radius: 12px;
+    box-sizing: border-box;
   }
 </style>
 
