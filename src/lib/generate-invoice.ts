@@ -115,8 +115,8 @@ export async function generateInvoiceForMember(
   db: any,
   member: any,
   feeItems: Record<string, { id: number; fee: number }>,
-  options: { year: number; isDD: boolean; isSocial: boolean; periodStart?: string; periodEnd?: string }
-): Promise<{ success: boolean; invoiceNumber?: string; error?: string }> {
+  options: { year: number; isDD: boolean; isSocial: boolean; periodStart?: string; periodEnd?: string; includeFamily?: boolean }
+): Promise<{ success: boolean; invoiceNumber?: string; error?: string; familyMemberIds?: number[] }> {
   const { year, isDD, isSocial } = options;
   const periodStart = options.periodStart || `${year}-04-01`;
   const periodEnd = options.periodEnd || `${year + 1}-03-31`;
@@ -133,6 +133,41 @@ export async function generateInvoiceForMember(
   const items = calculateLineItems(member, feeItems, isSocial);
   if (items.length === 0) {
     return { success: false, error: `No subscription fee for category ${member.category}` };
+  }
+
+  // Include family dependants' items on the payer's invoice (for non-DD payments)
+  const familyMemberIds: number[] = [];
+  if (options.includeFamily && !isDD) {
+    // Use flexible matching for category → payment item name:
+    // Member category may have a suffix like "(Members Family)" that doesn't match the payment item name.
+    // Try exact match first, then strip parenthetical suffix, then try base word match.
+    const famResult = await db.prepare(
+      `SELECT m.*,
+              COALESCE(
+                p1.fee,
+                p2.fee
+              ) as subscription_fee,
+              COALESCE(
+                p1.id,
+                p2.id
+              ) as subscription_item_id
+       FROM members m
+       LEFT JOIN payment_items p1 ON p1.name = m.category AND p1.category = 'Subscription' AND p1.active = 1
+       LEFT JOIN payment_items p2 ON p2.category = 'Subscription' AND p2.active = 1
+         AND p2.name = TRIM(SUBSTR(m.category, 1, CASE WHEN INSTR(m.category, '(') > 0 THEN INSTR(m.category, '(') - 1 ELSE LENGTH(m.category) END))
+       WHERE m.family_payer_id = ?`
+    ).bind(member.id).all();
+
+    for (const dep of (famResult.results || []) as any[]) {
+      const depItems = calculateLineItems(dep, feeItems, dep.category === 'Social');
+      for (const item of depItems) {
+        items.push({
+          ...item,
+          description: `${item.description} (${dep.first_name} ${dep.surname})`,
+        });
+      }
+      familyMemberIds.push(dep.id);
+    }
   }
 
   const total = items.reduce((sum, item) => sum + item.unitPrice, 0);
@@ -197,7 +232,28 @@ export async function generateInvoiceForMember(
       }
     }
 
-    return { success: true, invoiceNumber };
+    // If family dependants were included, cancel their separate invoices and
+    // add the dependant portions to the payer's balance (they'll be cleared when payer pays)
+    if (familyMemberIds.length > 0) {
+      for (const depId of familyMemberIds) {
+        // Cancel any existing separate invoice for this period
+        const depInvoice = await db.prepare(
+          `SELECT id, total FROM invoices WHERE member_id = ? AND period_start = ? AND period_end = ? AND status != 'cancelled' LIMIT 1`
+        ).bind(depId, periodStart, periodEnd).first<{ id: number; total: number }>();
+
+        if (depInvoice) {
+          await db.prepare(
+            `UPDATE invoices SET status = 'cancelled' WHERE id = ?`
+          ).bind(depInvoice.id).run();
+          // Reverse the balance that was added when the dependant's invoice was created
+          await db.prepare(
+            `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+          ).bind(depInvoice.total, depId).run();
+        }
+      }
+    }
+
+    return { success: true, invoiceNumber, familyMemberIds: familyMemberIds.length > 0 ? familyMemberIds : undefined };
   } catch (err: any) {
     return { success: false, error: err.message || 'Unknown error' };
   }

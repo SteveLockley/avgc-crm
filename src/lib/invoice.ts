@@ -204,8 +204,8 @@ export function isMemberEligibleForInvoice(member: Member): {
   eligible: boolean;
   reason?: string;
 } {
-  if (!member.subscription_template) {
-    return { eligible: false, reason: 'No subscription template assigned' };
+  if (!member.category && !member.subscription_template) {
+    return { eligible: false, reason: 'No subscription type assigned' };
   }
 
   // Check if member has email (required for email invoices)

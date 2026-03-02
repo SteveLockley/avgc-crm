@@ -39,14 +39,27 @@ if (queryMemberId && Astro.request.method === 'GET') {
   const memberId = parseInt(queryMemberId);
   if (!isNaN(memberId)) {
     const result = await db.prepare(
-      `SELECT * FROM members WHERE id = ? AND id NOT IN (
+      `SELECT * FROM members WHERE id = ? AND family_payer_id IS NULL AND id NOT IN (
         SELECT member_id FROM invoices
         WHERE period_start = ? AND period_end = ? AND status != 'cancelled'
       )`
     ).bind(memberId, period.start, period.end).all();
     selectedMembers = (result.results || []) as Member[];
     if (selectedMembers.length === 0) {
-      error = 'Member not found or already has an invoice for this period.';
+      // Check if excluded because they're a dependant
+      const isDep = await db.prepare(
+        `SELECT family_payer_id FROM members WHERE id = ? AND family_payer_id IS NOT NULL`
+      ).bind(memberId).first();
+      if (isDep) {
+        const payer = await db.prepare(
+          `SELECT id, first_name, surname FROM members WHERE id = ?`
+        ).bind(isDep.family_payer_id).first<{ id: number; first_name: string; surname: string }>();
+        error = payer
+          ? `This member is a family dependant — their invoice is included on ${payer.first_name} ${payer.surname}'s invoice. Generate from their profile instead.`
+          : 'This member is a family dependant and cannot have a separate invoice.';
+      } else {
+        error = 'Member not found or already has an invoice for this period.';
+      }
     }
   }
 }
@@ -56,6 +69,7 @@ if (isWinterMode && Astro.request.method === 'GET' && !queryMemberId) {
   const result = await db.prepare(
     `SELECT * FROM members
      WHERE category = 'Winter'
+     AND family_payer_id IS NULL
      AND id NOT IN (
        SELECT member_id FROM invoices
        WHERE period_start = ? AND period_end = ? AND status != 'cancelled'
@@ -106,6 +120,9 @@ if (Astro.request.method === 'POST') {
       whereClause += ` AND category IS NOT NULL AND category != ''`;
       whereClause += ` AND email IS NOT NULL AND email != ''`;
     }
+
+    // Exclude dependants (their fees are consolidated onto the payer's invoice)
+    whereClause += ` AND family_payer_id IS NULL`;
 
     // Exclude members who already have an invoice for this period
     whereClause += ` AND id NOT IN (
@@ -160,12 +177,19 @@ if (Astro.request.method === 'POST') {
           const memberPeriodStart = isWinter ? period.start : undefined;
           const memberPeriodEnd = isWinter ? period.end : undefined;
 
+          // Check if this member has family dependants — consolidate their items onto payer's invoice
+          const hasDependants = await db.prepare(
+            `SELECT COUNT(*) as cnt FROM members WHERE family_payer_id = ?`
+          ).bind(member.id).first<{ cnt: number }>();
+          const includeFamily = (hasDependants?.cnt || 0) > 0;
+
           const result = await generateInvoice(db, member, feeItems, {
             year: period.year,
             isDD,
             isSocial,
             periodStart: memberPeriodStart,
             periodEnd: memberPeriodEnd,
+            includeFamily,
           });
 
           if (result.success && result.invoiceNumber && result.invoiceNumber !== 'already_exists') {
@@ -214,6 +238,29 @@ const paymentItems = (paymentItemsResult.results || []) as PaymentItem[];
 const subscriptionTypes = paymentItems
   .filter(item => item.category === 'Subscription')
   .map(item => item.name);
+
+// Load family dependants for selected members (to show on review table)
+type FamilyDep = { id: number; first_name: string; surname: string; category: string; fee: number | null };
+const familyByPayer: Record<number, FamilyDep[]> = {};
+if (selectedMembers.length > 0) {
+  const payerIds = selectedMembers.map(m => m.id);
+  const famResult = await db.prepare(
+    `SELECT m.id, m.first_name, m.surname, m.category, m.family_payer_id,
+            p.fee
+     FROM members m
+     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     WHERE m.family_payer_id IN (${payerIds.map(() => '?').join(',')})
+     ORDER BY m.surname, m.first_name`
+  ).bind(...payerIds).all();
+  for (const dep of (famResult.results || []) as any[]) {
+    const payerId = dep.family_payer_id as number;
+    if (!familyByPayer[payerId]) familyByPayer[payerId] = [];
+    familyByPayer[payerId].push({
+      id: dep.id, first_name: dep.first_name, surname: dep.surname,
+      category: dep.category, fee: dep.fee,
+    });
+  }
+}
 
 // Get counts for quick selection (by category, which is what the generation pipeline uses)
 const memberCounts = await db.prepare(
@@ -381,6 +428,10 @@ allMembers.forEach(member => {
                   const eligibility = isMemberEligibleForInvoice(member);
                   const fees = getFeeSummary(member);
                   const calculation = calculateInvoiceForMember(member, paymentItems, period.start, period.end);
+                  const isDD = member.default_payment_method === 'Clubwise Direct Debit';
+                  const deps = (!isDD && familyByPayer[member.id]) || [];
+                  const familyTotal = deps.reduce((sum: number, d: FamilyDep) => sum + (d.fee || 0), 0);
+                  const combinedTotal = (calculation?.total || 0) + familyTotal;
 
                   return (
                     <tr class={!eligibility.eligible ? 'row-ineligible' : ''}>
@@ -399,6 +450,11 @@ allMembers.forEach(member => {
                             {member.surname}, {member.first_name}
                           </a>
                           <span class="member-meta">M{member.pin?.padStart(4, '0')} {member.email ? `· ${member.email}` : ''}</span>
+                          {deps.length > 0 && (
+                            <span class="family-deps">
+                              + {deps.map((d: FamilyDep) => `${d.first_name} (${d.category} £${(d.fee || 0).toFixed(2)})`).join(', ')}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -410,7 +466,7 @@ allMembers.forEach(member => {
                       <td>
                         {eligibility.eligible ? (
                           <span class="amount-badge">
-                            {calculation ? formatCurrency(calculation.total) : 'Ready'}
+                            {calculation ? formatCurrency(combinedTotal) : 'Ready'}
                           </span>
                         ) : (
                           <span class="badge badge-danger" title={eligibility.reason}>
@@ -715,6 +771,12 @@ allMembers.forEach(member => {
   .member-meta {
     font-size: 0.75rem;
     color: #888;
+  }
+
+  .family-deps {
+    font-size: 0.75rem;
+    color: #2563eb;
+    font-style: italic;
   }
 
   .sub-tag {

@@ -61,6 +61,12 @@
       </table>
     </div>
 
+    <!-- Footer bar: message + page indicator -->
+    <footer class="lb-footer" id="lb-footer" style="display:none">
+      <span class="footer-message" id="comp-message"></span>
+      <span class="footer-page" id="page-indicator"></span>
+    </footer>
+
     <!-- Empty state -->
     <div class="empty-state" id="empty-state">
       <div class="empty-icon">
@@ -84,12 +90,17 @@
 
   <script is:inline>
     (function() {
-      var REFRESH_MS = 60000;
-      var CYCLE_MS = 30000;
+      var PAGE_SIZE = 10;
+      var TICK_MS = 30000; // 30 seconds between page/data rotations
       var competitions = [];
-      var currentIdx = 0;
-      var cycleTimer = null;
-      var refreshTimer = null;
+      var currentCompIdx = 0;
+      var allRows = [];        // full scores for current competition
+      var currentPage = 0;
+      var totalPages = 1;
+      var currentMessage = '';
+      var hasThru = false;
+      var hasRound = false;
+      var tickTimer = null;
 
       var lbTable = document.getElementById('lb-table');
       var lbBody = document.getElementById('lb-body');
@@ -101,6 +112,9 @@
       var compSelector = document.getElementById('comp-selector');
       var compSelect = document.getElementById('comp-select');
       var fullscreenBtn = document.getElementById('fullscreen-btn');
+      var lbFooter = document.getElementById('lb-footer');
+      var msgEl = document.getElementById('comp-message');
+      var pageIndicator = document.getElementById('page-indicator');
 
       // Fullscreen toggle
       fullscreenBtn.addEventListener('click', function() {
@@ -113,49 +127,85 @@
 
       // Competition selector
       compSelect.addEventListener('change', function() {
-        currentIdx = parseInt(compSelect.value, 10);
-        clearInterval(cycleTimer);
-        loadLeaderboard();
-        if (competitions.length > 1) startCycle();
+        currentCompIdx = parseInt(compSelect.value, 10);
+        currentPage = 0;
+        renderCompetition(competitions[currentCompIdx] || competitions[0]);
       });
 
-      // Initial load
+      // Initial load + start the single 30s tick
       loadCompetitions();
-      refreshTimer = setInterval(loadCompetitions, REFRESH_MS);
+      tickTimer = setInterval(onTick, TICK_MS);
+
+      /**
+       * Every 30 seconds:
+       * - If there are more pages, advance to the next page
+       * - If we're on the last page, re-fetch data from the API (and reset to page 1)
+       *   (also cycles to next competition if multiple)
+       */
+      function onTick() {
+        if (allRows.length === 0) {
+          // No data yet — just re-fetch
+          loadCompetitions();
+          return;
+        }
+
+        if (currentPage < totalPages - 1) {
+          // Advance to next page
+          currentPage++;
+          renderPage();
+        } else {
+          // Last page reached — cycle competition if multiple, then re-fetch
+          if (competitions.length > 1) {
+            currentCompIdx = (currentCompIdx + 1) % competitions.length;
+            compSelect.value = currentCompIdx;
+          }
+          currentPage = 0;
+          loadCompetitions();
+        }
+      }
 
       function loadCompetitions() {
         fetch('/api/msb/leaderboard')
           .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
           .then(function(data) {
             loadingState.style.display = 'none';
-            var list = data.competitions || data.Competitions || data.Leaderboards || [];
-            if (!Array.isArray(list)) list = [];
+
+            var list;
+            if (Array.isArray(data)) {
+              list = data;
+            } else if (data.competitions && Array.isArray(data.competitions)) {
+              list = data.competitions;
+            } else if (data.compId || data.CompID) {
+              list = [data];
+            } else {
+              list = [];
+            }
 
             competitions = list;
 
             if (competitions.length === 0) {
               lbTable.style.display = 'none';
+              lbFooter.style.display = 'none';
               compSelector.style.display = 'none';
               emptyState.style.display = '';
               compName.textContent = 'Live Leaderboard';
+              allRows = [];
               return;
             }
 
             emptyState.style.display = 'none';
 
-            // Populate selector
             if (competitions.length > 1) {
               compSelect.innerHTML = competitions.map(function(c, i) {
-                return '<option value="' + i + '">' + (c.name || c.Name || c.CompetitionName || 'Competition ' + (i + 1)) + '</option>';
+                return '<option value="' + i + '">' + (c.name || c.Name || 'Competition ' + (i + 1)) + '</option>';
               }).join('');
-              compSelect.value = currentIdx;
+              compSelect.value = currentCompIdx;
               compSelector.style.display = '';
-              if (!cycleTimer) startCycle();
             } else {
               compSelector.style.display = 'none';
             }
 
-            loadLeaderboard();
+            renderCompetition(competitions[currentCompIdx] || competitions[0]);
           })
           .catch(function() {
             loadingState.style.display = 'none';
@@ -166,51 +216,25 @@
           });
       }
 
-      function loadLeaderboard() {
-        if (competitions.length === 0) return;
-
-        var comp = competitions[currentIdx] || competitions[0];
-        var compId = comp.compId || comp.CompID || comp.CompetitionID;
-        var division = comp.division || 0;
-        var name = comp.name || comp.Name || comp.CompetitionName || 'Competition';
-
+      function renderCompetition(comp) {
+        var name = comp.name || comp.Name || 'Competition';
         compName.textContent = name;
+        currentMessage = comp.message || '';
+
+        var rows = comp.scores || [];
+        if (rows.length > 0) {
+          setScores(rows);
+          return;
+        }
+
+        var compId = comp.compId || comp.CompID;
+        var division = comp.division || 0;
 
         fetch('/api/msb/leaderboard/' + compId + '/' + division)
           .then(function(r) { if (!r.ok) throw new Error('Failed'); return r.json(); })
           .then(function(data) {
-            var rows = data.scores || data.Scores || data.Leaderboard || data.leaderboard || [];
-            if (!Array.isArray(rows)) rows = [];
-
-            if (rows.length === 0) {
-              lbTable.style.display = 'none';
-              return;
-            }
-
-            lbBody.innerHTML = rows.map(function(r, i) {
-              var pos = r.position || r.Position || r.Pos || (i + 1);
-              var player = r.players || r.PlayerName || r.Name || r.name || '';
-              var score = r.score || r.Score || r.ToPar || '';
-              var thru = r.thru || r.Thru || r.HolesPlayed || '';
-              var round = r.roundScore || r.RoundScore || r.Round || '';
-              return '<tr class="' + (i % 2 === 0 ? 'row-even' : 'row-odd') + '">' +
-                '<td class="col-pos">' + pos + '</td>' +
-                '<td class="col-name">' + player + '</td>' +
-                '<td class="col-score">' + score + '</td>' +
-                '<td class="col-thru">' + thru + '</td>' +
-                '<td class="col-round">' + round + '</td>' +
-                '</tr>';
-            }).join('');
-
-            lbTable.style.display = '';
-            lbTable.classList.add('fade-in');
-            setTimeout(function() { lbTable.classList.remove('fade-in'); }, 300);
-
-            // Update timestamp
-            var now = new Date();
-            statusText.textContent = 'Updated ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            statusDot.classList.remove('error');
-            statusDot.classList.add('live');
+            currentMessage = data.message || currentMessage;
+            setScores(data.scores || []);
           })
           .catch(function() {
             statusDot.classList.remove('live');
@@ -219,12 +243,76 @@
           });
       }
 
-      function startCycle() {
-        cycleTimer = setInterval(function() {
-          currentIdx = (currentIdx + 1) % competitions.length;
-          compSelect.value = currentIdx;
-          loadLeaderboard();
-        }, CYCLE_MS);
+      function setScores(rows) {
+        allRows = rows;
+        totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+        if (currentPage >= totalPages) currentPage = 0;
+
+        // Detect which optional columns have data
+        hasThru = rows.some(function(r) { return r.thru || r.holesPlayed; });
+        hasRound = rows.some(function(r) { return r.roundScore; });
+
+        var thHeaders = lbTable.querySelectorAll('thead th');
+        thHeaders[3].style.display = hasThru ? '' : 'none';
+        thHeaders[4].style.display = hasRound ? '' : 'none';
+
+        renderPage();
+      }
+
+      function renderPage() {
+        if (allRows.length === 0) {
+          lbTable.style.display = 'none';
+          lbFooter.style.display = 'none';
+          return;
+        }
+
+        var start = currentPage * PAGE_SIZE;
+        // On the last page, show the last PAGE_SIZE rows (so it's always a full page)
+        if (currentPage === totalPages - 1 && allRows.length > PAGE_SIZE) {
+          start = allRows.length - PAGE_SIZE;
+        }
+        var pageRows = allRows.slice(start, start + PAGE_SIZE);
+
+        lbBody.innerHTML = pageRows.map(function(r, i) {
+          var pos = r.position || (start + i + 1);
+          var player = r.players || r.player || '';
+          var score = r.score || '';
+          var thru = r.thru || r.holesPlayed || '';
+          var round = r.roundScore || '';
+          return '<tr class="' + ((start + i) % 2 === 0 ? 'row-even' : 'row-odd') + '">' +
+            '<td class="col-pos">' + pos + '</td>' +
+            '<td class="col-name">' + player + '</td>' +
+            '<td class="col-score">' + score + '</td>' +
+            (hasThru ? '<td class="col-thru">' + thru + '</td>' : '') +
+            (hasRound ? '<td class="col-round">' + round + '</td>' : '') +
+            '</tr>';
+        }).join('');
+
+        // Footer: message + page indicator
+        if (currentMessage) {
+          msgEl.textContent = currentMessage;
+          msgEl.style.display = '';
+        } else {
+          msgEl.style.display = 'none';
+        }
+
+        if (totalPages > 1) {
+          pageIndicator.textContent = 'Page ' + (currentPage + 1) + ' of ' + totalPages;
+          pageIndicator.style.display = '';
+        } else {
+          pageIndicator.style.display = 'none';
+        }
+
+        lbFooter.style.display = '';
+        lbTable.style.display = '';
+        lbTable.classList.add('fade-in');
+        setTimeout(function() { lbTable.classList.remove('fade-in'); }, 300);
+
+        // Timestamp
+        var now = new Date();
+        statusText.textContent = 'Updated ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        statusDot.classList.remove('error');
+        statusDot.classList.add('live');
       }
     })();
   </script>
@@ -277,14 +365,14 @@
     }
 
     .header-title h1 {
-      font-size: clamp(0.85rem, 2vw, 1.1rem);
+      font-size: clamp(1rem, 2.5vw, 1.6rem);
       font-weight: 700;
       color: var(--lb-text);
       line-height: 1.2;
     }
 
     .header-subtitle {
-      font-size: clamp(0.7rem, 1.5vw, 0.85rem);
+      font-size: clamp(0.85rem, 2vw, 1.3rem);
       color: var(--lb-primary-light);
       font-weight: 500;
     }
@@ -299,7 +387,7 @@
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      font-size: 0.8rem;
+      font-size: clamp(0.8rem, 1.5vw, 1.1rem);
       color: var(--lb-text-dim);
     }
 
@@ -364,6 +452,9 @@
     /* Table */
     .lb-table-wrap {
       flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
       padding: 1rem 1.5rem;
@@ -371,8 +462,9 @@
 
     .lb-table {
       width: 100%;
+      max-width: 1200px;
       border-collapse: collapse;
-      font-size: clamp(0.9rem, 2vw, 1.1rem);
+      font-size: clamp(1.1rem, 2.8vw, 1.7rem);
     }
 
     .lb-table.fade-in {
@@ -386,17 +478,17 @@
 
     .lb-table th {
       text-align: left;
-      padding: 0.75rem 1rem;
+      padding: 1rem 1.5rem;
       font-weight: 600;
       color: var(--lb-text-dim);
       border-bottom: 2px solid var(--lb-border);
-      font-size: clamp(0.75rem, 1.5vw, 0.9rem);
+      font-size: clamp(0.95rem, 2.2vw, 1.4rem);
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
 
     .lb-table td {
-      padding: 0.75rem 1rem;
+      padding: 1rem 1.5rem;
       border-bottom: 1px solid var(--lb-border);
     }
 
@@ -419,7 +511,7 @@
     .col-score {
       text-align: center;
       font-weight: 700;
-      font-size: clamp(1rem, 2.5vw, 1.3rem);
+      font-size: clamp(1.3rem, 3.5vw, 2.2rem);
     }
 
     .col-thru {
@@ -490,12 +582,61 @@
       .status-text { display: none; }
     }
 
+    /* Footer bar */
+    .lb-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: var(--lb-surface);
+      border-top: 1px solid var(--lb-border);
+      font-size: clamp(0.9rem, 1.8vw, 1.2rem);
+    }
+
+    .footer-message {
+      color: var(--lb-text-dim);
+      font-style: italic;
+    }
+
+    .footer-page {
+      color: var(--lb-text-dim);
+      font-weight: 500;
+      margin-left: auto;
+    }
+
     /* Large screen / TV optimizations */
     @media (min-width: 1400px) {
-      .lb-table { font-size: 1.3rem; }
-      .lb-table th { font-size: 1rem; }
-      .col-score { font-size: 1.5rem; }
-      .lb-table td, .lb-table th { padding: 1rem 1.25rem; }
+      .lb-header { padding: 1.25rem 2rem; }
+      .club-logo { width: 48px; height: 48px; }
+      .header-left { gap: 1rem; }
+
+      .lb-table { font-size: 1.8rem; max-width: 1400px; }
+      .lb-table th { font-size: 1.3rem; }
+      .lb-table td, .lb-table th { padding: 1.2rem 1.75rem; }
+      .col-score { font-size: 2.4rem; }
+      .col-pos { width: 90px; }
+
+      .lb-table-wrap { padding: 1.5rem 2rem; }
+      .lb-footer { padding: 1rem 2rem; font-size: 1.2rem; }
+
+      .empty-state h2 { font-size: 2rem; }
+      .empty-state p { font-size: 1.2rem; }
+      .empty-icon svg { width: 80px; height: 80px; }
+    }
+
+    /* Extra large TV (1080p+) */
+    @media (min-width: 1800px) {
+      .lb-header { padding: 1.5rem 3rem; }
+      .club-logo { width: 56px; height: 56px; }
+
+      .lb-table { font-size: 2.2rem; max-width: 1600px; }
+      .lb-table th { font-size: 1.6rem; padding: 1.4rem 2.25rem; }
+      .lb-table td { padding: 1.4rem 2.25rem; }
+      .col-score { font-size: 2.8rem; }
+      .col-pos { width: 110px; font-size: 2.2rem; }
+
+      .lb-table-wrap { padding: 2rem 3rem; }
+      .lb-footer { padding: 1.25rem 3rem; font-size: 1.4rem; }
     }
   </style>
 </body>

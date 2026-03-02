@@ -1,0 +1,1218 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatDate, formatCurrency } from '../../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Get unprocessed count for badge
+const unprocessedCount = await db.prepare(
+  `SELECT COUNT(*) as count FROM candidate_payments WHERE processed = 0`
+).first<{ count: number }>().catch(() => ({ count: 0 }));
+const badgeCount = unprocessedCount?.count || 0;
+
+// Get unprocessed candidates
+const candidates = await db.prepare(
+  `SELECT cp.*,
+          m.first_name as m_first_name, m.surname as m_surname,
+          i.invoice_number
+   FROM candidate_payments cp
+   LEFT JOIN members m ON cp.matched_member_id = m.id
+   LEFT JOIN invoices i ON cp.matched_invoice_id = i.id
+   WHERE cp.processed = 0
+   ORDER BY cp.sale_date DESC, cp.id DESC
+   LIMIT 100`
+).all();
+
+const rows = candidates.results || [];
+const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amount_matches_invoice).length;
+---
+
+<AdminLayout title="Candidate Payments">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Payments</h1>
+      <p class="subtitle">Match and process incoming payments</p>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <a href="/admin/payments" class="tab-pill">
+      Processed Payments
+    </a>
+    <a href="/admin/payments/candidates" class="tab-pill active">
+      Candidate Payments
+      {badgeCount > 0 && <span class="tab-badge">{badgeCount}</span>}
+    </a>
+  </div>
+
+  <!-- Over the Till Section -->
+  <div class="m3-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="6" width="20" height="12" rx="2"/>
+          <path d="M2 10h20"/>
+          <path d="M6 14h.01M10 14h.01"/>
+        </svg>
+        <span>Over the Till</span>
+      </div>
+      <div class="card-actions">
+        {validCount > 0 && (
+          <button id="recordAllBtn" class="btn btn-success btn-sm">
+            <span class="pound-icon">£</span>
+            <span id="recordAllLabel">Record All Matched ({validCount})</span>
+          </button>
+        )}
+        <button id="syncBtn" class="btn btn-primary btn-sm">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span id="syncLabel">Sync from TouchOffice</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="syncStatus" class="sync-status" style="display:none;">
+      <div class="sync-spinner"></div>
+      <span id="syncMessage">Fetching sales from TouchOffice...</span>
+    </div>
+
+    <div class="table-container">
+      <table class="m3-table" id="candidatesTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Member</th>
+            <th>Card</th>
+            <th>Items</th>
+            <th class="text-right">Amount</th>
+            <th>Invoice</th>
+            <th class="actions-col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="candidatesBody">
+          {rows.map((row: any) => {
+            const items = row.line_items ? JSON.parse(row.line_items) : [];
+            const itemsSummary = items.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+            const outstanding = row.outstanding_items ? JSON.parse(row.outstanding_items) : [];
+            const extra = row.extra_items ? JSON.parse(row.extra_items) : [];
+            const matchClass = row.match_status === 'matched' ? 'badge-green'
+              : row.match_status === 'ambiguous' ? 'badge-amber'
+              : row.match_status === 'card_mismatch' ? 'badge-orange'
+              : 'badge-red';
+            const matchLabel = row.match_status === 'matched' ? 'Matched'
+              : row.match_status === 'ambiguous' ? 'Ambiguous'
+              : row.match_status === 'card_mismatch' ? 'Card Mismatch'
+              : 'No Match';
+
+            // Determine invoice status — filter out zero-amount outstanding items
+            const outstandingWithValue = outstanding.filter((i: any) => i.amount * i.qty > 0);
+            const outstandingTotal = outstandingWithValue.reduce((sum: number, i: any) => sum + (i.amount * i.qty), 0);
+            const hasOutstanding = outstandingWithValue.length > 0 && outstandingTotal > 0;
+            const hasExtra = extra.length > 0;
+            const outstandingSummary = outstandingWithValue.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+            const extraSummary = extra.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+            const familyInvoices = row.family_invoices ? JSON.parse(row.family_invoices) : [];
+            const familySummary = familyInvoices.map((fi: any) => `${fi.memberName} (£${fi.total.toFixed(2)})`).join(', ');
+
+            return (
+              <tr data-id={row.id}>
+                <td class="date-cell">{formatDate(row.sale_date)}</td>
+                <td class="member-cell">
+                  <div class="member-info">
+                    <span class="member-name">
+                      {row.matched_member_id ? (
+                        <a href={`/admin/members/${row.matched_member_id}`} class="member-link">
+                          {row.m_surname}, {row.m_first_name}
+                        </a>
+                      ) : (
+                        row.member_name || 'Unknown'
+                      )}
+                    </span>
+                    <span class={`match-badge ${matchClass}`}>{matchLabel}</span>
+                  </div>
+                </td>
+                <td class="card-cell">{row.discount_card || '-'}</td>
+                <td class="items-cell" title={itemsSummary}>
+                  {itemsSummary.length > 40 ? itemsSummary.substring(0, 40) + '...' : itemsSummary || '-'}
+                </td>
+                <td class="text-right amount-cell">{formatCurrency(row.amount)}</td>
+                <td class="invoice-cell">
+                  {row.amount_matches_invoice && row.invoice_number ? (
+                    <div class="invoice-detail">
+                      <span class="invoice-match">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                          <polyline points="20 6 9 17 4 12"/>
+                        </svg>
+                        {row.invoice_number}
+                      </span>
+                      {familyInvoices.length > 0 && (
+                        <span class="family-badge" title={`Family: ${familySummary}`}>
+                          + {familyInvoices.length} family
+                        </span>
+                      )}
+                    </div>
+                  ) : row.matched_invoice_id && row.invoice_number ? (
+                    <div class="invoice-detail">
+                      <span class="invoice-partial">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                          <line x1="12" y1="9" x2="12" y2="13"/>
+                          <line x1="12" y1="17" x2="12.01" y2="17"/>
+                        </svg>
+                        {row.invoice_number}
+                      </span>
+                      {hasOutstanding && (
+                        <span class="outstanding-badge" title={`Outstanding: ${outstandingSummary}`}>
+                          Outstanding: {outstandingSummary}
+                          <span class="outstanding-amount">
+                            £{outstandingTotal.toFixed(2)}
+                          </span>
+                        </span>
+                      )}
+                      {hasExtra && (
+                        <button class="extra-badge reinvoice-btn"
+                                title={`Click to reinvoice and record payment`}
+                                data-candidate-id={row.id}
+                                data-invoice-id={row.matched_invoice_id}
+                                data-extra={JSON.stringify(extra)}>
+                          Reinvoice: {extraSummary}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div class="invoice-search-wrap" data-candidate-id={row.id}>
+                      <input type="text" class="invoice-search" placeholder="Search invoice..."
+                             data-candidate-id={row.id} autocomplete="off" />
+                      <div class="invoice-dropdown" style="display:none;"></div>
+                    </div>
+                  )}
+                </td>
+                <td class="actions-col">
+                  <button class="action-btn receipt-btn" title="View Receipt"
+                          data-receipt={row.receipt_text || ''} data-sale-id={row.sale_id}
+                          data-amount={row.amount} data-date={row.sale_date}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                      <line x1="16" y1="13" x2="8" y2="13"/>
+                      <line x1="16" y1="17" x2="8" y2="17"/>
+                    </svg>
+                  </button>
+                  {row.match_status === 'matched' && !!row.amount_matches_invoice && (
+                    <button class="action-btn action-btn-success process-btn" title="Record as Paid"
+                            data-id={row.id} data-invoice={row.matched_invoice_id || ''}>
+                      <span class="pound-icon">£</span>
+                    </button>
+                  )}
+                  <button class="action-btn action-btn-muted dismiss-btn" title="Dismiss"
+                          data-id={row.id}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <tr>
+              <td colspan="7" class="empty-row">
+                <div class="empty-state">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="2" y="6" width="20" height="12" rx="2"/>
+                    <path d="M2 10h20"/>
+                  </svg>
+                  <p>No candidate payments. Click "Sync from TouchOffice" to fetch new sales.</p>
+                </div>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Receipt Modal -->
+  <div id="receiptModal" class="receipt-overlay" style="display:none;">
+    <div class="receipt-modal">
+      <div class="receipt-paper">
+        <div class="receipt-header-bar">
+          <span class="receipt-title">Sale Receipt</span>
+          <button id="receiptClose" class="receipt-close">&times;</button>
+        </div>
+        <div class="receipt-body">
+          <pre id="receiptText"></pre>
+        </div>
+        <div class="receipt-footer">
+          <span id="receiptSaleId" class="receipt-sale-id"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BACS Placeholder -->
+  <div class="m3-card placeholder-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>
+          <path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/>
+          <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/>
+        </svg>
+        <span>BACS</span>
+      </div>
+      <span class="coming-soon-badge">Coming soon</span>
+    </div>
+  </div>
+
+  <!-- Card (Dojo) Placeholder -->
+  <div class="m3-card placeholder-card">
+    <div class="card-header">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+          <line x1="1" y1="10" x2="23" y2="10"/>
+        </svg>
+        <span>Card (Dojo)</span>
+      </div>
+      <span class="coming-soon-badge">Coming soon</span>
+    </div>
+  </div>
+</AdminLayout>
+
+<style is:global>
+  /* Tab Bar */
+  .tab-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.375rem;
+    background: #f4f4f4;
+    border-radius: 50px;
+    width: fit-content;
+  }
+
+  .tab-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 50px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    color: #666;
+    transition: all 0.2s ease;
+  }
+
+  .tab-pill:hover {
+    color: #333;
+    background: rgba(255,255,255,0.6);
+  }
+
+  .tab-pill.active {
+    background: #fff;
+    color: #1e5631;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  }
+
+  .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: #dc2626;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* Page Header */
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .header-content h1 {
+    margin: 0;
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+
+  .subtitle {
+    margin: 0.25rem 0 0 0;
+    color: #666;
+    font-size: 0.95rem;
+  }
+
+  /* M3 Card */
+  .m3-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #e8e8e8;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+
+  .placeholder-card {
+    opacity: 0.7;
+  }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fafafa;
+  }
+
+  .card-title {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-weight: 600;
+    color: #1a1a1a;
+    font-size: 1rem;
+  }
+
+  .card-title svg {
+    width: 20px;
+    height: 20px;
+    color: #1e5631;
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .btn-sm {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+  }
+
+  .btn-sm svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .btn-success {
+    background: #166534;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-weight: 500;
+    transition: background 0.2s;
+  }
+
+  .btn-success:hover {
+    background: #15803d;
+  }
+
+  .btn-success:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .coming-soon-badge {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.75rem;
+    background: #f0f0f0;
+    color: #888;
+    border-radius: 20px;
+    font-weight: 500;
+  }
+
+  /* Sync Status */
+  .sync-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
+    background: #eff6ff;
+    border-bottom: 1px solid #dbeafe;
+    color: #1e40af;
+    font-size: 0.9rem;
+  }
+
+  .sync-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #93c5fd;
+    border-top-color: #1e40af;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Table */
+  .table-container {
+    overflow-x: auto;
+  }
+
+  .m3-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .m3-table th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #fafafa;
+    border-bottom: 2px solid #e8e8e8;
+    white-space: nowrap;
+  }
+
+  .m3-table td {
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    color: #333;
+    border-bottom: 1px solid #f0f0f0;
+    vertical-align: middle;
+  }
+
+  .m3-table tbody tr:hover {
+    background: #f8faf8;
+  }
+
+  .text-right { text-align: right; }
+
+  .date-cell {
+    white-space: nowrap;
+    color: #666;
+  }
+
+  .member-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .member-link {
+    color: #1e5631;
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .member-link:hover {
+    text-decoration: underline;
+  }
+
+  .match-badge {
+    display: inline-flex;
+    padding: 0.125rem 0.5rem;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .badge-green {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .badge-red {
+    background: #fef2f2;
+    color: #dc2626;
+  }
+
+  .badge-amber {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .badge-orange {
+    background: #ffedd5;
+    color: #c2410c;
+  }
+
+  .card-cell {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: #666;
+  }
+
+  .items-cell {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    color: #555;
+  }
+
+  .amount-cell {
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+
+  .invoice-match {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: #166534;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .invoice-match svg {
+    color: #16a34a;
+  }
+
+  .invoice-cell {
+    min-width: 160px;
+  }
+
+  .invoice-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .invoice-partial {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: #92400e;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .invoice-partial svg {
+    color: #d97706;
+  }
+
+  .family-badge {
+    display: block;
+    font-size: 0.7rem;
+    color: #0369a1;
+    font-weight: 500;
+    line-height: 1.3;
+    margin-top: 2px;
+  }
+
+  .outstanding-badge {
+    display: block;
+    font-size: 0.75rem;
+    color: #dc2626;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  .extra-badge {
+    display: block;
+    font-size: 0.75rem;
+    color: #7c3aed;
+    font-weight: 500;
+    line-height: 1.3;
+    background: #f5f3ff;
+    border: 1px solid #ddd6fe;
+    border-radius: 4px;
+    padding: 0.2rem 0.4rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+  }
+
+  .extra-badge:hover {
+    background: #ede9fe;
+    border-color: #c4b5fd;
+  }
+
+  .no-invoice {
+    color: #999;
+    font-size: 0.85rem;
+  }
+
+  .invoice-search-wrap {
+    position: relative;
+  }
+
+  .invoice-search {
+    width: 140px;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #333;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .invoice-search:focus {
+    border-color: #1e5631;
+  }
+
+  .invoice-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 280px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    z-index: 100;
+    margin-top: 2px;
+  }
+
+  .invoice-option {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    border-bottom: 1px solid #f5f5f5;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .invoice-option:last-child {
+    border-bottom: none;
+  }
+
+  .invoice-option:hover {
+    background: #f0fdf4;
+  }
+
+  .invoice-option-number {
+    font-weight: 600;
+    color: #1e5631;
+  }
+
+  .invoice-option-member {
+    color: #666;
+    font-size: 0.78rem;
+    text-align: right;
+  }
+
+  .invoice-option-amount {
+    color: #333;
+    font-weight: 500;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .invoice-no-results {
+    padding: 0.5rem 0.75rem;
+    color: #999;
+    font-size: 0.82rem;
+    text-align: center;
+  }
+
+  /* Actions */
+  .actions-col {
+    width: 100px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .action-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #f4f4f4;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    color: #555;
+  }
+
+  .action-btn:hover {
+    background: #e8e8e8;
+    color: #1e5631;
+  }
+
+  .action-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .action-btn-success:hover {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .pound-icon {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .action-btn-muted:hover {
+    background: #f0f0f0;
+    color: #888;
+  }
+
+  .outstanding-amount {
+    display: inline-block;
+    font-weight: 700;
+    margin-left: 4px;
+  }
+
+  /* Empty State */
+  .empty-row {
+    padding: 3rem !important;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    color: #888;
+  }
+
+  .empty-state svg {
+    width: 48px;
+    height: 48px;
+    opacity: 0.5;
+  }
+
+  .empty-state p {
+    margin: 0;
+    font-size: 0.95rem;
+  }
+
+  /* Receipt Modal */
+  .receipt-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  .receipt-modal {
+    max-width: 380px;
+    width: 100%;
+    animation: receiptSlideIn 0.2s ease;
+  }
+
+  @keyframes receiptSlideIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .receipt-paper {
+    background: #fffef8;
+    border-radius: 4px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    overflow: hidden;
+    border: 1px solid #e0ddd4;
+  }
+
+  .receipt-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: #f5f3eb;
+    border-bottom: 1px dashed #ccc;
+  }
+
+  .receipt-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .receipt-close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    font-size: 1.25rem;
+    color: #888;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+
+  .receipt-close:hover {
+    background: #e8e6de;
+    color: #333;
+  }
+
+  .receipt-body {
+    padding: 1rem;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .receipt-body pre {
+    margin: 0;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #333;
+  }
+
+  .receipt-footer {
+    padding: 0.5rem 1rem;
+    border-top: 1px dashed #ccc;
+    background: #f5f3eb;
+    text-align: center;
+  }
+
+  .receipt-sale-id {
+    font-size: 0.75rem;
+    color: #999;
+    font-family: monospace;
+  }
+
+  @media (max-width: 600px) {
+    .page-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .tab-bar {
+      width: 100%;
+    }
+
+    .tab-pill {
+      flex: 1;
+      justify-content: center;
+      font-size: 0.82rem;
+      padding: 0.5rem 0.75rem;
+    }
+  }
+</style>
+
+<script is:inline>
+  // Receipt modal handler
+  const receiptModal = document.getElementById('receiptModal');
+  const receiptText = document.getElementById('receiptText');
+  const receiptSaleId = document.getElementById('receiptSaleId');
+
+  document.querySelectorAll('.receipt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const raw = btn.dataset.receipt || '';
+      const saleId = btn.dataset.saleId || '';
+      receiptText.textContent = raw || 'No receipt data available';
+      receiptSaleId.textContent = `Sale #${saleId}`;
+      receiptModal.style.display = 'flex';
+    });
+  });
+
+  document.getElementById('receiptClose')?.addEventListener('click', () => {
+    receiptModal.style.display = 'none';
+  });
+
+  receiptModal?.addEventListener('click', (e) => {
+    if (e.target === receiptModal) receiptModal.style.display = 'none';
+  });
+
+  // Record All Matched button handler
+  document.getElementById('recordAllBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('recordAllBtn');
+    const label = document.getElementById('recordAllLabel');
+
+    const confirmed = await m3Confirm('Record all matched payments as paid? This will create payment records and mark invoices as paid.', {
+      title: 'Record All Matched',
+      confirmText: 'Record All',
+      cancelText: 'Cancel',
+    });
+    if (!confirmed) return;
+
+    btn.disabled = true;
+    label.textContent = 'Processing...';
+
+    try {
+      const res = await fetch('/api/candidate-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'process-all' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        label.textContent = `Done! ${data.processed} recorded.`;
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        label.textContent = 'Record All Matched';
+        await m3Alert(data.error || 'Failed to process', { title: 'Error', type: 'error' });
+      }
+    } catch (err) {
+      label.textContent = 'Record All Matched';
+      await m3Alert('Failed to process payments', { title: 'Error', type: 'error' });
+    }
+    btn.disabled = false;
+  });
+
+  // Sync button handler
+  document.getElementById('syncBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('syncBtn');
+    const statusDiv = document.getElementById('syncStatus');
+    const msgSpan = document.getElementById('syncMessage');
+    const label = document.getElementById('syncLabel');
+
+    btn.disabled = true;
+    label.textContent = 'Syncing...';
+    statusDiv.style.display = 'flex';
+    msgSpan.textContent = 'Fetching membership sales from TouchOffice...';
+
+    try {
+      const res = await fetch('/api/candidate-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync' }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        const parts = [`${data.new} new`];
+        if (data.matched) parts.push(`${data.matched} matched`);
+        if (data.skipped) parts.push(`${data.skipped} non-membership skipped`);
+        msgSpan.textContent = `Done! ${parts.join(', ')}.`;
+        if (data.new > 0) {
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+        }
+      } else {
+        msgSpan.textContent = `Error: ${data.error}`;
+        statusDiv.style.background = '#fef2f2';
+        statusDiv.style.color = '#dc2626';
+        statusDiv.style.borderColor = '#fecaca';
+      }
+    } catch (err) {
+      msgSpan.textContent = `Network error: ${err.message}`;
+      statusDiv.style.background = '#fef2f2';
+      statusDiv.style.color = '#dc2626';
+    }
+
+    btn.disabled = false;
+    label.textContent = 'Sync from TouchOffice';
+    document.querySelector('.sync-spinner')?.remove();
+  });
+
+  // Process button handler
+  document.querySelectorAll('.process-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const invoiceId = btn.dataset.invoice || null;
+
+      const confirmed = await m3Confirm('Create a payment record from this TouchOffice sale?', {
+        title: 'Process Payment',
+        confirmText: 'Process',
+        cancelText: 'Cancel',
+      });
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch('/api/candidate-payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'process', candidateId: parseInt(id), invoiceId: invoiceId ? parseInt(invoiceId) : null }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          btn.closest('tr').remove();
+          // Update badge count
+          const badge = document.querySelector('.tab-badge');
+          if (badge) {
+            const count = parseInt(badge.textContent) - 1;
+            if (count <= 0) badge.remove();
+            else badge.textContent = count;
+          }
+        } else {
+          await m3Alert(data.error || 'Failed to process payment', { title: 'Error', type: 'error' });
+        }
+      } catch (err) {
+        await m3Alert('Failed to process payment', { title: 'Error', type: 'error' });
+      }
+    });
+  });
+
+  // Invoice search dropdown handler
+  let searchTimeout = null;
+  document.querySelectorAll('.invoice-search').forEach(input => {
+    const wrap = input.closest('.invoice-search-wrap');
+    const dropdown = wrap.querySelector('.invoice-dropdown');
+    const candidateId = input.dataset.candidateId;
+
+    input.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      const q = input.value.trim();
+      if (q.length < 1) { dropdown.style.display = 'none'; return; }
+      searchTimeout = setTimeout(async () => {
+        try {
+          const res = await fetch('/api/candidate-payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'search-invoices', query: q }),
+          });
+          const data = await res.json();
+          if (data.success && data.invoices.length > 0) {
+            dropdown.innerHTML = data.invoices.map(inv =>
+              `<div class="invoice-option" data-invoice-number="${inv.invoice_number}" data-candidate-id="${candidateId}">
+                <span class="invoice-option-number">${inv.invoice_number}</span>
+                <span class="invoice-option-member">${inv.member_name}</span>
+                <span class="invoice-option-amount">£${inv.total.toFixed(2)}</span>
+              </div>`
+            ).join('');
+            dropdown.style.display = 'block';
+          } else {
+            dropdown.innerHTML = '<div class="invoice-no-results">No invoices found</div>';
+            dropdown.style.display = 'block';
+          }
+        } catch (err) {
+          dropdown.style.display = 'none';
+        }
+      }, 300);
+    });
+
+    // Close dropdown on outside click
+    document.addEventListener('click', (e) => {
+      if (!wrap.contains(e.target)) dropdown.style.display = 'none';
+    });
+  });
+
+  // Invoice option click — link the invoice
+  document.addEventListener('click', async (e) => {
+    const option = e.target.closest('.invoice-option');
+    if (!option) return;
+
+    const invoiceNumber = option.dataset.invoiceNumber;
+    const candidateId = option.dataset.candidateId;
+    const wrap = option.closest('.invoice-search-wrap') || document.querySelector(`.invoice-search-wrap[data-candidate-id="${candidateId}"]`);
+
+    try {
+      const res = await fetch('/api/candidate-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'link-invoice', candidateId: parseInt(candidateId), invoiceNumber }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        window.location.reload();
+      } else {
+        await m3Alert(data.error || 'Failed to link invoice', { title: 'Error', type: 'error' });
+      }
+    } catch (err) {
+      await m3Alert('Failed to link invoice', { title: 'Error', type: 'error' });
+    }
+  });
+
+  // Reinvoice button handler
+  document.querySelectorAll('.reinvoice-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const candidateId = btn.dataset.candidateId;
+      const invoiceId = btn.dataset.invoiceId;
+      const extra = JSON.parse(btn.dataset.extra || '[]');
+      const extraDesc = extra.map(i => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+
+      const confirmed = await m3Confirm(
+        `This will:\n1. Add ${extraDesc} to the invoice\n2. Record the payment\n3. Mark as processed\n\nProceed?`,
+        { title: 'Reinvoice & Record Payment', confirmText: 'Reinvoice & Pay', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch('/api/candidate-payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reinvoice', candidateId: parseInt(candidateId), invoiceId: parseInt(invoiceId) }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          btn.closest('tr').remove();
+          const badge = document.querySelector('.tab-badge');
+          if (badge) {
+            const count = parseInt(badge.textContent) - 1;
+            if (count <= 0) badge.remove();
+            else badge.textContent = count;
+          }
+        } else {
+          await m3Alert(data.error || 'Failed to reinvoice', { title: 'Error', type: 'error' });
+        }
+      } catch (err) {
+        await m3Alert('Failed to reinvoice', { title: 'Error', type: 'error' });
+      }
+    });
+  });
+
+  // Dismiss button handler
+  document.querySelectorAll('.dismiss-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+
+      const confirmed = await m3Confirm('Dismiss this candidate payment? It will be hidden from the list.', {
+        title: 'Dismiss Payment',
+        confirmText: 'Dismiss',
+        cancelText: 'Cancel',
+      });
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch('/api/candidate-payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'dismiss', candidateId: parseInt(id) }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          btn.closest('tr').remove();
+          const badge = document.querySelector('.tab-badge');
+          if (badge) {
+            const count = parseInt(badge.textContent) - 1;
+            if (count <= 0) badge.remove();
+            else badge.textContent = count;
+          }
+        } else {
+          await m3Alert(data.error || 'Failed to dismiss', { title: 'Error', type: 'error' });
+        }
+      } catch (err) {
+        await m3Alert('Failed to dismiss payment', { title: 'Error', type: 'error' });
+      }
+    });
+  });
+</script>

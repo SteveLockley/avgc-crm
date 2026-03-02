@@ -62,7 +62,27 @@ for (const invoiceId of invoiceIds) {
 
   // Recalculate what the line items should be based on current member data + fees
   const isSocial = (member.category || '').toLowerCase().includes('social');
+  const isDD = member.default_payment_method === 'Clubwise Direct Debit';
   const correctItems = calculateLineItems(member, feeItems, isSocial);
+
+  // Include family dependants' items (same logic as generate-invoice.ts)
+  if (!isDD) {
+    const famResult = await db.prepare(
+      `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE m.family_payer_id = ?`
+    ).bind(member.id).all();
+    for (const dep of (famResult.results || []) as any[]) {
+      if (dep.subscription_fee === null && dep.subscription_fee === undefined) continue;
+      const depSocial = (dep.category || '').toLowerCase() === 'social';
+      const depItems = calculateLineItems(dep, feeItems, depSocial);
+      for (const item of depItems) {
+        correctItems.push({ ...item, description: `${item.description} (${dep.first_name} ${dep.surname})` });
+      }
+    }
+  }
+
   const correctTotal = correctItems.reduce((sum: number, item: any) => sum + item.unitPrice, 0);
 
   let revised = false;

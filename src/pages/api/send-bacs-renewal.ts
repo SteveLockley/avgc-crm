@@ -254,8 +254,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         `INSERT INTO sent_emails (member_id, email_type, email_address, year, status) VALUES (?, 'bacs_renewal', ?, ?, 'sent')`
       ).bind(member.id, member.email, year).run();
 
-      // Generate invoice for this member
-      await generateInvoiceForMember(env.DB, member, feeItems, { year, isDD: false, isSocial: false });
+      // Generate invoice for this member (include family dependants if any)
+      await generateInvoiceForMember(env.DB, member, feeItems, { year, isDD: false, isSocial: false, includeFamily: true });
     } else {
       failed++;
       errors.push(`${member.first_name} ${member.surname} (${member.email}): ${result.error}`);

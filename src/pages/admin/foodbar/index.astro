@@ -1,0 +1,629 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+const env = (Astro.locals as any).runtime?.env;
+const toUser = env?.TOUCHOFFICE_USERNAME || '';
+const toPass = env?.TOUCHOFFICE_PASSWORD || '';
+---
+
+<AdminLayout title="Food & Bar - Weekly Income">
+  <style is:global>
+    /* --- M3 Page Header --- */
+    .fb-page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;
+    }
+    .fb-page-header h1 { font-size: 1.75rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .fb-page-header .subtitle { color: #666; font-size: 0.875rem; margin: 0.25rem 0 0; }
+    .fb-year-select {
+      padding: 0.5rem 0.75rem; border: 1px solid #c8c8c8; border-radius: 100px;
+      font-size: 0.875rem; background: #fff; color: #1a1a1a; cursor: pointer;
+    }
+    .fb-year-select:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+    /* --- M3 Status / Error --- */
+    .fb-status { font-size: 0.8125rem; color: #666; padding: 0.5rem 0; }
+    .fb-status.success { color: #1e5631; }
+    .fb-status.error { color: #b91c1c; }
+    .fb-alert {
+      background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+      border-radius: 12px; padding: 0.75rem 1rem; font-size: 0.875rem; margin-bottom: 1rem;
+    }
+
+    /* --- M3 Cards --- */
+    .fb-card {
+      background: #fff; border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+    .fb-card-header {
+      padding: 1rem 1.25rem; border-bottom: 1px solid #f0f0f0;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #fafafa;
+    }
+    .fb-card-header h3 { font-size: 1rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .fb-card-badge {
+      font-size: 0.75rem; padding: 0.25rem 0.625rem;
+      background: #e8f5e9; color: #1e5631; border-radius: 20px; font-weight: 500;
+    }
+
+    /* --- M3 YTD Chart Card --- */
+    .fb-ytd-card {
+      background: #fff; border-radius: 16px; padding: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8;
+      margin-bottom: 1.5rem;
+    }
+    .fb-ytd-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .fb-ytd-header h3 { font-size: 1rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .fb-ytd-header .ytd-total { font-size: 0.8125rem; color: #888; margin: 0; }
+    .fb-ytd-wrap { position: relative; height: 320px; }
+
+    /* --- M3 Summary Table --- */
+    .fb-scroll { overflow-x: auto; }
+    .fb-table {
+      width: 100%; border-collapse: collapse; min-width: 700px;
+      font-variant-numeric: tabular-nums;
+    }
+    .fb-table th {
+      padding: 0.625rem 0.75rem; text-align: center; white-space: nowrap;
+      background: #fafafa; font-weight: 600; color: #666;
+      font-size: 0.75rem; letter-spacing: 0.5px; text-transform: uppercase;
+      border-bottom: 2px solid #e8e8e8; position: sticky; top: 0; z-index: 1;
+      vertical-align: middle;
+    }
+    .fb-table th svg { width: 20px; height: 20px; cursor: help; vertical-align: middle; }
+    .fb-table td {
+      padding: 0.625rem 0.75rem; text-align: right; font-size: 0.875rem; white-space: nowrap;
+      border-bottom: 1px solid #f0f0f0; color: #333; background: #fff;
+    }
+    .fb-table td:first-child {
+      text-align: center; position: sticky; left: 0; background: inherit; z-index: 1; font-weight: 500;
+    }
+    .fb-table th:first-child { position: sticky; left: 0; z-index: 2; background: #fafafa; }
+    .fb-table td:nth-child(2) { text-align: center; color: #888; font-size: 0.8125rem; }
+    .fb-table tbody tr { cursor: pointer; transition: background 0.15s; }
+    .fb-table tbody tr:hover td { background: #f0f7f2; }
+    .fb-table tbody tr.selected td { background: #e8f4ea; }
+    .fb-table tbody tr.selected td:first-child { background: #e8f4ea; }
+
+    /* Total column highlight */
+    .fb-table th.col-total {
+      font-weight: 700; background: #f0f0f0; color: #1a1a1a;
+      border-left: 2px solid #e0e0e0; border-right: 2px solid #e0e0e0;
+    }
+    .fb-table td.col-total {
+      font-weight: 700; background: #f8f8f8; color: #1a1a1a;
+      border-left: 2px solid #e0e0e0; border-right: 2px solid #e0e0e0;
+    }
+    .fb-table tbody tr:hover td.col-total { background: #e0efe3; }
+    .fb-table tbody tr.selected td.col-total { background: #d4e8d9; }
+
+    /* Totals row — dark green M3 primary surface */
+    .fb-table tbody tr.totals-row td {
+      font-weight: 700 !important; background: #1e5631 !important; color: #fff !important;
+      border-bottom: none !important; font-size: 0.9375rem;
+      border-top: 2px solid #174a28;
+    }
+    .fb-table tbody tr.totals-row td.col-total { background: #174a28 !important; }
+    .fb-table tbody tr.totals-row { cursor: default; }
+    .fb-table tbody tr.totals-row:hover td { background: #1e5631 !important; }
+    .fb-table tbody tr.totals-row:hover td.col-total { background: #174a28 !important; }
+    .fb-table tbody tr.totals-row td:first-child { background: #1e5631 !important; }
+
+    .disc-ok { color: #1e5631; }
+    .disc-bad { color: #b91c1c; font-weight: 600; }
+    .week-num { display: block; font-weight: 700; font-size: 1rem; color: #1a1a1a; }
+    .week-dates { display: block; font-size: 0.75rem; color: #999; font-weight: 400; white-space: nowrap; }
+
+    /* --- M3 Detail Section --- */
+    #detail-section { display: none; margin-top: 2rem; }
+    #detail-section.visible { display: block; }
+    .fb-detail-title {
+      font-size: 1.125rem; font-weight: 600; color: #1a1a1a; margin: 0 0 1rem;
+      display: flex; align-items: center; gap: 0.75rem;
+    }
+    .fb-detail-grid {
+      display: grid; grid-template-columns: 1fr 360px; gap: 1.5rem; align-items: start;
+    }
+    @media (max-width: 900px) { .fb-detail-grid { grid-template-columns: 1fr; } }
+
+    /* --- M3 Breakdown Table --- */
+    .fb-breakdown { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    .fb-breakdown th {
+      padding: 0.75rem 1.25rem; text-align: center; font-size: 0.75rem;
+      background: #fafafa; font-weight: 600; color: #666;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 2px solid #e8e8e8;
+    }
+    .fb-breakdown td {
+      padding: 0.75rem 1.25rem; text-align: right; font-size: 0.875rem;
+      border-bottom: 1px solid #f0f0f0; color: #333;
+    }
+    .fb-breakdown td:first-child { text-align: left; }
+    .fb-breakdown tr:last-child td { border-bottom: none; }
+    .fb-breakdown .dept-cell {
+      display: flex; align-items: center; gap: 1rem; font-weight: 500;
+    }
+    .fb-breakdown .dept-cell svg { width: 18px; height: 18px; flex-shrink: 0; }
+    .fb-breakdown .pct-bar-cell { width: 140px; }
+    .pct-bar { display: flex; align-items: center; gap: 0.5rem; }
+    .pct-bar-bg { flex: 1; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; }
+    .pct-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+    .pct-bar span { font-size: 0.75rem; color: #888; min-width: 36px; }
+    .fb-breakdown tfoot td {
+      font-weight: 700; border-top: 2px solid #e8e8e8; background: #fafafa; color: #1a1a1a;
+    }
+
+    /* --- M3 Chart Card --- */
+    .fb-chart-card {
+      background: #fff; border-radius: 16px; padding: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8;
+    }
+    .fb-chart-card h3 { font-size: 1rem; font-weight: 600; color: #1a1a1a; margin: 0 0 1rem; }
+    .fb-chart-wrap { position: relative; height: 300px; }
+
+    /* --- M3 Empty State --- */
+    .fb-empty { text-align: center; padding: 3rem 1rem; color: #999; }
+    .fb-empty p { font-size: 0.875rem; margin: 0; }
+  </style>
+
+  <div class="fb-page-header">
+    <div>
+      <h1>Weekly Income Report</h1>
+      <p class="subtitle">Department sales from TouchOffice POS</p>
+    </div>
+    <div>
+      <select class="fb-year-select" id="year-select"></select>
+    </div>
+  </div>
+
+  <div id="status-msg" class="fb-status" style="display: none;"></div>
+  <div id="error-msg" class="fb-alert" style="display: none;"></div>
+
+  <div id="empty-state" class="fb-card fb-empty">
+    <p>Loading weekly sales data from TouchOffice...</p>
+  </div>
+
+  <div id="summary-section" style="display: none;">
+    <div class="fb-ytd-card">
+      <div class="fb-ytd-header">
+        <h3>Year to Date</h3>
+        <p class="ytd-total" id="ytd-total"></p>
+      </div>
+      <div class="fb-ytd-wrap">
+        <canvas id="ytdChart"></canvas>
+      </div>
+    </div>
+    <div class="fb-card">
+      <div class="fb-card-header">
+        <h3>Weekly Summary</h3>
+        <span id="summary-info" class="fb-card-badge"></span>
+      </div>
+      <div class="fb-scroll">
+        <table class="fb-table">
+          <thead id="summary-head"></thead>
+          <tbody id="summary-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="detail-section">
+    <h2 class="fb-detail-title" id="detail-title"></h2>
+    <div class="fb-detail-grid">
+      <div class="fb-card">
+        <div class="fb-card-header">
+          <h3>Department Breakdown</h3>
+          <span class="fb-card-badge" id="detail-date-range"></span>
+        </div>
+        <table class="fb-breakdown">
+          <thead>
+            <tr><th>Department</th><th>Items</th><th>Value</th><th class="pct-bar-cell">Share</th></tr>
+          </thead>
+          <tbody id="breakdown-body"></tbody>
+          <tfoot id="breakdown-foot"></tfoot>
+        </table>
+      </div>
+      <div class="fb-chart-card">
+        <h3>Sales Distribution</h3>
+        <div class="fb-chart-wrap">
+          <canvas id="pieChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script is:inline define:vars={{ toUser, toPass }}>
+    window._toUser = toUser;
+    window._toPass = toPass;
+  </script>
+  <script is:inline>
+    (function() {
+      var ICONS = {
+        beer: '<svg viewBox="0 0 24 24"><path d="M4 3h13v2h3a1 1 0 011 1v5a3 3 0 01-3 3h-1v4a3 3 0 01-3 3H7a3 3 0 01-3-3V3zm13 6h2a1 1 0 001-1V7h-3v2zM6 5v13a1 1 0 001 1h7a1 1 0 001-1V5H6z"/></svg>',
+        plate: '<svg viewBox="0 0 24 24"><path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z"/></svg>',
+        coffee: '<svg viewBox="0 0 24 24"><path d="M2 21h18v-2H2v2zM20 8h-2V5H4v3H2v5a4 4 0 004 4h8a4 4 0 004-4v-1h2a2 2 0 002-2V8h-2zm-2 5a2 2 0 01-2 2H6a2 2 0 01-2-2V7h14v6zm2-4h-2V9h2v2z"/></svg>',
+        shirt: '<svg viewBox="0 0 24 24"><path d="M16.21 4.41l4.09 4.09-2.83 2.83-1.41-1.41 1.42-1.42L15.4 6.4 14 7.82V20H4V7.82L2.6 6.4.5 8.5l-1.41-1.42L3.18 3h5.64A3 3 0 0012 5a3 3 0 003.18-2h5.64l-4.61 1.41zM6 18h6V9.24l-1.79-1.79L6 11.69V18z"/></svg>',
+        ticket: '<svg viewBox="0 0 24 24"><path d="M22 10V6a2 2 0 00-2-2H4a2 2 0 00-2 2v4a2 2 0 010 4v4a2 2 0 002 2h16a2 2 0 002-2v-4a2 2 0 010-4zm-2-1.46a4 4 0 000 6.92V18H4v-2.54a4 4 0 000-6.92V6h16v2.54zM11 15h2v2h-2v-2zm0-4h2v2h-2v-2zm0-4h2v2h-2V7z"/></svg>',
+        people: '<svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>',
+        golf: '<svg viewBox="0 0 24 24"><path d="M17 5.92L9 2v18H7v-1.73c-1.79.35-3 .99-3 1.73 0 1.1 2.69 2 6 2s6-.9 6-2c0-.99-2.16-1.81-5-1.97V8.98l6-3.06z"/><circle cx="19.5" cy="19.5" r="1.5"/></svg>',
+        locker: '<svg viewBox="0 0 24 24"><path d="M18 1H6a2 2 0 00-2 2v18a2 2 0 002 2h12a2 2 0 002-2V3a2 2 0 00-2-2zm0 20H6V3h12v18zM9.5 11a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 1c-.17 0-.5.13-.5.38V14h1v-1.62c0-.25-.33-.38-.5-.38zM15 8H13V6h2v2z"/></svg>',
+        error: '<svg viewBox="0 0 24 24"><path fill="#b91c1c" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
+        account: '<svg viewBox="0 0 24 24"><path d="M21 18v1a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1H12a2 2 0 00-2 2v8a2 2 0 002 2h9zm-9-2h10V8H12v8zm4-2.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></svg>',
+        cash: '<svg viewBox="0 0 24 24"><path d="M2 6h20v12H2V6zm2 2v8h16V8H4zm8 1a3 3 0 110 6 3 3 0 010-6zm0 2a1 1 0 100 2 1 1 0 000-2zM5 10v4h1v-4H5zm12 0v4h1v-4h-1z"/></svg>',
+        card: '<svg viewBox="0 0 24 24"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zm0 14H4V10h16v8zM4 8V6h16v2H4zm2 4h4v2H6v-2zm6 0h2v2h-2v-2z"/></svg>',
+        discount: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/><path d="M7.5 16.5l9-9 1 1-9 9-1-1z"/><circle cx="9" cy="9" r="1.5"/><circle cx="15" cy="15" r="1.5"/></svg>'
+      };
+
+      function getFixedTotal(week, nameMatch) {
+        if (!week.fixedTotals) return null;
+        for (var i = 0; i < week.fixedTotals.length; i++) {
+          if (week.fixedTotals[i].name.toUpperCase().includes(nameMatch)) return week.fixedTotals[i].value;
+        }
+        return null;
+      }
+
+      function getCashInDrawer(week) { return getFixedTotal(week, 'CASH IN DRAWER'); }
+      function getCreditInDrawer(week) { return getFixedTotal(week, 'CREDIT IN DRAWER'); }
+      function getCardDiscount(week) { return getFixedTotal(week, 'CARD DISCOUNT'); }
+      function getTotalInDrawer(week) { return getFixedTotal(week, 'TOTAL IN DRAWER'); }
+
+      function getPayAccount(week) {
+        if (!week.transactionKeys) return 0;
+        for (var i = 0; i < week.transactionKeys.length; i++) {
+          if (week.transactionKeys[i].name.toUpperCase().includes('PAY ACCOUNT')) return week.transactionKeys[i].value;
+        }
+        return 0;
+      }
+
+      function getDiscrepancy(week) {
+        var tid = getTotalInDrawer(week);
+        if (tid === null) return null;
+        var pa = getPayAccount(week);
+        return tid - (week.total + pa);
+      }
+
+      function deptIcon(name) {
+        var n = name.toLowerCase();
+        if (n.includes('bar')) return ICONS.beer;
+        if (n.includes('food')) return ICONS.plate;
+        if (n.includes('coffee')) return ICONS.coffee;
+        if (n.includes('merchan')) return ICONS.shirt;
+        if (n.includes('visitor')) return ICONS.ticket;
+        if (n.includes('member')) return ICONS.people;
+        if (n.includes('buggy') || n.includes('buggie')) return ICONS.golf;
+        if (n.includes('locker')) return ICONS.locker;
+        return '';
+      }
+
+      function mergeDepartments(deps) {
+        var merged = [];
+        var membershipValue = 0, membershipQty = 0, hasMembership = false;
+        for (var i = 0; i < deps.length; i++) {
+          var d = deps[i];
+          if (d.name.toLowerCase().includes('member')) {
+            membershipValue += d.value;
+            membershipQty += d.quantity;
+            hasMembership = true;
+          } else {
+            merged.push(d);
+          }
+        }
+        if (hasMembership) merged.push({ name: 'Memberships', quantity: membershipQty, value: membershipValue });
+        return merged;
+      }
+
+      var DEPT_ORDER = ['bar', 'food', 'coffee', 'visitor', 'merchan', 'member', 'buggy', 'locker'];
+      function deptSortKey(name) {
+        var n = name.toLowerCase();
+        for (var i = 0; i < DEPT_ORDER.length; i++) { if (n.includes(DEPT_ORDER[i])) return i; }
+        return 99;
+      }
+
+      function getMergedDeptNames(weeks) {
+        var nameSet = {};
+        for (var i = 0; i < weeks.length; i++) {
+          var m = mergeDepartments(weeks[i].departments);
+          for (var j = 0; j < m.length; j++) nameSet[m[j].name] = true;
+        }
+        return Object.keys(nameSet).sort(function(a, b) { return deptSortKey(a) - deptSortKey(b); });
+      }
+
+      var yearSelect = document.getElementById('year-select');
+      var statusMsg = document.getElementById('status-msg');
+      var errorMsg = document.getElementById('error-msg');
+      var emptyState = document.getElementById('empty-state');
+      var summarySection = document.getElementById('summary-section');
+      var summaryHead = document.getElementById('summary-head');
+      var summaryBody = document.getElementById('summary-body');
+      var summaryInfo = document.getElementById('summary-info');
+      var detailSection = document.getElementById('detail-section');
+      var detailTitle = document.getElementById('detail-title');
+      var detailDateRange = document.getElementById('detail-date-range');
+      var breakdownBody = document.getElementById('breakdown-body');
+      var breakdownFoot = document.getElementById('breakdown-foot');
+      var pieChart = null;
+      var ytdChart = null;
+      var weekData = [];
+      var selectedWeek = null;
+
+      var currentYear = new Date().getFullYear();
+      for (var y = currentYear; y >= currentYear - 2; y--) {
+        var opt = document.createElement('option');
+        opt.value = y; opt.textContent = y;
+        yearSelect.appendChild(opt);
+      }
+
+      function fmt(value) {
+        return '\u00a3' + value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+
+      function showStatus(msg, type) {
+        statusMsg.textContent = msg;
+        statusMsg.className = 'fb-status' + (type ? ' ' + type : '');
+        statusMsg.style.display = 'block';
+      }
+      function hideStatus() { statusMsg.style.display = 'none'; }
+
+      var COLORS = [
+        '#2563eb', '#dc2626', '#d97706', '#059669', '#7c3aed',
+        '#db2777', '#0891b2', '#65a30d', '#ea580c', '#6366f1'
+      ];
+
+      // --- YTD Line Chart ---
+      function renderYtdChart(weeks) {
+        var sorted = weeks.slice().sort(function(a, b) { return a.weekNumber - b.weekNumber; });
+        var deptNames = getMergedDeptNames(weeks);
+        var weekLabels = sorted.map(function(w) { return 'Wk ' + w.weekNumber; });
+        var datasets = [];
+        var grandTotal = 0;
+        var totalData = sorted.map(function(w) { return w.total; });
+        for (var i = 0; i < totalData.length; i++) grandTotal += totalData[i];
+        datasets.push({
+          label: 'Total', data: totalData,
+          borderColor: '#1a1a1a', backgroundColor: 'rgba(26,26,26,0.08)',
+          borderWidth: 4, pointRadius: 4, pointHoverRadius: 7,
+          pointBackgroundColor: '#1a1a1a', tension: 0.3, fill: true, order: 0
+        });
+        for (var i = 0; i < deptNames.length; i++) {
+          var name = deptNames[i];
+          var data = sorted.map(function(w) {
+            var m = mergeDepartments(w.departments);
+            for (var j = 0; j < m.length; j++) { if (m[j].name === name) return m[j].value; }
+            return 0;
+          });
+          datasets.push({
+            label: name, data: data,
+            borderColor: COLORS[i % COLORS.length],
+            backgroundColor: COLORS[i % COLORS.length] + '18',
+            borderWidth: 2, pointRadius: 2, pointHoverRadius: 4,
+            tension: 0.3, order: i + 1
+          });
+        }
+        document.getElementById('ytd-total').textContent = fmt(grandTotal) + ' total across ' + weeks.length + ' weeks';
+        if (ytdChart) ytdChart.destroy();
+        ytdChart = new Chart(document.getElementById('ytdChart'), {
+          type: 'line',
+          data: { labels: weekLabels, datasets: datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+              y: { beginAtZero: true, ticks: { callback: function(v) { return '\u00a3' + v.toLocaleString('en-GB'); }, font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+              x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+            },
+            plugins: {
+              legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyleWidth: 10, font: { size: 11 } } },
+              tooltip: { callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y); } } }
+            }
+          }
+        });
+      }
+
+      // --- Summary Table ---
+      function renderSummary(weeks) {
+        if (!weeks || weeks.length === 0) {
+          summarySection.style.display = 'none';
+          emptyState.style.display = 'block';
+          return;
+        }
+        emptyState.style.display = 'none';
+        summarySection.style.display = 'block';
+        var depts = getMergedDeptNames(weeks);
+
+        // Header
+        var h = '<tr><th>Wk</th><th>Date</th><th class="col-total">Total</th>';
+        for (var i = 0; i < depts.length; i++) {
+          var col = COLORS[i % COLORS.length];
+          h += '<th title="' + depts[i] + '" style="fill:' + col + '">' + deptIcon(depts[i]) + '</th>';
+        }
+        h += '<th title="Cash in Drawer" style="fill:#666">' + ICONS.cash + '</th>';
+        h += '<th title="Credit in Drawer" style="fill:#666">' + ICONS.card + '</th>';
+        h += '<th title="Card Discount" style="fill:#666">' + ICONS.discount + '</th>';
+        h += '<th title="PAY ACCOUNT" style="fill:#666">' + ICONS.account + '</th>';
+        h += '<th title="Discrepancy">' + ICONS.error + '</th></tr>';
+        summaryHead.innerHTML = h;
+
+        // Totals row
+        var gt = 0;
+        for (var j = 0; j < weeks.length; j++) gt += weeks[j].total;
+        var tr = '<tr class="totals-row"><td><span style="font-weight:700;font-size:1rem">Total</span></td><td></td>';
+        tr += '<td class="col-total">' + fmt(gt) + '</td>';
+        for (var i = 0; i < depts.length; i++) {
+          var dt = 0;
+          for (var j = 0; j < weeks.length; j++) {
+            var m = mergeDepartments(weeks[j].departments);
+            for (var k = 0; k < m.length; k++) { if (m[k].name === depts[i]) dt += m[k].value; }
+          }
+          tr += '<td>' + fmt(dt) + '</td>';
+        }
+        var cashT = 0, creditT = 0, cardT = 0;
+        for (var j = 0; j < weeks.length; j++) {
+          var cv = getCashInDrawer(weeks[j]); if (cv !== null) cashT += cv;
+          var crv = getCreditInDrawer(weeks[j]); if (crv !== null) creditT += crv;
+          var cdv = getCardDiscount(weeks[j]); if (cdv !== null) cardT += cdv;
+        }
+        tr += '<td>' + fmt(cashT) + '</td><td>' + fmt(creditT) + '</td><td>' + fmt(cardT) + '</td>';
+        var payT = 0;
+        for (var j = 0; j < weeks.length; j++) {
+          if (weeks[j].transactionKeys) {
+            for (var t = 0; t < weeks[j].transactionKeys.length; t++) {
+              if (weeks[j].transactionKeys[t].name.toUpperCase().includes('PAY ACCOUNT')) payT += weeks[j].transactionKeys[t].value;
+            }
+          }
+        }
+        tr += '<td>' + fmt(payT) + '</td>';
+        var discT = 0, hasDisc = false;
+        for (var j = 0; j < weeks.length; j++) {
+          var d = getDiscrepancy(weeks[j]);
+          if (d !== null) { discT += d; hasDisc = true; }
+        }
+        tr += hasDisc ? '<td>' + fmt(discT) + '</td>' : '<td>-</td>';
+        tr += '</tr>';
+
+        // Weekly rows
+        var body = tr;
+        for (var i = weeks.length - 1; i >= 0; i--) {
+          var w = weeks[i];
+          var sel = selectedWeek === w.weekNumber ? ' selected' : '';
+          var merged = mergeDepartments(w.departments);
+          var pa = getPayAccount(w);
+          var cashVal = getCashInDrawer(w);
+          var creditVal = getCreditInDrawer(w);
+          var cardDiscVal = getCardDiscount(w);
+
+          body += '<tr class="' + sel + '" data-week="' + w.weekNumber + '">';
+          body += '<td><span class="week-num">' + w.weekNumber + '</span></td>';
+          body += '<td><span class="week-dates">' + w.weekStart + '</span></td>';
+          body += '<td class="col-total">' + fmt(w.total) + '</td>';
+          for (var j = 0; j < depts.length; j++) {
+            var dv = null;
+            for (var k = 0; k < merged.length; k++) { if (merged[k].name === depts[j]) { dv = merged[k]; break; } }
+            var val = dv ? dv.value : 0;
+            body += '<td style="color:' + COLORS[j % COLORS.length] + '">' + (val !== 0 ? fmt(val) : '-') + '</td>';
+          }
+          body += '<td>' + (cashVal !== null ? fmt(cashVal) : '-') + '</td>';
+          body += '<td>' + (creditVal !== null ? fmt(creditVal) : '-') + '</td>';
+          body += '<td>' + (cardDiscVal !== null ? fmt(cardDiscVal) : '-') + '</td>';
+          body += '<td>' + (pa !== 0 ? fmt(pa) : '-') + '</td>';
+          var disc = getDiscrepancy(w);
+          if (disc === null) body += '<td>-</td>';
+          else if (Math.abs(disc) < 0.005) body += '<td class="disc-ok">' + fmt(0) + '</td>';
+          else body += '<td class="disc-bad">' + fmt(disc) + '</td>';
+          body += '</tr>';
+        }
+        summaryBody.innerHTML = body;
+        summaryInfo.textContent = weeks.length + ' weeks';
+
+        summaryBody.querySelectorAll('tr[data-week]').forEach(function(row) {
+          row.addEventListener('click', function() { selectWeek(parseInt(row.dataset.week)); });
+        });
+        renderYtdChart(weeks);
+      }
+
+      // --- Detail View ---
+      function selectWeek(weekNum) {
+        selectedWeek = weekNum;
+        var week = null;
+        for (var i = 0; i < weekData.length; i++) { if (weekData[i].weekNumber === weekNum) { week = weekData[i]; break; } }
+        if (!week) return;
+        renderSummary(weekData);
+
+        detailSection.classList.add('visible');
+        detailTitle.innerHTML = 'Week ' + week.weekNumber + ' Detail <span class="fb-card-badge">' + week.weekStart + ' \u2014 ' + week.weekEnd + '</span>';
+        detailDateRange.textContent = week.weekStart + ' \u2014 ' + week.weekEnd;
+
+        var merged = mergeDepartments(week.departments);
+        merged.sort(function(a, b) { return deptSortKey(a.name) - deptSortKey(b.name); });
+        var total = week.total;
+
+        var bHtml = '';
+        for (var i = 0; i < merged.length; i++) {
+          var d = merged[i];
+          var col = COLORS[i % COLORS.length];
+          var pct = total > 0 ? ((d.value / total) * 100) : 0;
+          bHtml += '<tr><td><div class="dept-cell" style="fill:' + col + ';color:' + col + '">' + deptIcon(d.name) + d.name + '</div></td>' +
+            '<td>' + d.quantity.toLocaleString('en-GB') + '</td>' +
+            '<td><strong style="color:' + col + '">' + fmt(d.value) + '</strong></td>' +
+            '<td class="pct-bar-cell"><div class="pct-bar"><div class="pct-bar-bg"><div class="pct-bar-fill" style="width:' + pct + '%;background:' + col + '"></div></div><span>' + pct.toFixed(1) + '%</span></div></td></tr>';
+        }
+        breakdownBody.innerHTML = bHtml;
+
+        var totalQty = 0;
+        for (var i = 0; i < merged.length; i++) totalQty += merged[i].quantity;
+        breakdownFoot.innerHTML = '<tr><td>Total</td><td>' + totalQty.toLocaleString('en-GB') + '</td><td><strong>' + fmt(total) + '</strong></td>' +
+          '<td class="pct-bar-cell"><div class="pct-bar"><div class="pct-bar-bg"><div class="pct-bar-fill" style="width:100%;background:#1e5631"></div></div><span>100%</span></div></td></tr>';
+
+        if (pieChart) pieChart.destroy();
+        pieChart = new Chart(document.getElementById('pieChart'), {
+          type: 'doughnut',
+          data: {
+            labels: merged.map(function(d) { return d.name; }),
+            datasets: [{ data: merged.map(function(d) { return d.value; }), backgroundColor: COLORS.slice(0, merged.length), borderWidth: 2, borderColor: '#fff' }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { position: 'bottom', labels: { padding: 12, usePointStyle: true, pointStyleWidth: 10, font: { size: 11 } } },
+              tooltip: { callbacks: { label: function(ctx) { var p = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : '0.0'; return ctx.label + ': ' + fmt(ctx.parsed) + ' (' + p + '%)'; } } }
+            }
+          }
+        });
+        detailSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      async function apiCall(body) {
+        var res = await fetch('/api/touchoffice-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        var data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
+        return data;
+      }
+
+      async function doUpdate() {
+        var year = parseInt(yearSelect.value);
+        errorMsg.style.display = 'none';
+        hideStatus();
+        try {
+          var status = await apiCall({ action: 'status', year: year });
+          weekData = status.weeks || [];
+          renderSummary(weekData);
+          var missing = status.missingWeeks || [];
+          if (missing.length === 0) {
+            if (!selectedWeek && weekData.length > 0) selectWeek(weekData[weekData.length - 1].weekNumber);
+            return;
+          }
+          showStatus('Fetching ' + missing.length + ' new week' + (missing.length !== 1 ? 's' : '') + ' from TouchOffice...', '');
+          var loginRes = await fetch('/api/touchoffice-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: window._toUser, password: window._toPass }) });
+          var loginData = await loginRes.json();
+          if (!loginData.success) throw new Error(loginData.error || 'TouchOffice login failed.');
+
+          var fetchedCount = 0, errors = [];
+          for (var i = 0; i < missing.length; i++) {
+            var week = missing[i];
+            showStatus('Fetching week ' + week.weekNumber + ' (' + (i + 1) + '/' + missing.length + ')...', '');
+            try {
+              await apiCall({ action: 'fetch', year: year, weekNumber: week.weekNumber, start: week.start, end: week.end });
+              fetchedCount++;
+              var updated = await apiCall({ action: 'status', year: year });
+              weekData = updated.weeks || [];
+              renderSummary(weekData);
+            } catch (err) {
+              errors.push('Week ' + week.weekNumber + ': ' + err.message);
+              if (err.message.includes('login failed') || err.message.includes('No dept data') || err.message.includes('credentials')) break;
+            }
+          }
+          if (fetchedCount > 0) { showStatus('Fetched ' + fetchedCount + ' new week' + (fetchedCount !== 1 ? 's' : '') + '.', 'success'); setTimeout(hideStatus, 4000); }
+          else hideStatus();
+          if (errors.length > 0) { errorMsg.innerHTML = errors.join('<br>'); errorMsg.style.display = 'block'; }
+          if (!selectedWeek && weekData.length > 0) selectWeek(weekData[weekData.length - 1].weekNumber);
+          else if (selectedWeek) {
+            for (var i = 0; i < weekData.length; i++) { if (weekData[i].weekNumber === selectedWeek) { selectWeek(selectedWeek); break; } }
+          }
+        } catch (err) { errorMsg.textContent = err.message; errorMsg.style.display = 'block'; }
+      }
+
+      yearSelect.addEventListener('change', function() { selectedWeek = null; detailSection.classList.remove('visible'); doUpdate(); });
+      doUpdate();
+    })();
+  </script>
+</AdminLayout>

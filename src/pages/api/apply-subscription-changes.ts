@@ -121,7 +121,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const isDD = member.default_payment_method === 'Clubwise Direct Debit';
       const isSocial = (change.newCategory || '').toLowerCase().includes('social');
 
-      const invoiceResult = await generateInvoiceForMember(db, member, feeItems, { year, isDD, isSocial });
+      const invoiceResult = await generateInvoiceForMember(db, member, feeItems, { year, isDD, isSocial, includeFamily: true });
       if (invoiceResult.success && invoiceResult.invoiceNumber !== 'already_exists') {
         invoicesGenerated++;
       } else if (!invoiceResult.success) {

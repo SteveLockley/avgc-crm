@@ -54,7 +54,11 @@ const statusClass = expired ? 'status-expired' : expiring ? 'status-warning' : '
         </div>
       </div>
       <div class="header-actions">
-        <a href={`/admin/invoices/generate?member_id=${id}`} class="btn btn-secondary">Generate Invoice</a>
+        {!member.family_payer_id ? (
+          <a href={`/admin/invoices/generate?member_id=${id}`} class="btn btn-secondary">Generate Invoice</a>
+        ) : (
+          <a href={`/admin/invoices/generate?member_id=${member.family_payer_id}`} class="btn btn-secondary" title={`Invoice via ${familyPayer?.first_name} ${familyPayer?.surname}`}>Generate Family Invoice</a>
+        )}
         <a href={`/admin/members/email?member_id=${id}`} class="btn btn-secondary">Email</a>
         <a href={`/admin/members/${id}/edit`} class="btn btn-primary">Edit</a>
       </div>

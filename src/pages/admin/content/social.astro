@@ -1,0 +1,752 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { isMetaConfigured, isInstagramConfigured } from '../../../lib/meta-api';
+
+const env = Astro.locals.runtime?.env;
+const db = env?.DB;
+const url = new URL(Astro.request.url);
+const action = url.searchParams.get('action');
+const editId = url.searchParams.get('id');
+
+const metaConfigured = isMetaConfigured(env);
+const igConfigured = isInstagramConfigured(env);
+
+let posts: any[] = [];
+let editPost: any = null;
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+// Handle form submission
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const formAction = formData.get('_action');
+
+  try {
+    if (formAction === 'save_draft' || formAction === 'publish') {
+      const postMessage = formData.get('message')?.toString().trim();
+      const imageUrl = formData.get('image_url')?.toString().trim() || null;
+      const existingId = formData.get('id');
+
+      if (!postMessage) {
+        message = 'Message text is required.';
+        messageType = 'error';
+      } else if (existingId) {
+        await db.prepare(
+          `UPDATE social_posts
+           SET message = ?, image_url = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        ).bind(postMessage, imageUrl, existingId).run();
+
+        if (formAction === 'publish') {
+          message = 'Post saved. Publishing...';
+          messageType = 'success';
+        } else {
+          message = 'Draft saved successfully.';
+          messageType = 'success';
+        }
+      } else {
+        await db.prepare(
+          `INSERT INTO social_posts (message, image_url, status, created_by)
+           VALUES (?, ?, 'draft', ?)`
+        ).bind(postMessage, imageUrl, 'admin').run();
+
+        if (formAction === 'publish') {
+          message = 'Post created. Publishing...';
+          messageType = 'success';
+        } else {
+          message = 'Draft created successfully.';
+          messageType = 'success';
+        }
+      }
+    } else if (formAction === 'delete') {
+      const id = formData.get('id');
+      await db.prepare('DELETE FROM social_posts WHERE id = ?').bind(id).run();
+      message = 'Post deleted.';
+      messageType = 'success';
+    }
+  } catch (e: any) {
+    message = e.message || 'An error occurred.';
+    messageType = 'error';
+  }
+}
+
+// Fetch posts
+if (db) {
+  try {
+    const result = await db.prepare(
+      'SELECT * FROM social_posts ORDER BY created_at DESC'
+    ).all();
+    posts = result.results || [];
+
+    if (editId) {
+      editPost = await db.prepare('SELECT * FROM social_posts WHERE id = ?').bind(editId).first();
+    }
+  } catch (e) {
+    console.error('Error fetching social posts:', e);
+  }
+}
+
+const isEditing = action === 'edit' && editPost;
+const isCreating = action === 'new';
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr + 'Z');
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function truncate(str: string, len: number): string {
+  return str.length > len ? str.slice(0, len) + '...' : str;
+}
+---
+
+<AdminLayout title="Social Media">
+  <div class="social-admin">
+    {!metaConfigured && (
+      <div class="alert alert-error">
+        Meta API is not configured. Set META_PAGE_ACCESS_TOKEN and META_PAGE_ID secrets in Cloudflare to enable publishing.
+      </div>
+    )}
+
+    {message && (
+      <div class={`alert alert-${messageType}`}>
+        {message}
+      </div>
+    )}
+
+    {(isCreating || isEditing) ? (
+      <div class="editor-section">
+        <div class="editor-header">
+          <a href="/admin/content/social" class="back-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
+            </svg>
+            Back to Posts
+          </a>
+          <h2>{isEditing ? 'Edit Post' : 'New Post'}</h2>
+        </div>
+
+        <form method="POST" class="editor-form">
+          <input type="hidden" name="_action" value="save_draft" id="formAction" />
+          {isEditing && <input type="hidden" name="id" value={editPost.id} />}
+
+          <div class="form-group">
+            <label for="message">Message *</label>
+            <textarea
+              id="message"
+              name="message"
+              rows="6"
+              required
+              maxlength="2200"
+              placeholder="Write your post..."
+            >{editPost?.message || ''}</textarea>
+            <div class="char-count">
+              <span id="charCount">0</span> / 2,200
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="image_url">Image URL</label>
+            <input
+              type="url"
+              id="image_url"
+              name="image_url"
+              value={editPost?.image_url || ''}
+              placeholder="https://..."
+            />
+            <span class="form-hint">Paste a public image link (e.g. from IT shared store). Instagram requires JPEG images.</span>
+            {editPost?.image_url && (
+              <div class="image-preview">
+                <img src={editPost.image_url} alt="Current image" />
+              </div>
+            )}
+          </div>
+
+          <div class="form-group">
+            <label>Platforms</label>
+            <div class="platform-checks">
+              <label class="checkbox-label">
+                <input type="checkbox" name="platform_fb" checked disabled />
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="#1877F2"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                <span>Facebook</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="platform_ig" checked disabled={!igConfigured} />
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="#E4405F"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+                <span>Instagram {!igConfigured ? '(not configured)' : ''}</span>
+              </label>
+            </div>
+            {!igConfigured && (
+              <span class="form-hint">Set META_IG_USER_ID secret to enable Instagram publishing.</span>
+            )}
+            <span class="form-hint">Instagram requires an image — text-only posts will only go to Facebook.</span>
+          </div>
+
+          <div class="form-actions">
+            <a href="/admin/content/social" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-secondary" onclick="document.getElementById('formAction').value='save_draft'">
+              Save Draft
+            </button>
+            {metaConfigured && (
+              <button type="submit" class="btn btn-primary" id="publishBtn" onclick="document.getElementById('formAction').value='publish'">
+                Publish Now
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    ) : (
+      <div class="list-section">
+        <div class="list-header">
+          <p>{posts.length} post{posts.length !== 1 ? 's' : ''}</p>
+          <a href="/admin/content/social?action=new" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Post
+          </a>
+        </div>
+
+        {posts.length > 0 ? (
+          <div class="post-list">
+            {posts.map(post => (
+              <div class="post-item">
+                {post.image_url && (
+                  <div class="post-thumb">
+                    <img src={post.image_url} alt="" loading="lazy" />
+                  </div>
+                )}
+                <div class="post-info">
+                  <p class="post-message">{truncate(post.message, 120)}</p>
+                  <div class="post-meta">
+                    <span class={`status-badge ${post.status}`}>
+                      {post.status}
+                    </span>
+                    <span class="date">{formatDate(post.published_at || post.created_at)}</span>
+                    <span class="platforms">
+                      {post.fb_post_id && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="#1877F2" title="Published to Facebook"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                      )}
+                      {post.ig_media_id && (
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="#E4405F" title="Published to Instagram"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+                      )}
+                    </span>
+                  </div>
+                  {post.error_message && (
+                    <p class="post-error">{post.error_message}</p>
+                  )}
+                </div>
+                <div class="post-actions">
+                  {(post.status === 'draft' || post.status === 'failed') && metaConfigured && (
+                    <button class="action-btn publish-btn" title="Publish" data-post-id={post.id}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                      </svg>
+                    </button>
+                  )}
+                  {post.status === 'draft' && (
+                    <a href={`/admin/content/social?action=edit&id=${post.id}`} class="action-btn" title="Edit">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </a>
+                  )}
+                  <form method="POST" class="delete-form" onsubmit="return confirm('Delete this post?')">
+                    <input type="hidden" name="_action" value="delete" />
+                    <input type="hidden" name="id" value={post.id} />
+                    <button type="submit" class="action-btn delete" title="Delete">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <polyline points="16 6 12 2 8 6"/>
+              <line x1="12" y1="2" x2="12" y2="15"/>
+            </svg>
+            <h3>No Posts Yet</h3>
+            <p>Create your first social media post to get started.</p>
+            <a href="/admin/content/social?action=new" class="btn btn-primary">Create Post</a>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</AdminLayout>
+
+<script>
+  // Character counter
+  const textarea = document.getElementById('message') as HTMLTextAreaElement | null;
+  const charCount = document.getElementById('charCount');
+  if (textarea && charCount) {
+    const update = () => { charCount.textContent = String(textarea.value.length); };
+    textarea.addEventListener('input', update);
+    update();
+  }
+
+  // Publish buttons (async via API)
+  document.querySelectorAll('.publish-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const postId = (btn as HTMLElement).dataset.postId;
+      if (!confirm('Publish this post to social media?')) return;
+
+      (btn as HTMLButtonElement).disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>';
+
+      try {
+        const res = await fetch('/api/publish-social', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId: Number(postId) }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          window.location.reload();
+        } else {
+          alert('Publish failed: ' + (data.errors?.join(', ') || data.error || 'Unknown error'));
+          window.location.reload();
+        }
+      } catch (err) {
+        alert('Network error: ' + (err as Error).message);
+        (btn as HTMLButtonElement).disabled = false;
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+      }
+    });
+  });
+
+  // Handle "Publish Now" from compose form — save then publish
+  const form = document.querySelector('.editor-form') as HTMLFormElement | null;
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      const actionInput = document.getElementById('formAction') as HTMLInputElement;
+      if (actionInput.value !== 'publish') return; // normal save_draft submit
+
+      e.preventDefault();
+      const publishBtn = document.getElementById('publishBtn') as HTMLButtonElement;
+      publishBtn.disabled = true;
+      publishBtn.textContent = 'Saving...';
+
+      // First save via normal form POST
+      const formData = new FormData(form);
+      formData.set('_action', 'save_draft'); // save first
+      const saveRes = await fetch(form.action || window.location.href, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!saveRes.ok) {
+        alert('Failed to save post');
+        publishBtn.disabled = false;
+        publishBtn.textContent = 'Publish Now';
+        return;
+      }
+
+      // Get the latest post ID (newest draft)
+      publishBtn.textContent = 'Publishing...';
+      const pageRes = await fetch('/admin/content/social');
+      const html = await pageRes.text();
+      // Extract the first post ID from the publish buttons
+      const match = html.match(/data-post-id="(\d+)"/);
+      if (!match) {
+        alert('Post saved as draft. Go back to publish it.');
+        window.location.href = '/admin/content/social';
+        return;
+      }
+
+      const postId = match[1];
+      const pubRes = await fetch('/api/publish-social', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: Number(postId) }),
+      });
+      const data = await pubRes.json();
+
+      if (data.errors?.length) {
+        alert('Published with warnings: ' + data.errors.join(', '));
+      }
+
+      window.location.href = '/admin/content/social';
+    });
+  }
+</script>
+
+<style>
+  .social-admin {
+    max-width: 1000px;
+  }
+
+  .alert {
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+
+  .alert-success {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .alert-error {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  /* Editor */
+  .editor-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-light);
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .back-link:hover {
+    color: var(--primary);
+  }
+
+  .back-link svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .editor-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .editor-form {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .form-group input[type="text"],
+  .form-group input[type="url"],
+  .form-group textarea {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: inherit;
+  }
+
+  .form-group textarea {
+    resize: vertical;
+  }
+
+  .form-group input:focus:not([type="checkbox"]):not([type="file"]),
+  .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(30, 86, 49, 0.1);
+  }
+
+  .form-hint {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--text-light);
+  }
+
+  .char-count {
+    text-align: right;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    margin-top: 0.25rem;
+  }
+
+  .image-preview {
+    margin-top: 0.75rem;
+  }
+
+  .image-preview img {
+    max-width: 200px;
+    max-height: 150px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+  }
+
+  .platform-checks {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .checkbox-label input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* List */
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .list-header p {
+    margin: 0;
+    color: var(--text-light);
+  }
+
+  .post-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .post-item {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    align-items: center;
+  }
+
+  .post-thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .post-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .post-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .post-message {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    white-space: pre-line;
+  }
+
+  .post-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-light);
+    align-items: center;
+  }
+
+  .platforms {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  .post-error {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: #dc2626;
+  }
+
+  .status-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: capitalize;
+  }
+
+  .status-badge.published {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .status-badge.draft {
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .status-badge.failed {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .post-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .action-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card-bg);
+    color: var(--text-light);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+
+  .action-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+
+  .action-btn.delete:hover {
+    border-color: #dc2626;
+    color: #dc2626;
+    background: #fee2e2;
+  }
+
+  .action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .delete-form {
+    display: contents;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+
+  .btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark, #164024);
+  }
+
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--border);
+  }
+
+  /* Empty State */
+  .empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .empty-state svg {
+    width: 64px;
+    height: 64px;
+    color: var(--text-light);
+    opacity: 0.5;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state h3 {
+    margin: 0 0 0.5rem 0;
+  }
+
+  .empty-state p {
+    margin: 0 0 1.5rem 0;
+    color: var(--text-light);
+  }
+</style>

@@ -10,18 +10,20 @@ let stats = {
   faq: 0,
   gallery: 0,
   documents: 0,
-  greenFees: 0
+  greenFees: 0,
+  socialPosts: 0
 };
 
 try {
   if (db) {
-    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount] = await Promise.all([
+    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount, socialCount] = await Promise.all([
       db.prepare('SELECT COUNT(*) as count FROM website_pages').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_news').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_faq').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_gallery').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM member_documents').first<{count: number}>(),
-      db.prepare('SELECT COUNT(*) as count FROM green_fees').first<{count: number}>()
+      db.prepare('SELECT COUNT(*) as count FROM green_fees').first<{count: number}>(),
+      db.prepare('SELECT COUNT(*) as count FROM social_posts').first<{count: number}>().catch(() => ({ count: 0 }))
     ]);
     stats = {
       pages: pagesCount?.count || 0,
@@ -29,7 +31,8 @@ try {
       faq: faqCount?.count || 0,
       gallery: galleryCount?.count || 0,
       documents: docsCount?.count || 0,
-      greenFees: feesCount?.count || 0
+      greenFees: feesCount?.count || 0,
+      socialPosts: socialCount?.count || 0
     };
   }
 } catch (e) {
@@ -86,6 +89,14 @@ const contentSections = [
     countLabel: 'fee rates'
   },
   {
+    title: 'Social Media',
+    description: 'Publish posts to Facebook and Instagram, and manage the social feed',
+    href: '/admin/content/social',
+    icon: 'share',
+    count: stats.socialPosts,
+    countLabel: 'posts'
+  },
+  {
     title: 'Google Business Profile',
     description: 'Opening hours, Google Business listing, special hours, and sync status',
     href: '/admin/content/google-business',
@@ -103,6 +114,7 @@ const icons: Record<string, string> = {
   'folder': '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
   'clock': '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   'pound': '<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'share': '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
   'map-pin': '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
   'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'
 };
@@ -157,6 +169,13 @@ const icons: Record<string, string> = {
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
           New FAQ
+        </a>
+        <a href="/admin/content/social?action=new" class="action-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          New Post
         </a>
         <a href="/admin/content/documents?action=new" class="action-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

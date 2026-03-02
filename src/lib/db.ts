@@ -157,8 +157,6 @@ export const PAYMENT_METHODS = [
   'Clubwise Direct Debit',
   'BACS',
   'Over the Till',
-  'Cheque',
-  'Card'
 ] as const;
 
 // Age groups
