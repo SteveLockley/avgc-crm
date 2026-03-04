@@ -108,7 +108,7 @@ export interface Invoice {
   period_end: string;
   subtotal: number;
   total: number;
-  status: 'draft' | 'sent' | 'paid' | 'cancelled';
+  status: 'draft' | 'paid' | 'cancelled';
   sent_at: string | null;
   sent_to_email: string | null;
   custom_message: string | null;
@@ -135,7 +135,7 @@ export interface InvoiceSetting {
 }
 
 // Invoice statuses
-export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'cancelled'] as const;
+export const INVOICE_STATUSES = ['draft', 'paid', 'cancelled'] as const;
 
 // Zero-cost subscription types (Life, Honorary, Gratis, Retention)
 // These may still have fees (EGU, County, Locker) depending on member circumstances
@@ -164,7 +164,6 @@ export const AGE_GROUPS = [
   'Junior',
   'Adult',
   'Senior',
-  'Playing Ladies'
 ] as const;
 
 // Format date for display (DD/MM/YYYY)
@@ -266,7 +265,6 @@ export function formatInvoicePeriod(start: string, end: string): string {
 export function getInvoiceStatusBadge(status: string): string {
   switch (status) {
     case 'draft': return 'badge-warning';
-    case 'sent': return 'badge-info';
     case 'paid': return 'badge-success';
     case 'cancelled': return 'badge-danger';
     default: return 'badge-info';
