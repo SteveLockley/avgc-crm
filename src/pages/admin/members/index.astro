@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { formatDate, isExpired, expiresSoon, EGU_CATEGORIES, calculateEguCategory, type Member } from '../../../lib/db';
+import { formatDate, isExpired, expiresSoon } from '../../../lib/db';
 
 const db = Astro.locals.runtime.env.DB;
 
@@ -8,9 +8,10 @@ const db = Astro.locals.runtime.env.DB;
 const url = Astro.url;
 const search = url.searchParams.get('search') || '';
 const subscriptionType = url.searchParams.get('subscription_type') || '';
-const eguCategory = url.searchParams.get('egu_category') || '';
 const paymentMethod = url.searchParams.get('payment_method') || '';
 const filter = url.searchParams.get('filter') || '';
+const emailSent = url.searchParams.get('email_sent') || '';
+const emailNotSent = url.searchParams.get('email_not_sent') || '';
 const page = parseInt(url.searchParams.get('page') || '1');
 const sortBy = url.searchParams.get('sort') || 'surname';
 const sortDir = url.searchParams.get('dir') || 'asc';
@@ -36,25 +37,6 @@ const subscriptionTypesResult = await db.prepare(
   `SELECT name FROM payment_items WHERE category = 'Subscription' AND active = 1 ORDER BY name`
 ).all();
 const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) => r.name as string);
-
-// For EGU category filtering, we need to get all members and filter in code
-// because EGU category is calculated, not stored
-let filteredByEgu = false;
-let eguFilteredIds: number[] = [];
-
-if (eguCategory) {
-  filteredByEgu = true;
-  // Get all members with required fields for EGU calculation
-  const allMembers = await db.prepare(
-    `SELECT id, gender, date_of_birth, home_away, home_club
-     FROM members
-     WHERE category IS NOT NULL AND category != ''`
-  ).all();
-
-  eguFilteredIds = (allMembers.results || [])
-    .filter((m: any) => calculateEguCategory(m as Pick<Member, 'gender' | 'date_of_birth' | 'home_away' | 'home_club'>) === eguCategory)
-    .map((m: any) => m.id);
-}
 
 // Build query
 let whereClause = '1=1';
@@ -90,13 +72,14 @@ if (filter === 'expiring') {
   whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
 }
 
-if (filteredByEgu && eguFilteredIds.length > 0) {
-  const placeholders = eguFilteredIds.map(() => '?').join(',');
-  whereClause += ` AND id IN (${placeholders})`;
-  params.push(...eguFilteredIds);
-} else if (filteredByEgu && eguFilteredIds.length === 0) {
-  // No members match the EGU category
-  whereClause += ' AND 1=0';
+if (emailSent) {
+  whereClause += ` AND id IN (SELECT DISTINCT member_id FROM sent_emails WHERE email_type = ? AND status = 'sent')`;
+  params.push(emailSent);
+}
+
+if (emailNotSent) {
+  whereClause += ` AND id NOT IN (SELECT DISTINCT member_id FROM sent_emails WHERE email_type = ? AND status = 'sent')`;
+  params.push(emailNotSent);
 }
 
 // Get total count
@@ -134,9 +117,11 @@ function buildQueryString(pageNum: number): string {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (subscriptionType) params.set('subscription_type', subscriptionType);
-  if (eguCategory) params.set('egu_category', eguCategory);
+
   if (paymentMethod) params.set('payment_method', paymentMethod);
   if (filter) params.set('filter', filter);
+  if (emailSent) params.set('email_sent', emailSent);
+  if (emailNotSent) params.set('email_not_sent', emailNotSent);
   if (sortBy !== 'surname') params.set('sort', sortBy);
   if (sortDir !== 'asc') params.set('dir', sortDir);
   params.set('page', String(pageNum));
@@ -148,9 +133,11 @@ function buildFilterQueryString(): string {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (subscriptionType) params.set('subscription_type', subscriptionType);
-  if (eguCategory) params.set('egu_category', eguCategory);
+
   if (paymentMethod) params.set('payment_method', paymentMethod);
   if (filter) params.set('filter', filter);
+  if (emailSent) params.set('email_sent', emailSent);
+  if (emailNotSent) params.set('email_not_sent', emailNotSent);
   return params.toString() ? `?${params.toString()}` : '';
 }
 
@@ -159,8 +146,11 @@ function buildSortUrl(column: string): string {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (subscriptionType) params.set('subscription_type', subscriptionType);
-  if (eguCategory) params.set('egu_category', eguCategory);
+
+  if (paymentMethod) params.set('payment_method', paymentMethod);
   if (filter) params.set('filter', filter);
+  if (emailSent) params.set('email_sent', emailSent);
+  if (emailNotSent) params.set('email_not_sent', emailNotSent);
   params.set('sort', column);
   // Toggle direction if clicking same column
   if (sortBy === column) {
@@ -189,8 +179,7 @@ function getSortIndicator(column: string): string {
       <span class="member-count">{totalCount} members</span>
     </div>
     <div class="header-actions">
-      <a href="/admin/members/subscription-renewals" class="btn btn-primary">Subscription Renewals</a>
-      <a href="/admin/members/new" class="btn btn-primary">+ Add Member</a>
+      <a href="/admin/members/new/edit" class="btn btn-primary">+ Add Member</a>
       <div class="dropdown">
         <button class="btn btn-secondary dropdown-toggle" id="actions-dropdown-btn">
           Actions
@@ -199,6 +188,7 @@ function getSortIndicator(column: string): string {
           </svg>
         </button>
         <div class="dropdown-menu" id="actions-dropdown-menu">
+          <a href="/admin/members/subscription-renewals" class="dropdown-item">Subscription Renewals</a>
           <a href="/admin/members/subscription-review" class="dropdown-item">Subscription Review</a>
           <a href="/admin/members/direct-debit" class="dropdown-item">DD Consolidation</a>
           <a href="/admin/members/dd-mapping-report" class="dropdown-item">DD Mapping</a>
@@ -247,22 +237,38 @@ function getSortIndicator(column: string): string {
         </div>
 
         <div class="filter-group">
-          <label class="filter-label">EGU Category</label>
-          <select name="egu_category" class="filter-select">
-            <option value="">All EGU Categories</option>
-            {EGU_CATEGORIES.map(cat => (
-              <option value={cat} selected={eguCategory === cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
-
-        <div class="filter-group">
           <label class="filter-label">Status</label>
           <select name="filter" class="filter-select">
             <option value="">All Statuses</option>
             <option value="active" selected={filter === 'active'}>Active</option>
             <option value="expiring" selected={filter === 'expiring'}>Expiring Soon</option>
             <option value="expired" selected={filter === 'expired'}>Expired</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Email Sent</label>
+          <select name="email_sent" class="filter-select" id="email-sent-select">
+            <option value="">Any</option>
+            <option value="dd_renewal" selected={emailSent === 'dd_renewal'}>DD Renewal</option>
+            <option value="bacs_renewal" selected={emailSent === 'bacs_renewal'}>BACS Renewal</option>
+            <option value="social_renewal" selected={emailSent === 'social_renewal'}>Social Renewal</option>
+            <option value="invoice_send" selected={emailSent === 'invoice_send'}>Invoice</option>
+            <option value="subscription_change" selected={emailSent === 'subscription_change'}>Sub Change</option>
+            <option value="fees_notification" selected={emailSent === 'fees_notification'}>Fees Notice</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Email Not Sent</label>
+          <select name="email_not_sent" class="filter-select" id="email-not-sent-select">
+            <option value="">Any</option>
+            <option value="dd_renewal" selected={emailNotSent === 'dd_renewal'}>DD Renewal</option>
+            <option value="bacs_renewal" selected={emailNotSent === 'bacs_renewal'}>BACS Renewal</option>
+            <option value="social_renewal" selected={emailNotSent === 'social_renewal'}>Social Renewal</option>
+            <option value="invoice_send" selected={emailNotSent === 'invoice_send'}>Invoice</option>
+            <option value="subscription_change" selected={emailNotSent === 'subscription_change'}>Sub Change</option>
+            <option value="fees_notification" selected={emailNotSent === 'fees_notification'}>Fees Notice</option>
           </select>
         </div>
 
@@ -274,13 +280,14 @@ function getSortIndicator(column: string): string {
     </form>
 
     <!-- Active filters -->
-    {(subscriptionType || eguCategory || filter || search) && (
+    {(subscriptionType || filter || search || emailSent || emailNotSent) && (
       <div class="active-filters">
         <span class="filters-label">Active filters:</span>
         {search && <span class="filter-tag">Search: {search}</span>}
         {subscriptionType && <span class="filter-tag">Type: {subscriptionType}</span>}
-        {eguCategory && <span class="filter-tag">EGU: {eguCategory}</span>}
         {filter && <span class="filter-tag">Status: {filter}</span>}
+        {emailSent && <span class="filter-tag">Sent: {emailSent.replace('_', ' ')}</span>}
+        {emailNotSent && <span class="filter-tag">Not sent: {emailNotSent.replace('_', ' ')}</span>}
       </div>
     )}
   </div>
@@ -292,12 +299,12 @@ function getSortIndicator(column: string): string {
         <thead>
           <tr>
             <th><a href={buildSortUrl('name')} class="sort-header">Name{getSortIndicator('name')}</a></th>
-            <th><a href={buildSortUrl('category')} class="sort-header">Subscription{getSortIndicator('category')}</a></th>
-            <th class="center-col"><a href={buildSortUrl('home_away')} class="sort-header">H/A{getSortIndicator('home_away')}</a></th>
-            <th class="center-col"><a href={buildSortUrl('handicap')} class="sort-header">HCP{getSortIndicator('handicap')}</a></th>
+            <th class="category-col"><a href={buildSortUrl('category')} class="sort-header">Subscription{getSortIndicator('category')}</a></th>
+            <th class="center-col ha-col"><a href={buildSortUrl('home_away')} class="sort-header">H/A{getSortIndicator('home_away')}</a></th>
+            <th class="center-col handicap-col"><a href={buildSortUrl('handicap')} class="sort-header">HCP{getSortIndicator('handicap')}</a></th>
             <th><a href={buildSortUrl('expires')} class="sort-header">Expires{getSortIndicator('expires')}</a></th>
-            <th class="right-col"><a href={buildSortUrl('balance')} class="sort-header">Balance{getSortIndicator('balance')}</a></th>
-            <th><a href={buildSortUrl('notes')} class="sort-header">Notes{getSortIndicator('notes')}</a></th>
+            <th class="right-col balance-col"><a href={buildSortUrl('balance')} class="sort-header">Balance{getSortIndicator('balance')}</a></th>
+            <th class="notes-col"><a href={buildSortUrl('notes')} class="sort-header">Notes{getSortIndicator('notes')}</a></th>
             <th class="actions-col">Actions</th>
           </tr>
         </thead>
@@ -312,18 +319,18 @@ function getSortIndicator(column: string): string {
                   <span class="member-email">{member.email}</span>
                 )}
               </td>
-              <td class="category-cell">
+              <td class="category-cell category-col">
                 <span class="category-name">{member.category || '-'}</span>
                 {member.subscription_template && (
                   <span class="template-tag">{member.subscription_template}</span>
                 )}
               </td>
-              <td class="center-col">
+              <td class="center-col ha-col">
                 <span class={`status-badge ${member.home_away === 'H' ? 'badge-home' : 'badge-away'}`}>
                   {member.home_away || '-'}
                 </span>
               </td>
-              <td class="center-col handicap-cell">
+              <td class="center-col handicap-cell handicap-col">
                 {member.handicap_index ?? '-'}
               </td>
               <td>
@@ -333,10 +340,10 @@ function getSortIndicator(column: string): string {
                   </span>
                 ) : '-'}
               </td>
-              <td class={`right-col balance-cell ${(member.account_balance as number) < 0 ? 'negative' : ''}`}>
+              <td class={`right-col balance-cell balance-col ${(member.account_balance as number) < 0 ? 'negative' : ''}`}>
                 {member.account_balance !== 0 ? `£${member.account_balance}` : '-'}
               </td>
-              <td class="notes-cell" title={member.notes as string || ''}>
+              <td class="notes-cell notes-col" title={member.notes as string || ''}>
                 {member.notes || '-'}
               </td>
               <td class="actions-col">
@@ -434,6 +441,11 @@ function getSortIndicator(column: string): string {
       margin-bottom: 1.5rem;
       flex-wrap: wrap;
       gap: 1rem;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      padding: 1.25rem 1.5rem;
     }
 
     .header-left {
@@ -462,6 +474,33 @@ function getSortIndicator(column: string): string {
       display: flex;
       gap: 0.5rem;
       align-items: center;
+    }
+
+    .header-actions .btn-primary {
+      background: #1e5631;
+      color: #fff;
+      border-radius: 12px;
+      padding: 0.625rem 1.25rem;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(30,86,49,0.25);
+    }
+
+    .header-actions .btn-primary:hover {
+      background: #143d22;
+      box-shadow: 0 4px 12px rgba(30,86,49,0.3);
+    }
+
+    .header-actions .dropdown-toggle {
+      background: #e8f5e9;
+      color: #1e5631;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 0.625rem 1.25rem;
+      font-weight: 500;
+    }
+
+    .header-actions .dropdown-toggle:hover {
+      background: #c8e6c9;
     }
 
     /* Dropdown */
@@ -962,10 +1001,36 @@ function getSortIndicator(column: string): string {
       }
     }
 
+    @media (max-width: 768px) {
+      .m3-table .ha-col,
+      .m3-table .handicap-col,
+      .m3-table .notes-col {
+        display: none;
+      }
+
+      .m3-table th,
+      .m3-table td {
+        padding: 0.625rem 0.5rem;
+        font-size: 0.8125rem;
+      }
+
+      .name-cell {
+        min-width: 140px;
+      }
+
+      .category-cell {
+        min-width: auto;
+      }
+
+      .actions-col {
+        width: auto;
+      }
+    }
+
     @media (max-width: 600px) {
       .page-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
       }
 
       .header-left {
@@ -974,8 +1039,42 @@ function getSortIndicator(column: string): string {
         gap: 0.5rem;
       }
 
+      .header-actions {
+        width: 100%;
+      }
+
+      .header-actions .btn-primary {
+        flex: 1;
+        justify-content: center;
+      }
+
+      .header-actions .dropdown {
+        flex: 1;
+      }
+
+      .header-actions .dropdown-toggle {
+        width: 100%;
+        justify-content: center;
+      }
+
       .page-numbers {
         display: none;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .m3-table .balance-col,
+      .m3-table .category-col {
+        display: none;
+      }
+
+      .name-cell {
+        min-width: auto;
+      }
+
+      .m3-table th,
+      .m3-table td {
+        padding: 0.5rem 0.375rem;
       }
     }
   </style>

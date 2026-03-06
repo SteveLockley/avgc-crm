@@ -41,17 +41,17 @@ const potentialRevenueByItem = await db.prepare(`
   ORDER BY total_revenue DESC
 `).bind(currentYearStart).all();
 
-// Actual revenue paid by payment item (from payment_line_items table)
+// Actual revenue paid by payment item (from paid invoices' line items)
 const actualRevenueByItem = await db.prepare(`
   SELECT
-    pli.description,
+    ii.description,
     COUNT(*) as count,
-    SUM(pli.amount) as total_revenue
-  FROM payment_line_items pli
-  JOIN payments p ON pli.payment_id = p.id
-  JOIN invoices i ON p.invoice_id = i.id
-  WHERE i.period_start >= ?
-  GROUP BY pli.description
+    SUM(ii.line_total) as total_revenue
+  FROM invoice_items ii
+  JOIN invoices i ON ii.invoice_id = i.id
+  WHERE i.status = 'paid'
+    AND i.period_start >= ?
+  GROUP BY ii.description
   ORDER BY total_revenue DESC
 `).bind(currentYearStart).all();
 
@@ -84,11 +84,11 @@ const paymentStats = await db.prepare(`
 // Outstanding balances
 const outstandingBalances = await db.prepare(`
   SELECT
-    SUM(CASE WHEN account_balance < 0 THEN account_balance ELSE 0 END) as credits,
-    SUM(CASE WHEN account_balance > 0 THEN account_balance ELSE 0 END) as debits,
+    SUM(CASE WHEN account_balance < 0 THEN account_balance ELSE 0 END) as debits,
     COUNT(CASE WHEN account_balance != 0 THEN 1 END) as members_with_balance
   FROM members
 `).first();
+
 
 // Monthly subscription revenue (Apr-Mar membership year)
 // Find the most recent membership year that has invoices
@@ -109,6 +109,14 @@ if (latestInvoiceYear?.period_start) {
 const membershipYearEnd = membershipYearStart + 1;
 const aprStart = `${membershipYearStart}-04-01`;
 const marEnd = `${membershipYearEnd}-03-31`;
+
+// Total paid from invoices in current period
+const totalPaidResult = await db.prepare(`
+  SELECT COALESCE(SUM(p.amount), 0) as total_paid
+  FROM payments p
+  JOIN invoices i ON i.id = p.invoice_id
+  WHERE i.status <> 'cancelled' AND i.period_start = ?
+`).bind(aprStart).first<{ total_paid: number }>();
 
 // Monthly payment totals - membership year (Apr-Mar)
 const monthlyPayments = await db.prepare(`
@@ -252,19 +260,19 @@ const paymentMethodStats = await db.prepare(`
 
   <!-- Financial Overview Stats -->
   <div class="stats-row">
-    <div class="stat-card">
+    <div class="stat-card stat-success">
       <div class="stat-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M7 20h10M10 20V12a4 4 0 0 1 8-1M6 14h8"/>
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{formatCurrency(Math.abs(outstandingBalances?.credits || 0))}</span>
-        <span class="stat-label">Member Credits</span>
+        <span class="stat-value">{formatCurrency(totalPaidResult?.total_paid || 0)}</span>
+        <span class="stat-label">Member Paid</span>
       </div>
     </div>
 
-    <div class="stat-card stat-success">
+    <div class="stat-card stat-danger">
       <div class="stat-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
@@ -272,7 +280,7 @@ const paymentMethodStats = await db.prepare(`
         </svg>
       </div>
       <div class="stat-content">
-        <span class="stat-value">{formatCurrency(outstandingBalances?.debits || 0)}</span>
+        <span class="stat-value">{formatCurrency(Math.abs(outstandingBalances?.debits || 0))}</span>
         <span class="stat-label">Outstanding Debts</span>
       </div>
     </div>
@@ -672,6 +680,7 @@ const paymentMethodStats = await db.prepare(`
     }
 
     .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+    .stat-danger .stat-icon { background: linear-gradient(135deg, #dc3545 0%, #e4606d 100%); }
     .stat-info .stat-icon { background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); }
 
     .stat-content {
@@ -1069,11 +1078,40 @@ const paymentMethodStats = await db.prepare(`
 
     @media (max-width: 900px) {
       .stats-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
       }
 
       .reports-sidebar {
         grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .bar-value {
+        display: none;
+      }
+
+      .bar-chart {
+        height: 180px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-card {
+        padding: 1rem;
+      }
+
+      .stat-icon {
+        width: 40px;
+        height: 40px;
+      }
+
+      .stat-value {
+        font-size: 1.25rem;
       }
     }
   </style>

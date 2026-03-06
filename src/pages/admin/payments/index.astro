@@ -11,6 +11,8 @@ const search = url.searchParams.get('search') || '';
 const method = url.searchParams.get('method') || '';
 const dateFrom = url.searchParams.get('date_from') || '';
 const dateTo = url.searchParams.get('date_to') || '';
+const sort = url.searchParams.get('sort') || '';
+const dir = url.searchParams.get('dir') === 'asc' ? 'asc' : 'desc';
 const page = parseInt(url.searchParams.get('page') || '1');
 const perPage = 25;
 const offset = (page - 1) * perPage;
@@ -57,7 +59,12 @@ const payments = await db.prepare(
    JOIN members m ON p.member_id = m.id
    LEFT JOIN invoices i ON p.invoice_id = i.id
    WHERE ${whereClause}
-   ORDER BY m.surname, m.first_name, p.payment_date DESC
+   ORDER BY ${
+    sort === 'paid' ? `p.created_at ${dir}` :
+    sort === 'member' ? `m.surname ${dir}, m.first_name ${dir}` :
+    sort === 'date' ? `p.payment_date ${dir}` :
+    'p.created_at DESC'
+  }
    LIMIT ? OFFSET ?`
 ).bind(...params, perPage, offset).all();
 
@@ -94,6 +101,19 @@ if (totalPages <= maxPagesToShow) {
   for (let i = page - 3; i <= page + 3; i++) paginationPages.push(i);
 }
 
+// Sort URL helper
+function sortUrl(col: string) {
+  const p = new URLSearchParams(url.search);
+  p.set('sort', col);
+  p.set('dir', sort === col && dir === 'asc' ? 'desc' : 'asc');
+  p.delete('page');
+  return `?${p.toString()}`;
+}
+function sortIndicator(col: string) {
+  if (sort !== col) return '';
+  return dir === 'asc' ? ' \u25B2' : ' \u25BC';
+}
+
 // Build query string helper
 function buildQueryString(pageNum: number): string {
   const params = new URLSearchParams();
@@ -101,6 +121,8 @@ function buildQueryString(pageNum: number): string {
   if (method) params.set('method', method);
   if (dateFrom) params.set('date_from', dateFrom);
   if (dateTo) params.set('date_to', dateTo);
+  if (sort) params.set('sort', sort);
+  if (sort) params.set('dir', dir);
   params.set('page', String(pageNum));
   return `?${params.toString()}`;
 }
@@ -114,13 +136,6 @@ function buildQueryString(pageNum: number): string {
       <p class="subtitle">Track and manage member payments</p>
     </div>
     <div class="header-actions">
-      <a href="/admin/payments/new" class="btn btn-primary">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19"/>
-          <line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-        Record Payment
-      </a>
     </div>
   </div>
 
@@ -229,10 +244,10 @@ function buildQueryString(pageNum: number): string {
       <table class="m3-table">
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Member</th>
-            <th>Invoice</th>
-            <th>Method</th>
+            <th class="sortable date-col"><a href={sortUrl('paid')}>Paid{sortIndicator('paid')}</a></th>
+            <th class="sortable"><a href={sortUrl('member')}>Member{sortIndicator('member')}</a></th>
+            <th class="invoice-col">Invoice</th>
+            <th class="method-col">Method</th>
             <th class="text-right">Amount</th>
             <th class="actions-col"></th>
           </tr>
@@ -240,13 +255,13 @@ function buildQueryString(pageNum: number): string {
         <tbody>
           {payments.results?.map((payment) => (
             <tr>
-              <td class="date-cell">{formatDate(payment.payment_date as string)}</td>
+              <td class="date-cell date-col">{payment.created_at ? formatDate(payment.created_at as string) : formatDate(payment.payment_date as string)}</td>
               <td class="member-cell">
                 <a href={`/admin/members/${payment.member_id}`} class="member-link">
                   {payment.surname}, {payment.first_name}
                 </a>
               </td>
-              <td>
+              <td class="invoice-col">
                 {payment.invoice_id ? (
                   <a href={`/admin/invoices/${payment.invoice_id}`} class="invoice-link">
                     {payment.invoice_number}
@@ -255,7 +270,7 @@ function buildQueryString(pageNum: number): string {
                   <span class="reference-text">{payment.reference || '-'}</span>
                 )}
               </td>
-              <td>
+              <td class="method-col">
                 {payment.payment_method ? (
                   <span class="method-badge">{payment.payment_method}</span>
                 ) : '-'}
@@ -682,6 +697,18 @@ function buildQueryString(pageNum: number): string {
       white-space: nowrap;
     }
 
+    .m3-table th.sortable a {
+      color: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .m3-table th.sortable a:hover {
+      color: #1e5631;
+    }
+
     .m3-table td {
       padding: 0.875rem 1rem;
       font-size: 0.9rem;
@@ -899,6 +926,30 @@ function buildQueryString(pageNum: number): string {
       }
     }
 
+    @media (max-width: 768px) {
+      .tab-bar {
+        width: 100%;
+      }
+
+      .tab-pill {
+        flex: 1;
+        justify-content: center;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8125rem;
+      }
+
+      .m3-table .invoice-col,
+      .m3-table .method-col {
+        display: none;
+      }
+
+      .m3-table th,
+      .m3-table td {
+        padding: 0.625rem 0.5rem;
+        font-size: 0.8125rem;
+      }
+    }
+
     @media (max-width: 600px) {
       .page-header {
         flex-direction: column;
@@ -911,6 +962,12 @@ function buildQueryString(pageNum: number): string {
       }
 
       .page-numbers {
+        display: none;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .m3-table .date-col {
         display: none;
       }
     }
