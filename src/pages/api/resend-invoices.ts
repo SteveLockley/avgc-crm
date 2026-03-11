@@ -45,7 +45,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   for (const invoiceId of body.invoiceIds) {
     const invoice = await env.DB.prepare(
-      `SELECT * FROM invoices WHERE id = ? AND status IN ('sent', 'draft', 'paid')`
+      `SELECT * FROM invoices WHERE id = ? AND status IN ('draft', 'paid')`
     ).bind(invoiceId).first<Invoice>();
 
     if (!invoice) {

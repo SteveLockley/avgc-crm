@@ -68,10 +68,12 @@ const countResult = await db.prepare(
 const totalCount = countResult?.count || 0;
 const totalPages = Math.ceil(totalCount / perPage);
 
-// Get data
+// Get data - always order by something for consistent pagination
 let orderClause = '';
 if (sortCol && columns.some((c: any) => c.name === sortCol)) {
   orderClause = `ORDER BY "${sortCol}" ${sortDir === 'DESC' ? 'DESC' : 'ASC'}`;
+} else {
+  orderClause = `ORDER BY "${primaryKey}" ASC`;
 }
 
 const dataResult = await db.prepare(
@@ -117,6 +119,8 @@ const deleted = url.searchParams.get('deleted');
 
     <!-- Search -->
     <form method="GET" style="margin-bottom: 1rem;">
+      <input type="hidden" name="sort" value={sortCol} />
+      <input type="hidden" name="dir" value={sortDir} />
       <div style="display: flex; gap: 0.5rem;">
         <input
           type="text"
@@ -127,7 +131,7 @@ const deleted = url.searchParams.get('deleted');
           style="flex: 1;"
         />
         <button type="submit" class="btn btn-primary">Search</button>
-        {search && <a href={`/admin/database/table/${table}`} class="btn btn-secondary">Clear</a>}
+        {search && <a href={`/admin/database/table/${table}?sort=${sortCol}&dir=${sortDir}`} class="btn btn-secondary">Clear</a>}
       </div>
     </form>
 

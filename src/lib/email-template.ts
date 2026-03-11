@@ -180,7 +180,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): string {
                     <table role="presentation" cellspacing="0" cellpadding="0">
                       <tr>
                         <td style="padding: 5px 20px 5px 0; font-size: 14px; color: #666;">Member No:</td>
-                        <td style="padding: 5px 0; font-size: 14px; font-weight: 600;">${escapeHtml(member.pin || member.club_number || '-')}</td>
+                        <td style="padding: 5px 0; font-size: 14px; font-weight: 600;">${member.id}</td>
                       </tr>
                       <tr>
                         <td style="padding: 5px 20px 5px 0; font-size: 14px; color: #666;">Category:</td>
@@ -265,6 +265,22 @@ export function generateInvoiceEmail(data: InvoiceEmailData): string {
             </td>
           </tr>
 
+          ${invoice.total >= 125 ? `
+          <!-- Direct Debit Mandate -->
+          <tr>
+            <td style="padding: 0 30px 20px 30px;">
+              <div style="background: #f0f7f3; border-radius: 6px; padding: 15px;">
+                <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  Prefer to spread the cost? You can also pay by Direct Debit. Download and complete the
+                  <a href="https://www.alnmouthvillage.golf/documents/dd-mandate-form.pdf" style="color: #1e5631; font-weight: 600;">Direct Debit Mandate Form</a>
+                  and return it to the club, or contact us at
+                  <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>.
+                </p>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+
           <!-- Footer -->
           <tr>
             <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
@@ -312,7 +328,7 @@ export function generateInvoiceText(data: InvoiceEmailData): string {
     'MEMBER DETAILS',
     '--------------',
     `Name: ${getFullName(member)}`,
-    `Member No: ${member.pin || member.club_number || '-'}`,
+    `Member No: ${member.id}`,
     `Category: ${member.category || '-'}`,
     '',
     'INVOICE PERIOD',

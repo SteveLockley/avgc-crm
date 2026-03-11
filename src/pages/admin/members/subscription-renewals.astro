@@ -42,7 +42,7 @@ const socialMembers = await db.prepare(
 
 // Members with no email
 const noEmailMembers = await db.prepare(
-  `SELECT club_number, title, first_name, surname, category
+  `SELECT id, title, first_name, surname, category
    FROM members
    WHERE email IS NULL OR email = ''
    ORDER BY surname, first_name`
@@ -50,7 +50,7 @@ const noEmailMembers = await db.prepare(
 
 // Members who have not consented to electronic communication
 const noConsentMembers = await db.prepare(
-  `SELECT club_number, title, first_name, surname, category, email
+  `SELECT id, title, first_name, surname, category, email
    FROM members
    WHERE electronic_communication_consent <> 'Yes'
      AND email IS NOT NULL AND email <> ''
@@ -201,7 +201,7 @@ const existingInvoices = await db.prepare(
               <tbody>
                 {noEmailMembers.results.map((m: any) => (
                   <tr>
-                    <td>{m.club_number || '—'}</td>
+                    <td>{m.id}</td>
                     <td>{[m.title, m.first_name, m.surname].filter(Boolean).join(' ')}</td>
                     <td>{m.category || '—'}</td>
                   </tr>
@@ -238,7 +238,7 @@ const existingInvoices = await db.prepare(
               <tbody>
                 {noConsentMembers.results.map((m: any) => (
                   <tr>
-                    <td>{m.club_number || '—'}</td>
+                    <td>{m.id}</td>
                     <td>{[m.title, m.first_name, m.surname].filter(Boolean).join(' ')}</td>
                     <td>{m.category || '—'}</td>
                     <td>{m.email}</td>

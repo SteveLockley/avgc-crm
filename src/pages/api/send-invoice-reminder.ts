@@ -95,7 +95,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     try {
       // Load invoice + member + subscription fee
       const invoice = await env.DB.prepare(
-        `SELECT i.*, m.title, m.first_name, m.surname, m.email, m.pin, m.club_number,
+        `SELECT i.*, m.title, m.first_name, m.surname, m.email, m.pin,
                 m.category, m.default_payment_method, m.locker_number, m.national_id,
                 m.home_away, m.handicap_index, m.direct_debit_member_id,
                 p.fee as subscription_fee
@@ -128,7 +128,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         title: invoice.title as string | undefined,
         first_name: invoice.first_name as string,
         surname: invoice.surname as string,
-        club_number: (invoice.club_number || invoice.pin) as string | undefined,
+        id: invoice.member_id as number,
         category: invoice.category as string,
         email: invoice.email as string,
         locker_number: invoice.locker_number as string | undefined,
@@ -144,7 +144,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       } else if (isDD) {
         subject = generateDDRenewalSubject(year);
         const schedule = calculateDDSchedule(member, invoice.subscription_fee as number || 0, year);
-        html = generateDDRenewalEmail(member, schedule, year);
+        html = generateDDRenewalEmail(member, schedule);
       } else {
         subject = generateBACSRenewalSubject(year);
         html = generateBACSRenewalEmail(member, invoice.subscription_fee as number || 0, year, bankDetails);

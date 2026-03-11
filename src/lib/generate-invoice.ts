@@ -206,7 +206,7 @@ export async function generateInvoiceForMember(
     // For non-DD (draft) invoices: add total to account balance as outstanding
     if (!isDD) {
       await db.prepare(
-        `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+        `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
       ).bind(total, member.id).run();
     }
 
@@ -247,7 +247,7 @@ export async function generateInvoiceForMember(
           ).bind(depInvoice.id).run();
           // Reverse the balance that was added when the dependant's invoice was created
           await db.prepare(
-            `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+            `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
           ).bind(depInvoice.total, depId).run();
         }
       }

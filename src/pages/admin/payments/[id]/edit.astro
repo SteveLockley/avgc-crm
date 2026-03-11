@@ -31,97 +31,150 @@ const lineItems = (lineItemsResult.results || []) as any[];
 ---
 
 <AdminLayout title="View Payment">
-  <div style="max-width: 800px; margin: 0 auto;">
-    <!-- Header -->
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-      <a href="/admin/payments" class="btn btn-secondary">&larr; Back to Payments</a>
-      <a href={`/admin/members/${payment.member_id}`} class="btn btn-secondary">View Member</a>
+  <!-- Page Header -->
+  <div class="page-header">
+    <div class="header-content">
+      <a href="/admin/payments" class="back-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Payments
+      </a>
+      <h1>Payment Details</h1>
     </div>
+    <div class="header-actions">
+      <a href={`/admin/members/${payment.member_id}`} class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        View Member
+      </a>
+      {payment.invoice_id && (
+        <a href={`/admin/invoices/${payment.invoice_id}`} class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          View Invoice
+        </a>
+      )}
+    </div>
+  </div>
 
-    <!-- Payment Summary -->
-    <div class="card">
+  <!-- Amount Hero -->
+  <div class="amount-hero">
+    <div class="amount-hero-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M7 20h10M10 20V12a4 4 0 0 1 8-1M6 14h8"/>
+      </svg>
+    </div>
+    <div class="amount-hero-content">
+      <span class="amount-hero-value">{formatCurrency(payment.amount as number)}</span>
+      <span class="amount-hero-label">
+        {payment.payment_method || 'Payment'} &middot; {formatDate(payment.payment_date as string)}
+      </span>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <!-- Payment Details Card -->
+    <div class="m3-card">
       <div class="card-header">
-        <h3 class="card-title">Payment Details</h3>
-        <span class="badge badge-success" style="font-size: 1rem; padding: 0.5rem 1rem;">
-          {formatCurrency(payment.amount as number)}
-        </span>
-      </div>
-
-      <div class="form-row">
-        <div>
-          <label class="form-label">Member</label>
-          <p style="margin: 0; font-size: 1.125rem; font-weight: 600;">
-            <a href={`/admin/members/${payment.member_id}`}>{payment.first_name} {payment.surname}</a>
-          </p>
-        </div>
-        <div>
-          <label class="form-label">Payment Date</label>
-          <p style="margin: 0;">{formatDate(payment.payment_date as string)}</p>
-        </div>
-        <div>
-          <label class="form-label">Amount</label>
-          <p style="margin: 0; font-weight: 600;">{formatCurrency(payment.amount as number)}</p>
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+            <line x1="1" y1="10" x2="23" y2="10"/>
+          </svg>
+          <span>Payment Information</span>
         </div>
       </div>
+      <div class="card-body">
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Member</span>
+            <span class="info-value">
+              <a href={`/admin/members/${payment.member_id}`} class="member-link">
+                {payment.first_name} {payment.surname}
+              </a>
+            </span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Payment Date</span>
+            <span class="info-value">{formatDate(payment.payment_date as string)}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Payment Method</span>
+            <span class="info-value">
+              {payment.payment_method ? (
+                <span class="method-badge">{payment.payment_method}</span>
+              ) : '-'}
+            </span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Payment Type</span>
+            <span class="info-value">{payment.payment_type || '-'}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Reference</span>
+            <span class="info-value">{payment.reference || '-'}</span>
+          </div>
+          {payment.invoice_number && (
+            <div class="info-item">
+              <span class="info-label">Invoice</span>
+              <span class="info-value">
+                <a href={`/admin/invoices/${payment.invoice_id}`} class="invoice-link">{payment.invoice_number}</a>
+              </span>
+            </div>
+          )}
+        </div>
 
-      <div class="form-row" style="margin-top: 1rem;">
-        <div>
-          <label class="form-label">Payment Method</label>
-          <p style="margin: 0;">{payment.payment_method || '-'}</p>
-        </div>
-        <div>
-          <label class="form-label">Payment Type</label>
-          <p style="margin: 0;">{payment.payment_type || '-'}</p>
-        </div>
-        <div>
-          <label class="form-label">Reference</label>
-          <p style="margin: 0;">{payment.reference || '-'}</p>
-        </div>
+        {payment.notes && (
+          <div class="notes-block">
+            <span class="info-label">Notes</span>
+            <p class="notes-text">{payment.notes}</p>
+          </div>
+        )}
       </div>
-
-      {payment.invoice_number && (
-        <div style="margin-top: 1rem;">
-          <label class="form-label">Invoice</label>
-          <p style="margin: 0;">
-            <a href={`/admin/invoices/${payment.invoice_id}`}>{payment.invoice_number}</a>
-          </p>
-        </div>
-      )}
-
-      {payment.notes && (
-        <div style="margin-top: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 4px;">
-          <label class="form-label">Notes</label>
-          <p style="margin: 0;">{payment.notes}</p>
-        </div>
-      )}
     </div>
 
-    <!-- Line Items -->
+    <!-- Line Items Card -->
     {lineItems.length > 0 && (
-      <div class="card">
+      <div class="m3-card">
         <div class="card-header">
-          <h3 class="card-title">Line Items</h3>
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span>Line Items</span>
+          </div>
+          <span class="card-badge">{lineItems.length} items</span>
         </div>
         <div class="table-container">
-          <table>
+          <table class="m3-table">
             <thead>
               <tr>
                 <th>Description</th>
-                <th style="text-align: right;">Amount</th>
+                <th class="text-right">Amount</th>
               </tr>
             </thead>
             <tbody>
               {lineItems.map((item: any) => (
                 <tr>
                   <td>{item.description || item.item_name || '-'}</td>
-                  <td style="text-align: right; font-weight: 500;">{formatCurrency(item.amount)}</td>
+                  <td class="text-right amount-cell">{formatCurrency(item.amount)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
-              <tr style="background: #f8f9fa;">
-                <td style="text-align: right; font-weight: 600;">Total</td>
-                <td style="text-align: right; font-weight: 600;">{formatCurrency(payment.amount as number)}</td>
+              <tr>
+                <td class="text-right total-label">Total</td>
+                <td class="text-right total-value">{formatCurrency(payment.amount as number)}</td>
               </tr>
             </tfoot>
           </table>
@@ -129,19 +182,299 @@ const lineItems = (lineItemsResult.results || []) as any[];
       </div>
     )}
 
-    <!-- Audit Info -->
-    <div class="card">
+    <!-- Audit Card -->
+    <div class="m3-card">
       <div class="card-header">
-        <h3 class="card-title">Audit</h3>
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>Audit Trail</span>
+        </div>
       </div>
-      <p style="margin: 0 0 0.5rem 0; font-size: 0.875rem;">
-        <strong>Recorded by:</strong> {payment.recorded_by || '-'}
-      </p>
-      {payment.created_at && (
-        <p style="margin: 0; font-size: 0.875rem;">
-          <strong>Created:</strong> {formatDate(payment.created_at as string)}
-        </p>
-      )}
+      <div class="card-body">
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Recorded By</span>
+            <span class="info-value">{payment.recorded_by || '-'}</span>
+          </div>
+          {payment.created_at && (
+            <div class="info-item">
+              <span class="info-label">Created</span>
+              <span class="info-value">{formatDate(payment.created_at as string)}</span>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   </div>
+
+  <style>
+    /* Page Header */
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      color: #1e5631;
+      text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+    .back-link:hover { text-decoration: underline; }
+    .back-link svg { width: 16px; height: 16px; }
+
+    .header-content h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .header-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .header-actions .btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Amount Hero */
+    .amount-hero {
+      background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+    }
+
+    .amount-hero-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .amount-hero-icon svg {
+      width: 28px;
+      height: 28px;
+      color: #fff;
+    }
+
+    .amount-hero-content {
+      display: flex;
+      flex-direction: column;
+    }
+    .amount-hero-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.2;
+    }
+    .amount-hero-label {
+      font-size: 0.95rem;
+      color: rgba(255,255,255,0.8);
+      margin-top: 0.25rem;
+    }
+
+    /* Detail Grid */
+    .detail-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* M3 Card */
+    .m3-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      border: 1px solid #e8e8e8;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.625rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      font-size: 1rem;
+    }
+    .card-title svg {
+      width: 20px;
+      height: 20px;
+      color: #1e5631;
+    }
+
+    .card-badge {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.625rem;
+      background: #e8f5e9;
+      color: #1e5631;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .card-body {
+      padding: 1.25rem;
+    }
+
+    /* Info Grid */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .info-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .info-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .info-value {
+      font-size: 0.95rem;
+      color: #1a1a1a;
+    }
+
+    .member-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .member-link:hover { text-decoration: underline; }
+
+    .invoice-link {
+      color: #1e5631;
+      text-decoration: none;
+      font-weight: 600;
+      font-family: monospace;
+      font-size: 0.9rem;
+    }
+    .invoice-link:hover { text-decoration: underline; }
+
+    .method-badge {
+      display: inline-block;
+      padding: 0.25rem 0.625rem;
+      background: #f0f0f0;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      color: #555;
+    }
+
+    /* Notes */
+    .notes-block {
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid #f0f0f0;
+    }
+
+    .notes-text {
+      margin: 0.375rem 0 0 0;
+      font-size: 0.925rem;
+      color: #333;
+      line-height: 1.6;
+      background: #f8f9fa;
+      padding: 0.875rem;
+      border-radius: 10px;
+    }
+
+    /* Table */
+    .table-container { overflow-x: auto; }
+
+    .m3-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .m3-table th {
+      text-align: left;
+      padding: 0.875rem 1rem;
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fafafa;
+      border-bottom: 2px solid #e8e8e8;
+    }
+
+    .m3-table td {
+      padding: 0.875rem 1rem;
+      font-size: 0.9rem;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .m3-table tbody tr:hover { background: #f8faf8; }
+
+    .text-right { text-align: right; }
+
+    .amount-cell {
+      font-weight: 500;
+      color: #1a1a1a;
+    }
+
+    .total-label {
+      font-weight: 600;
+      color: #1a1a1a;
+      background: #f8f9fa;
+      border-bottom: none;
+    }
+
+    .total-value {
+      font-weight: 700;
+      font-size: 1rem;
+      color: #1e5631;
+      background: #f8f9fa;
+      border-bottom: none;
+    }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .page-header { flex-direction: column; }
+      .header-actions { width: 100%; }
+      .info-grid { grid-template-columns: 1fr; }
+      .amount-hero-value { font-size: 1.5rem; }
+    }
+  </style>
 </AdminLayout>

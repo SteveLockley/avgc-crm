@@ -37,34 +37,38 @@ interface ConsolidationResult {
 let result: ConsolidationResult | null = null;
 let error = '';
 let lastImport: { imported_at: string; imported_by: string | null } | null = null;
+let skippedDeleted = 0;
+let parsedHeaders: string[] = [];
 
-// Load previously saved consolidation data
-const savedData = await db.prepare(
-  `SELECT * FROM brs_consolidation ORDER BY imported_at DESC LIMIT 1`
-).first<{
-  id: number;
-  imported_at: string;
-  imported_by: string | null;
-  matched_count: number;
-  brs_not_in_crm_count: number;
-  crm_not_in_brs_count: number;
-  name_mismatch_count: number;
-  matched_json: string | null;
-  brs_not_in_crm_json: string | null;
-  crm_not_in_brs_json: string | null;
-  name_mismatches_json: string | null;
-  errors_json: string | null;
-}>().catch(() => null);
+// Only load saved data on GET (not POST — POST will generate fresh results)
+if (Astro.request.method !== 'POST') {
+  const savedData = await db.prepare(
+    `SELECT * FROM brs_consolidation ORDER BY imported_at DESC LIMIT 1`
+  ).first<{
+    id: number;
+    imported_at: string;
+    imported_by: string | null;
+    matched_count: number;
+    brs_not_in_crm_count: number;
+    crm_not_in_brs_count: number;
+    name_mismatch_count: number;
+    matched_json: string | null;
+    brs_not_in_crm_json: string | null;
+    crm_not_in_brs_json: string | null;
+    name_mismatches_json: string | null;
+    errors_json: string | null;
+  }>().catch(() => null);
 
-if (savedData) {
-  lastImport = { imported_at: savedData.imported_at, imported_by: savedData.imported_by };
-  result = {
-    matched: savedData.matched_json ? JSON.parse(savedData.matched_json) : [],
-    brsNotInCrm: savedData.brs_not_in_crm_json ? JSON.parse(savedData.brs_not_in_crm_json) : [],
-    crmNotInBrs: savedData.crm_not_in_brs_json ? JSON.parse(savedData.crm_not_in_brs_json) : [],
-    nameMismatches: savedData.name_mismatches_json ? JSON.parse(savedData.name_mismatches_json) : [],
-    errors: savedData.errors_json ? JSON.parse(savedData.errors_json) : []
-  };
+  if (savedData) {
+    lastImport = { imported_at: savedData.imported_at, imported_by: savedData.imported_by };
+    result = {
+      matched: savedData.matched_json ? JSON.parse(savedData.matched_json) : [],
+      brsNotInCrm: savedData.brs_not_in_crm_json ? JSON.parse(savedData.brs_not_in_crm_json) : [],
+      crmNotInBrs: savedData.crm_not_in_brs_json ? JSON.parse(savedData.crm_not_in_brs_json) : [],
+      nameMismatches: savedData.name_mismatches_json ? JSON.parse(savedData.name_mismatches_json) : [],
+      errors: savedData.errors_json ? JSON.parse(savedData.errors_json) : []
+    };
+  }
 }
 
 // Parse CSV line handling quoted fields with potential newlines
@@ -289,15 +293,25 @@ if (Astro.request.method === 'POST') {
       if (rows.length < 2) {
         error = 'CSV file appears to be empty or has no data rows';
       } else {
-        const header = rows[0];
+        // Strip BOM and normalise headers
+        const header = rows[0].map(h => h.replace(/^\uFEFF/, '').trim());
+        parsedHeaders = header;
 
-        // Find column indices
+        // Find column indices — support both "Name" (single) and "First Name"+"Last Name" (split) formats
         const usernameIdx = header.findIndex(h => h.toLowerCase() === 'username');
         const nameIdx = header.findIndex(h => h.toLowerCase() === 'name');
-        const membershipIdx = header.findIndex(h => h.toLowerCase() === 'membership');
+        const firstNameIdx = header.findIndex(h => h.toLowerCase() === 'first name');
+        const lastNameIdx = header.findIndex(h => h.toLowerCase() === 'last name');
+        const membershipIdx = header.findIndex(h => {
+          const l = h.toLowerCase();
+          return l === 'membership' || l === 'membership type';
+        });
 
-        if (usernameIdx === -1 || nameIdx === -1) {
-          error = 'CSV file must contain "Username" and "Name" columns';
+        const hasName = nameIdx !== -1;
+        const hasSplitName = firstNameIdx !== -1 && lastNameIdx !== -1;
+
+        if (usernameIdx === -1 || (!hasName && !hasSplitName)) {
+          error = `CSV file must contain "Username" and either "Name" or "First Name"+"Last Name" columns. Found: ${header.join(', ')}`;
         } else {
           // Parse BRS records
           const brsRecords: Array<{
@@ -310,19 +324,34 @@ if (Astro.request.method === 'POST') {
 
           for (let i = 1; i < rows.length; i++) {
             const values = rows[i];
-            if (values.length > Math.max(usernameIdx, nameIdx)) {
+            if (values.length > usernameIdx) {
               const username = values[usernameIdx]?.trim();
-              const name = values[nameIdx]?.trim();
+              let name: string;
+              let parsedSurname: string;
+              let parsedFirstName: string;
+
+              if (hasName) {
+                name = values[nameIdx]?.trim() || '';
+                const parsed = parseBrsName(name);
+                parsedSurname = parsed.surname;
+                parsedFirstName = parsed.firstName;
+              } else {
+                const first = values[firstNameIdx]?.trim() || '';
+                const last = values[lastNameIdx]?.trim() || '';
+                name = `${last}, ${first}`;
+                parsedSurname = last;
+                parsedFirstName = first;
+              }
+
               const membership = membershipIdx >= 0 ? values[membershipIdx]?.trim() || '' : '';
 
               if (username && name) {
-                const parsed = parseBrsName(name);
                 brsRecords.push({
                   username,
                   name,
                   membership,
-                  parsedSurname: parsed.surname,
-                  parsedFirstName: parsed.firstName
+                  parsedSurname,
+                  parsedFirstName
                 });
               }
             }
@@ -364,26 +393,34 @@ if (Astro.request.method === 'POST') {
             errors: []
           };
 
-          // Process BRS records
+          // Process BRS records (skip "To be deleted" entries)
+          let skippedDeletedCount = 0;
           for (const brs of brsRecords) {
+            const memLower = brs.membership.toLowerCase();
+            if (memLower.startsWith('to be deleted') || memLower === 'sponsor') {
+              skippedDeletedCount++;
+              continue;
+            }
             const crm = crmByPin.get(normalisePin(brs.username));
 
             if (crm) {
               matchedCrmIds.add(crm.id);
 
-              // Check if names match (ignoring middle names, handling reversed names)
+              // Check if names match (ignoring middle names, parentheticals, handling reversed names)
               const brsNormalizedSurname = normalizeName(brs.parsedSurname);
-              const brsNormalizedFirst = normalizeName(brs.parsedFirstName);
               const crmNormalizedSurname = normalizeName(crm.surname);
-              // CRM first_name may include middle names - take first word only
-              const crmNormalizedFirst = normalizeName(crm.first_name.split(/\s+/)[0]);
+
+              // Split first names into words on spaces, dots, parentheses
+              const splitFirst = (s: string) => s.split(/[\s.()]+/).filter(Boolean).map(w => normalizeName(w)).filter(Boolean);
+              const brsFirstWords = splitFirst(brs.parsedFirstName);
+              const crmFirstWords = splitFirst(crm.first_name);
+              const brsNormalizedFirst = brsFirstWords[0] || '';
+              const crmNormalizedFirst = crmFirstWords[0] || '';
 
               const surnameMatch = surnamesFuzzyMatch(brsNormalizedSurname, crmNormalizedSurname);
               const firstMatch = namesAreVariants(brsNormalizedFirst, crmNormalizedFirst);
-              // Also check if BRS first name matches any word in CRM first name
-              // (handles "Kathleen Lorna" in BRS matching "Lorna" in CRM)
-              const crmFirstWords = crm.first_name.split(/\s+/).map(w => normalizeName(w));
-              const anyWordMatch = crmFirstWords.some(w => namesAreVariants(brsNormalizedFirst, w));
+              // Check if ANY word in BRS first name matches ANY word in CRM first name
+              const anyWordMatch = brsFirstWords.some(bw => crmFirstWords.some(cw => namesAreVariants(bw, cw)));
               // Check if BRS name is initials matching CRM first name start (e.g. "MJ" → "Malcolm")
               const initialsMatch = brsNormalizedFirst.length <= 2 &&
                 crmNormalizedFirst.startsWith(brsNormalizedFirst[0]);
@@ -442,29 +479,35 @@ if (Astro.request.method === 'POST') {
             }
           }
 
-          // Save the results to database for persistence
-          await db.prepare(
-            `INSERT INTO brs_consolidation (
-              matched_count, brs_not_in_crm_count, crm_not_in_brs_count, name_mismatch_count,
-              matched_json, brs_not_in_crm_json, crm_not_in_brs_json, name_mismatches_json, errors_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).bind(
-            result.matched.length,
-            result.brsNotInCrm.length,
-            result.crmNotInBrs.length,
-            result.nameMismatches.length,
-            JSON.stringify(result.matched),
-            JSON.stringify(result.brsNotInCrm),
-            JSON.stringify(result.crmNotInBrs),
-            JSON.stringify(result.nameMismatches),
-            JSON.stringify(result.errors)
-          ).run();
-
+          skippedDeleted = skippedDeletedCount;
           lastImport = { imported_at: new Date().toISOString(), imported_by: null };
+
+          // Save the results to database for persistence (non-blocking)
+          try {
+            await db.prepare(
+              `INSERT INTO brs_consolidation (
+                matched_count, brs_not_in_crm_count, crm_not_in_brs_count, name_mismatch_count,
+                matched_json, brs_not_in_crm_json, crm_not_in_brs_json, name_mismatches_json, errors_json
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              result.matched.length,
+              result.brsNotInCrm.length,
+              result.crmNotInBrs.length,
+              result.nameMismatches.length,
+              JSON.stringify(result.matched),
+              JSON.stringify(result.brsNotInCrm),
+              JSON.stringify(result.crmNotInBrs),
+              JSON.stringify(result.nameMismatches),
+              JSON.stringify(result.errors)
+            ).run();
+          } catch (saveErr: any) {
+            // DB save failed but results are still shown
+            console.error('Failed to save BRS consolidation:', saveErr.message);
+          }
         }
       }
     } catch (e: any) {
-      error = `Failed to process file: ${e.message}`;
+      error = `Failed to process file: ${e.message} ${e.stack || ''}`;
     }
   }
 }
@@ -820,7 +863,11 @@ if (result) {
           <li><strong>{result.nameMismatches.length}</strong> with name mismatches</li>
           <li><strong>{result.brsNotInCrm.length}</strong> BRS members not found in CRM</li>
           <li><strong>{result.crmNotInBrs.length}</strong> CRM members (with PIN) not in BRS</li>
+          {skippedDeleted > 0 && <li><strong>{skippedDeleted}</strong> BRS records skipped ("To be deleted")</li>}
         </ul>
+        {parsedHeaders.length > 0 && (
+          <p style="margin-top: 0.5rem; font-size: 0.8rem; color: #666;">CSV headers: {parsedHeaders.join(', ')}</p>
+        )}
       </div>
     </div>
   )}
@@ -845,9 +892,13 @@ if (result) {
   {result && result.brsNotInCrm.length > 0 && (
     <script define:vars={{ brsNotInCrm: result.brsNotInCrm }}>
       document.getElementById('export-brs-not-in-crm')?.addEventListener('click', () => {
-        const rows = [['BRS Username', 'Name', 'BRS Membership']];
+        const rows = [['User ID', 'Membership Type', 'First Name', 'Last Name']];
         for (const m of brsNotInCrm) {
-          rows.push([m.brsUsername, m.brsName, m.brsMembership]);
+          // Parse "Surname, FirstName" format back into separate fields
+          const parts = m.brsName.split(',').map(p => p.trim());
+          const lastName = parts[0] || '';
+          const firstName = parts[1] || '';
+          rows.push([m.brsUsername, 'To be deleted - ' + m.brsMembership, firstName, lastName]);
         }
         const csv = rows.map(r => r.map(v => '"' + (v || '').replace(/"/g, '""') + '"').join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });

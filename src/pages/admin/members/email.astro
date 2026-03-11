@@ -1,7 +1,7 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { calculateEguCategory, type Member } from '../../../lib/db';
-import { sendEmail, isEmailConfigured, isValidEmail } from '../../../lib/email';
+import { isEmailConfigured, isValidEmail } from '../../../lib/email';
 
 const db = Astro.locals.runtime.env.DB;
 const env = Astro.locals.runtime.env;
@@ -84,100 +84,22 @@ if (singleMember) {
   validMembers = membersWithEmail.filter(m => isValidEmail(m.email));
 }
 
-function generateEmailHtml(body: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f4;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4;">
-    <tr>
-      <td align="center" style="padding: 40px 20px;">
-        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-          <tr>
-            <td style="background-color: #1e5631; padding: 24px 30px; border-radius: 8px 8px 0 0;">
-              <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 600;">Alnmouth Village Golf Club</h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding: 30px;">
-              <div style="font-size: 15px; line-height: 1.6; color: #333;">${body.replace(/\n/g, '<br>')}</div>
-            </td>
-          </tr>
-          <tr>
-            <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
-              <p style="margin: 0; font-size: 13px; color: #666;"><strong>Alnmouth Village Golf Club</strong></p>
-              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
-              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Tel: 01665 830231 | <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
-              <p style="margin: 8px 0 0 0; font-size: 13px;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`.trim();
-}
-
-let sendResult: { sent: number; failed: number; errors: string[] } | null = null;
-let sendError: string | null = null;
-
-if (Astro.request.method === 'POST' && emailConfigured) {
-  try {
-    const formData = await Astro.request.formData();
-    const subject = formData.get('subject') as string;
-    const body = formData.get('body') as string;
-    const selectedIds = formData.getAll('member_ids') as string[];
-
-    if (!subject || !body) {
-      sendError = 'Subject and message are required';
-    } else if (selectedIds.length === 0) {
-      sendError = 'No members selected';
-    } else {
-      const selectedMembers = validMembers.filter(m => selectedIds.includes(String(m.id)));
-      sendResult = { sent: 0, failed: 0, errors: [] };
-
-      for (const member of selectedMembers) {
-        const personalizedBody = body
-          .replace(/\{first_name\}/g, member.first_name)
-          .replace(/\{surname\}/g, member.surname)
-          .replace(/\{name\}/g, `${member.first_name} ${member.surname}`);
-
-        const result = await sendEmail({
-          to: member.email,
-          subject: subject,
-          html: generateEmailHtml(personalizedBody),
-        }, env);
-
-        if (result.success) {
-          sendResult.sent++;
-        } else {
-          sendResult.failed++;
-          sendResult.errors.push(`${member.email}: ${result.error}`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-  } catch (e) {
-    sendError = e instanceof Error ? e.message : 'Unknown error';
-  }
-}
+// Get logged-in user's email for test mode
+const senderEmail = Astro.locals.user?.email || env.AZURE_SERVICE_USER || 'subscriptions@AlnmouthVillage.Golf';
 
 function buildBackLink(): string {
-  if (singleMember) return `/members/${singleMember.id}`;
+  if (singleMember) return `/admin/members/${singleMember.id}`;
   const p = new URLSearchParams();
   if (search) p.set('search', search);
   if (subscriptionType) p.set('subscription_type', subscriptionType);
   if (eguCategory) p.set('egu_category', eguCategory);
   if (filter) p.set('filter', filter);
-  return `/members${p.toString() ? '?' + p.toString() : ''}`;
+  return `/admin/members${p.toString() ? '?' + p.toString() : ''}`;
 }
 
 const pageTitle = singleMember ? `Email ${singleMember.first_name} ${singleMember.surname}` : 'Email Members';
 const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dear {first_name},\n\n`;
+const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
 ---
 
 <AdminLayout title={pageTitle}>
@@ -193,27 +115,23 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
       </div>
     )}
 
-    {sendResult && (
-      <div class={`alert ${sendResult.failed === 0 ? 'alert-success' : 'alert-warning'}`}>
-        <strong>{sendResult.sent} sent</strong>{sendResult.failed > 0 && `, ${sendResult.failed} failed`}
-        {sendResult.errors.length > 0 && (
-          <details><summary>Errors</summary>
-            <ul>{sendResult.errors.map(e => <li>{e}</li>)}</ul>
-          </details>
-        )}
+    <!-- Progress panel (hidden until sending starts) -->
+    <div id="send-progress" class="progress-panel" style="display:none;">
+      <div class="progress-header">
+        <span id="progress-title">Sending emails...</span>
+        <span id="progress-count"></span>
       </div>
-    )}
+      <div class="progress-bar-track">
+        <div id="progress-bar" class="progress-bar-fill"></div>
+      </div>
+      <div id="progress-status" class="progress-status"></div>
+    </div>
 
-    {sendError && <div class="alert alert-error">{sendError}</div>}
+    <!-- Result panel (hidden until sending completes) -->
+    <div id="send-result" style="display:none;"></div>
 
-    {emailConfigured && validMembers.length > 0 && !sendResult && (
-      <form method="POST" id="email-form">
-        {singleMember ? (
-          <input type="hidden" name="member_ids" value={singleMember.id} />
-        ) : (
-          validMembers.map(m => <input type="hidden" name="member_ids" value={m.id} />)
-        )}
-
+    {emailConfigured && validMembers.length > 0 && (
+      <div id="email-form-container">
         <div class="email-preview">
           <!-- Header -->
           <div class="email-preview-header">
@@ -236,7 +154,25 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
 
           <!-- Body -->
           <div class="email-body">
-            <textarea name="body" id="body" placeholder="Type your message here..." required>{defaultBody}</textarea>
+            <div class="email-toolbar">
+              <button type="button" id="btn-insert-image" class="toolbar-btn" title="Upload and insert an image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                </svg>
+                Image
+              </button>
+              <button type="button" id="btn-insert-link" class="toolbar-btn" title="Upload and insert a document link">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+                Document
+              </button>
+              <input type="file" id="file-image" accept="image/*" style="display:none;" />
+              <input type="file" id="file-doc" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf" style="display:none;" />
+              <span id="upload-status" class="upload-status"></span>
+            </div>
+            <div contenteditable="true" id="body" class="email-editor" data-placeholder="Type your message here...">{defaultBody}</div>
             {!singleMember && (
               <div class="personalization-hint">
                 Tip: Use {'{first_name}'}, {'{surname}'}, or {'{name}'} for personalization
@@ -254,12 +190,28 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
         </div>
 
         <div class="email-actions">
-          <button type="submit" class="btn btn-primary">
+          <button type="button" id="btn-test" class="btn btn-outline" title={`Sends a test to ${senderEmail}`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            Send Test
+          </button>
+          {!singleMember && senderEmail.toLowerCase().includes('steve') && (
+            <button type="button" id="btn-test-all" class="btn btn-outline" title={`Sends all ${validMembers.length} emails to ${senderEmail} instead of members`}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              Test All
+            </button>
+          )}
+          <button type="button" id="btn-send" class="btn btn-primary">
             Send {singleMember ? 'Email' : `to ${validMembers.length} Members`}
           </button>
           <a href={buildBackLink()} class="btn btn-secondary">Cancel</a>
         </div>
-      </form>
+      </div>
     )}
 
     {validMembers.length === 0 && (
@@ -375,26 +327,73 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
     .email-body {
       padding: 1.5rem;
       min-height: 250px;
+      overflow: hidden;
     }
 
-    .email-body textarea {
+    .email-toolbar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #e5e5e5;
+    }
+
+    .toolbar-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.375rem 0.75rem;
+      background: #f0f7f0;
+      color: #1e5631;
+      border: 1px solid #c8dcc8;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .toolbar-btn:hover {
+      background: #1e5631;
+      color: #fff;
+      border-color: #1e5631;
+    }
+
+    .toolbar-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .upload-status {
+      font-size: 0.8rem;
+      color: #666;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .upload-status.error {
+      color: #c62828;
+    }
+
+    .email-editor {
       width: 100%;
       min-height: 200px;
       border: none;
-      resize: vertical;
       font-family: inherit;
       font-size: 1rem;
       line-height: 1.6;
       color: #333;
-    }
-
-    .email-body textarea:focus {
       outline: none;
+      white-space: pre-wrap;
+      word-wrap: break-word;
     }
 
-    .email-body textarea::placeholder {
+    .email-editor:empty::before {
+      content: attr(data-placeholder);
       color: #999;
     }
+
 
     .personalization-hint {
       margin-top: 1rem;
@@ -428,6 +427,25 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
       justify-content: center;
     }
 
+    .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      background: #fff;
+      color: #1e5631;
+      border: 1px solid #1e5631;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-outline:hover {
+      background: #f0f7f0;
+    }
+
     .empty-state {
       text-align: center;
       padding: 3rem;
@@ -439,22 +457,506 @@ const defaultBody = singleMember ? `Dear ${singleMember.first_name},\n\n` : `Dea
     .empty-state .btn {
       margin-top: 1rem;
     }
+
+    /* Progress panel */
+    .progress-panel {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    #progress-count {
+      font-size: 0.9rem;
+      color: #666;
+      font-weight: 400;
+    }
+
+    .progress-bar-track {
+      height: 8px;
+      background: #e8e8e8;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: #1e5631;
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .progress-status {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .progress-status .error-line {
+      color: #c62828;
+      font-size: 0.8rem;
+    }
+
+    /* Result panel */
+    .result-panel {
+      padding: 1.5rem;
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+    }
+
+    .result-panel.success {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+    }
+
+    .result-panel.warning {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+    }
+
+    .result-panel.error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+    }
+
+    .result-summary {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .result-details {
+      font-size: 0.9rem;
+      color: #555;
+    }
+
+    .result-errors {
+      margin-top: 0.75rem;
+    }
+
+    .result-errors summary {
+      cursor: pointer;
+      color: #c62828;
+      font-weight: 500;
+      font-size: 0.9rem;
+    }
+
+    .result-errors ul {
+      margin: 0.5rem 0 0 0;
+      padding-left: 1.25rem;
+      font-size: 0.8rem;
+      color: #991b1b;
+    }
+
+    .result-actions {
+      margin-top: 1rem;
+      display: flex;
+      gap: 0.75rem;
+    }
   </style>
 
-  <script is:inline>
-    document.getElementById('email-form')?.addEventListener('submit', async (e) => {
+  <script is:inline define:vars={{ memberIdsJson, senderEmail }}>
+    const BATCH_SIZE = 40;
+    const allMemberIds = JSON.parse(memberIdsJson);
+
+    function insertHtmlAtCursor(html) {
+      const editor = document.getElementById('body');
+      editor.focus();
+      const sel = window.getSelection();
+      if (sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        const frag = document.createDocumentFragment();
+        let lastNode;
+        while (temp.firstChild) {
+          lastNode = frag.appendChild(temp.firstChild);
+        }
+        range.insertNode(frag);
+        if (lastNode) {
+          const newRange = document.createRange();
+          newRange.setStartAfter(lastNode);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+      }
+    }
+
+    async function uploadAsset(file) {
+      const status = document.getElementById('upload-status');
+      const imgBtn = document.getElementById('btn-insert-image');
+      const docBtn = document.getElementById('btn-insert-link');
+      status.className = 'upload-status';
+      status.textContent = 'Uploading ' + file.name + '...';
+      imgBtn.disabled = true;
+      docBtn.disabled = true;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await fetch('/api/upload-email-asset', { method: 'POST', body: formData });
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || 'Upload failed');
+        status.textContent = '';
+        return result;
+      } catch (e) {
+        status.className = 'upload-status error';
+        status.textContent = e.message;
+        return null;
+      } finally {
+        imgBtn.disabled = false;
+        docBtn.disabled = false;
+      }
+    }
+
+    // Image upload — insert actual <img> with blob preview, store SharePoint URL in data attribute
+    document.getElementById('btn-insert-image')?.addEventListener('click', () => {
+      document.getElementById('file-image').click();
+    });
+
+    document.getElementById('file-image')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const blobUrl = URL.createObjectURL(file);
+      e.target.value = '';
+      const result = await uploadAsset(file);
+      if (!result) { URL.revokeObjectURL(blobUrl); return; }
+
+      // Load image to get natural size, then cap to editor width
+      const tmpImg = new Image();
+      tmpImg.onload = () => {
+        const editor = document.getElementById('body');
+        const maxW = editor.clientWidth;
+        const initW = Math.min(tmpImg.naturalWidth, maxW);
+
+        const wrapper = document.createElement('div');
+        wrapper.setAttribute('data-url', result.imageUrl || result.url);
+        wrapper.contentEditable = 'false';
+        wrapper.style.cssText = 'position:relative;display:block;margin:8px 0;user-select:none;width:' + initW + 'px;max-width:100%;';
+
+        const img = document.createElement('img');
+        img.src = blobUrl;
+        img.alt = '';
+        img.style.cssText = 'display:block;border-radius:8px;width:100%;height:auto;';
+        wrapper.appendChild(img);
+
+        const handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        handle.style.cssText = 'position:absolute;bottom:8px;right:8px;width:24px;height:24px;cursor:nwse-resize;z-index:10;background:rgba(30,86,49,0.9);border-radius:4px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;';
+        handle.textContent = '↘';
+        wrapper.appendChild(handle);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'img-remove';
+        removeBtn.title = 'Remove';
+        removeBtn.innerHTML = '&times;';
+        removeBtn.style.cssText = 'position:absolute;top:8px;right:8px;width:28px;height:28px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:18px;line-height:28px;text-align:center;z-index:10;';
+        wrapper.appendChild(removeBtn);
+
+        // Insert at cursor
+        editor.focus();
+        const sel = window.getSelection();
+        if (sel.rangeCount) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createElement('br'));
+          range.insertNode(wrapper);
+          range.collapse(false);
+        } else {
+          editor.appendChild(wrapper);
+          editor.appendChild(document.createElement('br'));
+        }
+      };
+      tmpImg.src = blobUrl;
+    });
+
+    // Event delegation for image wrappers (remove + resize)
+    // Use [data-url] to find wrappers since scoped CSS classes won't match
+    document.getElementById('body')?.addEventListener('click', (e) => {
+      if (e.target.classList.contains('img-remove')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = e.target.parentElement;
+        if (wrapper) {
+          const br = wrapper.nextElementSibling;
+          if (br && br.tagName === 'BR') br.remove();
+          wrapper.remove();
+        }
+      }
+    });
+
+    document.getElementById('body')?.addEventListener('mousedown', (e) => {
+      if (!e.target.classList.contains('resize-handle')) return;
       e.preventDefault();
-      const form = e.target;
-      const toText = document.querySelector('.to-value')?.textContent || '';
-      const isSingle = !toText.includes('recipients');
-      const count = isSingle ? 1 : parseInt(toText) || 1;
+      e.stopPropagation();
+
+      const wrapper = e.target.parentElement;
+      if (!wrapper) return;
+
+      const editor = document.getElementById('body');
+      const maxWidth = editor.clientWidth;
+      const startX = e.clientX;
+      const startW = wrapper.offsetWidth;
+
+      function onMove(ev) {
+        ev.preventDefault();
+        let newW = startW + (ev.clientX - startX);
+        if (newW < 80) newW = 80;
+        if (newW > maxWidth) newW = maxWidth;
+        wrapper.style.width = newW + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // Document upload — insert a styled link
+    document.getElementById('btn-insert-link')?.addEventListener('click', () => {
+      document.getElementById('file-doc').click();
+    });
+
+    document.getElementById('file-doc')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      e.target.value = '';
+      const displayText = prompt('Display text for the link:', file.name.replace(/\.[^.]+$/, ''));
+      if (!displayText) return;
+      const result = await uploadAsset(file);
+      if (result) {
+        insertHtmlAtCursor(`<a href="${result.url}" data-url="${result.url}">${displayText}</a> `);
+      }
+    });
+
+    // Convert contenteditable HTML back to plain text with placeholders
+    function getBodyText() {
+      const editor = document.getElementById('body');
+      const clone = editor.cloneNode(true);
+      // Replace image wrapper divs with [img:URL] placeholders
+      clone.querySelectorAll('[data-url]').forEach(wrapper => {
+        const url = wrapper.getAttribute('data-url');
+        if (wrapper.querySelector('img')) {
+          wrapper.replaceWith(`[img:${url}]`);
+        }
+      });
+      // Replace any standalone <img> with [img:URL] placeholders
+      clone.querySelectorAll('img').forEach(img => {
+        const url = img.getAttribute('data-url') || img.getAttribute('src');
+        img.replaceWith(`[img:${url}]`);
+      });
+      // Replace <a> with [link:URL|text] placeholders
+      clone.querySelectorAll('a').forEach(a => {
+        const url = a.getAttribute('data-url') || a.getAttribute('href');
+        a.replaceWith(`[link:${url}|${a.textContent}]`);
+      });
+      // Convert <br> and <div> to newlines, get text
+      let html = clone.innerHTML;
+      html = html.replace(/<br\s*\/?>/gi, '\n');
+      html = html.replace(/<\/div>\s*<div>/gi, '\n');
+      html = html.replace(/<\/?div>/gi, '\n');
+      html = html.replace(/<[^>]+>/g, '');
+      html = html.replace(/&nbsp;/g, ' ');
+      html = html.replace(/&amp;/g, '&');
+      html = html.replace(/&lt;/g, '<');
+      html = html.replace(/&gt;/g, '>');
+      return html.trim();
+    }
+
+    function getFormValues() {
+      const subject = document.getElementById('subject')?.value?.trim();
+      const body = getBodyText();
+      return { subject, body };
+    }
+
+    async function validateForm() {
+      const { subject, body } = getFormValues();
+      if (!subject) { await m3Alert('Please enter a subject.', { title: 'Missing Subject', type: 'warning' }); return false; }
+      if (!body || body.replace(/\s/g, '').length === 0) { await m3Alert('Please enter a message.', { title: 'Missing Message', type: 'warning' }); return false; }
+      return true;
+    }
+
+    // Send Test button
+    document.getElementById('btn-test')?.addEventListener('click', async () => {
+      if (!await validateForm()) return;
+      const { subject, body } = getFormValues();
+
+      const btn = document.getElementById('btn-test');
+      btn.disabled = true;
+      btn.textContent = 'Sending test...';
+
+      try {
+        const resp = await fetch('/api/send-member-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'test', subject, body, testEmail: senderEmail }),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          await m3Alert('Test email sent to ' + senderEmail, { title: 'Test Sent', type: 'success' });
+        } else {
+          await m3Alert(result.error || 'Unknown error', { title: 'Test Failed', type: 'error' });
+        }
+      } catch (e) {
+        await m3Alert(e.message, { title: 'Test Failed', type: 'error' });
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Send Test';
+      }
+    });
+
+    // Shared batch send function — testEmail redirects all emails to that address
+    async function doBatchSend(subject, body, testEmail) {
+      // Hide form, show progress
+      document.getElementById('email-form-container').style.display = 'none';
+      const progressPanel = document.getElementById('send-progress');
+      progressPanel.style.display = 'block';
+
+      const label = testEmail ? 'Testing' : 'Sending';
+
+      // Split into batches
+      const count = allMemberIds.length;
+      const chunks = [];
+      for (let i = 0; i < count; i += BATCH_SIZE) {
+        chunks.push(allMemberIds.slice(i, i + BATCH_SIZE));
+      }
+
+      let totalSent = 0;
+      let totalFailed = 0;
+      const allErrors = [];
+      let processed = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+
+        document.getElementById('progress-title').textContent =
+          `${label} batch ${i + 1} of ${chunks.length}...`;
+        document.getElementById('progress-count').textContent =
+          `${processed} / ${count} processed`;
+
+        try {
+          const payload = { action: 'send', subject, body, memberIds: chunk };
+          if (testEmail) payload.testEmail = testEmail;
+
+          const resp = await fetch('/api/send-member-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const result = await resp.json();
+
+          if (result.sent) totalSent += result.sent;
+          if (result.failed) totalFailed += result.failed;
+          if (result.errors) allErrors.push(...result.errors);
+
+          processed += chunk.length;
+
+          const pct = Math.round((processed / count) * 100);
+          document.getElementById('progress-bar').style.width = pct + '%';
+          document.getElementById('progress-count').textContent =
+            `${processed} / ${count} processed`;
+
+          const statusLines = [`${totalSent} sent, ${totalFailed} failed`];
+          if (allErrors.length > 0) {
+            statusLines.push(`<span class="error-line">Last error: ${allErrors[allErrors.length - 1]}</span>`);
+          }
+          document.getElementById('progress-status').innerHTML = statusLines.join('<br>');
+        } catch (e) {
+          totalFailed += chunk.length;
+          allErrors.push(`Batch ${i + 1} network error: ${e.message}`);
+          processed += chunk.length;
+        }
+      }
+
+      // Log the summary (skip logging for test runs)
+      if (!testEmail) {
+        try {
+          await fetch('/api/send-member-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'log',
+              subject,
+              sender: senderEmail,
+              totalSent,
+              totalFailed,
+              errors: allErrors.length > 0 ? allErrors : undefined,
+            }),
+          });
+        } catch (e) {
+          console.error('Failed to log summary:', e);
+        }
+      }
+
+      // Hide progress, show result
+      progressPanel.style.display = 'none';
+
+      const resultDiv = document.getElementById('send-result');
+      const resultClass = totalFailed === 0 ? 'success' : totalSent === 0 ? 'error' : 'warning';
+      const modeLabel = testEmail ? ' (test — all sent to ' + testEmail + ')' : '';
+      let resultHtml = `<div class="result-panel ${resultClass}">`;
+      resultHtml += `<div class="result-summary">${totalSent} sent, ${totalFailed} failed${modeLabel}</div>`;
+      resultHtml += `<div class="result-details">Subject: ${subject}</div>`;
+
+      if (allErrors.length > 0) {
+        resultHtml += `<div class="result-errors"><details><summary>${allErrors.length} error${allErrors.length !== 1 ? 's' : ''}</summary><ul>`;
+        allErrors.forEach(e => { resultHtml += `<li>${e}</li>`; });
+        resultHtml += '</ul></details></div>';
+      }
+
+      resultHtml += `<div class="result-actions">
+        <a href="${window.location.href}" class="btn btn-primary">Send Another</a>
+        <a href="/admin/members/email-log" class="btn btn-secondary">View Email Log</a>
+      </div>`;
+      resultHtml += '</div>';
+
+      resultDiv.innerHTML = resultHtml;
+      resultDiv.style.display = 'block';
+    }
+
+    // Test All button — sends every email to the sender address instead of members
+    document.getElementById('btn-test-all')?.addEventListener('click', async () => {
+      if (!await validateForm()) return;
+      const { subject, body } = getFormValues();
+      const count = allMemberIds.length;
+
+      const confirmed = await m3Confirm(
+        `This will send ${count} test email${count !== 1 ? 's' : ''} to ${senderEmail} (not to members). Continue?`,
+        { title: 'Test All Emails', confirmText: 'Test All', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      await doBatchSend(subject, body, senderEmail);
+    });
+
+    // Send All button
+    document.getElementById('btn-send')?.addEventListener('click', async () => {
+      if (!await validateForm()) return;
+      const { subject, body } = getFormValues();
+      const count = allMemberIds.length;
 
       const confirmed = await m3Confirm(
         `Send this email to ${count} recipient${count !== 1 ? 's' : ''}?`,
         { title: 'Send Email', confirmText: 'Send', cancelText: 'Cancel' }
       );
+      if (!confirmed) return;
 
-      if (confirmed) form.submit();
+      await doBatchSend(subject, body, null);
     });
   </script>
 </AdminLayout>

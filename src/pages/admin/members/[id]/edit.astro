@@ -48,16 +48,16 @@ const subscriptionTypes = (subscriptionTypesResult.results || []).map((r: any) =
 let potentialPayers: Array<{ id: number; first_name: string; surname: string }> = [];
 if (!isNew) {
   const potentialPayersResult = await db.prepare(
-    `SELECT id, first_name, surname FROM members WHERE default_payment_method = 'Clubwise Direct Debit' AND id != ? ORDER BY surname, first_name`
+    `SELECT id, first_name, surname FROM members WHERE id != ? ORDER BY surname, first_name`
   ).bind(id).all();
   potentialPayers = (potentialPayersResult.results || []) as any;
 }
 
-// Home clubs for datalist (excluding Alnmouth Village — away members wouldn't use it)
-const homeClubsResult = await db.prepare(
-  `SELECT DISTINCT home_club FROM members WHERE home_club IS NOT NULL AND home_club != '' AND home_club != 'Alnmouth Village' ORDER BY home_club`
+// EGU clubs for home club dropdown
+const eguClubsResult = await db.prepare(
+  `SELECT code, name FROM egu_clubs ORDER BY name`
 ).all();
-const homeClubs = (homeClubsResult.results || []).map((r: any) => r.home_club as string);
+const eguClubs = (eguClubsResult.results || []) as Array<{ code: string; name: string }>;
 
 const isZeroCostSubscription = (category: string | null): boolean => {
   if (!category) return false;
@@ -77,7 +77,7 @@ if (Astro.request.method === 'POST') {
     'date_joined', 'date_renewed', 'date_expires', 'date_subscription_paid',
     'default_payment_method', 'account_balance', 'competition_fee_purse',
     'locker_number', 'additional_locker', 'send_invoice_by',
-    'account_notes', 'notes', 'pin', 'club_number',
+    'account_notes', 'notes',
     'electronic_communication_consent', 'parental_consent',
     'family_payer_id'
   ];
@@ -128,10 +128,28 @@ if (Astro.request.method === 'POST') {
 
       const newId = result.meta.last_row_id;
 
+      // Auto-generate PIN: next after max, wrapping to reuse gaps if past 9999
+      const usedPins = await db.prepare(
+        `SELECT CAST(pin AS INTEGER) as p FROM members WHERE pin IS NOT NULL AND pin != ''`
+      ).all();
+      const pinSet = new Set((usedPins.results || []).map((r: any) => r.p as number));
+      const maxPin = Math.max(0, ...pinSet);
+      let newPin = maxPin + 1;
+      if (newPin > 9999) {
+        // Wrap around — find first unused from 1
+        newPin = 1;
+        while (pinSet.has(newPin) && newPin <= 9999) newPin++;
+      }
+      if (newPin <= 9999) {
+        await db.prepare(
+          `UPDATE members SET pin = ? WHERE id = ? AND (pin IS NULL OR pin = '')`
+        ).bind(String(newPin), newId).run();
+      }
+
       await db.prepare(
         `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
          VALUES (?, 'create', 'member', ?, ?)`
-      ).bind(Astro.locals.user?.email || 'system', newId, JSON.stringify(data)).run();
+      ).bind(Astro.locals.user?.email || 'system', newId, JSON.stringify({ ...data, pin: newPin })).run();
 
       return Astro.redirect(`/admin/members/${newId}`);
     } else {
@@ -333,12 +351,16 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
               </div>
               <div class="field">
                 <label for="home_club">Home Club</label>
-                <input type="text" name="home_club" id="home_club" value={val('home_club', 'Alnmouth Village')} list="home-club-list" />
-                <datalist id="home-club-list">
-                  {homeClubs.map(club => (
-                    <option value={club} />
+                <input type="text" id="home_club_search" placeholder="Type to search clubs..." autocomplete="off" style="margin-bottom: 0.25rem; font-size: 0.85rem;" />
+                <input type="hidden" name="home_club" id="home_club_hidden" disabled />
+                <select name="home_club" id="home_club" size="1">
+                  <option value="">-- Select Club --</option>
+                  {eguClubs.map(club => (
+                    <option value={club.name} selected={val('home_club', 'Alnmouth Village') === club.name}>
+                      {club.name} ({club.code})
+                    </option>
                   ))}
-                </datalist>
+                </select>
               </div>
             </div>
 
@@ -464,8 +486,8 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
                 </div>
               ) : (
                 <div class="field">
-                  <label for="club_number">Club Number</label>
-                  <input type="text" name="club_number" id="club_number" value={member.club_number || ''} readonly class="field-readonly" />
+                  <label for="member_no">Member No</label>
+                  <input type="text" id="member_no" value={String(member.id)} readonly class="field-readonly" />
                 </div>
               )}
             </div>
@@ -874,23 +896,58 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
     // Calculate on page load from existing DOB
     if (dobInput.value) updateAgeGroup();
 
-    // Home/Away → Home Club (readonly for Home, datalist for Away/Visitor)
+    // Home/Away → Home Club (auto-set for Home, searchable select for Away/Visitor)
     const homeAwaySelect = document.getElementById('home_away');
-    const homeClubInput = document.getElementById('home_club');
+    const homeClubSelect = document.getElementById('home_club');
+    const homeClubSearch = document.getElementById('home_club_search');
+
+    // Filter the select options based on search text
+    homeClubSearch.addEventListener('input', function() {
+      const search = this.value.toLowerCase();
+      const isAway = homeAwaySelect.value !== 'H';
+      const options = homeClubSelect.options;
+      let firstMatch = null;
+      for (let i = 0; i < options.length; i++) {
+        // Hide & disable Alnmouth Village when Away/Visitor
+        if (isAway && options[i].value === 'Alnmouth Village') {
+          options[i].hidden = true;
+          options[i].disabled = true;
+          continue;
+        }
+        const text = options[i].textContent.toLowerCase();
+        const show = !search || text.includes(search);
+        options[i].hidden = !show;
+        if (show && !firstMatch && options[i].value) firstMatch = options[i];
+      }
+      // Auto-select first match as user types
+      if (firstMatch && search.length >= 2) {
+        homeClubSelect.value = firstMatch.value;
+      }
+    });
+
+    // Hidden input to ensure value submits when select is disabled
+    const homeClubHidden = document.getElementById('home_club_hidden');
+
+    // Find the Alnmouth Village option to show/hide it
+    const avOption = [...homeClubSelect.options].find(o => o.value === 'Alnmouth Village');
 
     function updateHomeClub() {
       if (homeAwaySelect.value === 'H') {
-        homeClubInput.value = 'Alnmouth Village';
-        homeClubInput.readOnly = true;
-        homeClubInput.classList.add('field-readonly');
-        homeClubInput.removeAttribute('list');
+        if (avOption) { avOption.hidden = false; avOption.disabled = false; }
+        homeClubSelect.value = 'Alnmouth Village';
+        homeClubSelect.disabled = true;
+        homeClubSelect.classList.add('field-readonly');
+        homeClubSearch.style.display = 'none';
+        homeClubHidden.value = 'Alnmouth Village';
+        homeClubHidden.disabled = false;
       } else {
-        homeClubInput.readOnly = false;
-        homeClubInput.classList.remove('field-readonly');
-        homeClubInput.setAttribute('list', 'home-club-list');
-        // Clear if switching from Home to Away (but keep existing value for edits)
-        if (homeClubInput.value === 'Alnmouth Village') {
-          homeClubInput.value = '';
+        if (avOption) { avOption.hidden = true; avOption.disabled = true; }
+        homeClubSelect.disabled = false;
+        homeClubSelect.classList.remove('field-readonly');
+        homeClubSearch.style.display = '';
+        homeClubHidden.disabled = true;
+        if (homeClubSelect.value === 'Alnmouth Village') {
+          homeClubSelect.value = '';
         }
       }
     }
@@ -1057,7 +1114,7 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
             confirmText: 'Leave',
             cancelText: 'Stay'
           });
-          if (confirmed) window.location.href = link.href;
+          if (confirmed) { formSubmitting = true; window.location.href = link.href; }
         }
       });
     });

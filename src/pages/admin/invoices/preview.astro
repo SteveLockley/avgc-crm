@@ -4,6 +4,12 @@ import { formatCurrency, getFullName, type Invoice, type InvoiceItem, type Membe
 import { generateInvoiceEmail, generateInvoiceSubject } from '../../../lib/email-template';
 import { sendEmail, isEmailConfigured, isValidEmail } from '../../../lib/email';
 import { loadFeeItems, calculateLineItems } from '../../../lib/generate-invoice';
+import {
+  calculateDDSchedule, generateDDRenewalEmail, generateDDRenewalSubject,
+  calculateConsolidatedSchedule, generateConsolidatedDDRenewalEmail,
+} from '../../../lib/dd-renewal-email';
+import { generateBACSRenewalEmail, generateBACSRenewalSubject } from '../../../lib/bacs-renewal-email';
+import { generateSocialRenewalEmail, generateSocialRenewalSubject } from '../../../lib/social-renewal-email';
 
 const db = Astro.locals.runtime.env.DB;
 const user = Astro.locals.user;
@@ -45,7 +51,7 @@ const invoices: Array<{
 
 for (const invoiceId of invoiceIds) {
   const invoice = await db.prepare(
-    `SELECT * FROM invoices WHERE id = ? AND status IN ('draft', 'sent', 'paid')`
+    `SELECT * FROM invoices WHERE id = ? AND status IN ('draft', 'paid')`
   ).bind(invoiceId).first<Invoice>();
 
   if (!invoice) continue;
@@ -96,7 +102,7 @@ for (const invoiceId of invoiceIds) {
       const diff = correctTotal - oldTotal;
       if (Math.abs(diff) > 0.005) {
         await db.prepare(
-          `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+          `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
         ).bind(diff, member.id).run();
       }
     }
@@ -129,14 +135,95 @@ for (const invoiceId of invoiceIds) {
   const items = (itemsResult.results || []) as InvoiceItem[];
 
   const periodYear = parseInt(invoice.period_start.substring(0, 4));
-  const emailHtml = generateInvoiceEmail({
-    member,
-    invoice,
-    items,
-    settings,
-    customMessage: customMessage || undefined,
-  });
-  const emailSubject = generateInvoiceSubject(invoice, periodYear);
+
+  // Pick the right email template based on member's payment method / category
+  let emailHtml: string;
+  let emailSubject: string;
+
+  if (isDD && member.subscription_fee != null) {
+    // DD member — use the DD renewal template with payment schedule
+    const memberData = {
+      title: member.title, first_name: member.first_name, surname: member.surname,
+      id: member.id as number, category: member.category,
+      email: member.email, direct_debit_member_id: member.direct_debit_member_id,
+      locker_number: member.locker_number, national_id: member.national_id,
+      home_away: member.home_away, handicap_index: member.handicap_index,
+    };
+
+    // Check for family dependants
+    const depsResult = await db.prepare(
+      `SELECT m.*, p.fee as subscription_fee
+       FROM members m
+       LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+       WHERE m.family_payer_id = ?
+       ORDER BY m.surname, m.first_name`
+    ).bind(member.id).all();
+    const deps = (depsResult.results || []) as any[];
+
+    if (deps.length > 0) {
+      const depData = deps.filter((d: any) => d.subscription_fee != null).map((d: any) => ({
+        member: {
+          title: d.title, first_name: d.first_name, surname: d.surname,
+          id: d.id as number, category: d.category,
+          email: d.email, direct_debit_member_id: d.direct_debit_member_id,
+          locker_number: d.locker_number, national_id: d.national_id,
+          home_away: d.home_away, handicap_index: d.handicap_index,
+        },
+        fee: d.subscription_fee as number,
+      }));
+      const consolidated = calculateConsolidatedSchedule(memberData, member.subscription_fee, depData, periodYear);
+      emailHtml = generateConsolidatedDDRenewalEmail(consolidated, customMessage || undefined);
+    } else {
+      const schedule = calculateDDSchedule(memberData, member.subscription_fee, periodYear);
+      emailHtml = generateDDRenewalEmail(memberData, schedule, customMessage || undefined);
+    }
+    emailSubject = generateDDRenewalSubject(periodYear);
+
+  } else if (isSocial && member.subscription_fee != null) {
+    // Social member — use the Social renewal template
+    const bankDetails = {
+      bank_name: settings.bank_name || '',
+      sort_code: settings.sort_code || '',
+      account_number: settings.account_number || '',
+      account_name: settings.account_name || '',
+    };
+    emailHtml = generateSocialRenewalEmail(
+      {
+        title: member.title, first_name: member.first_name, surname: member.surname,
+        id: member.id as number, email: member.email,
+      },
+      member.subscription_fee, periodYear, bankDetails, customMessage || undefined
+    );
+    emailSubject = generateSocialRenewalSubject(periodYear);
+
+  } else if (member.subscription_fee != null) {
+    // BACS / Over the Till / Standing Order / Cheque — use the BACS renewal template
+    const bankDetails = {
+      bank_name: settings.bank_name || '',
+      sort_code: settings.sort_code || '',
+      account_number: settings.account_number || '',
+      account_name: settings.account_name || '',
+    };
+    emailHtml = generateBACSRenewalEmail(
+      {
+        title: member.title, first_name: member.first_name, surname: member.surname,
+        id: member.id as number, category: member.category,
+        email: member.email, locker_number: member.locker_number,
+        national_id: member.national_id, home_away: member.home_away,
+        handicap_index: member.handicap_index,
+      },
+      member.subscription_fee, periodYear, bankDetails, customMessage || undefined
+    );
+    emailSubject = generateBACSRenewalSubject(periodYear);
+
+  } else {
+    // Fallback: generic invoice template (e.g. no subscription_fee found)
+    emailHtml = generateInvoiceEmail({
+      member, invoice, items, settings,
+      customMessage: customMessage || undefined,
+    });
+    emailSubject = generateInvoiceSubject(invoice, periodYear);
+  }
 
   invoices.push({ invoice, member, items, emailHtml, emailSubject, revised });
 }
@@ -217,10 +304,9 @@ if (Astro.request.method === 'POST') {
         const periodYear = parseInt(invoice.period_start.substring(0, 4));
 
         if (result.success) {
-          // Update invoice status
+          // Update sent_at timestamp (don't change status — invoice stays draft/paid)
           await db.prepare(
             `UPDATE invoices SET
-              status = 'sent',
               sent_at = datetime('now'),
               sent_to_email = ?,
               updated_at = datetime('now')
@@ -281,7 +367,7 @@ const currentPreview = invoices[Math.min(previewIndex, invoices.length - 1)];
     {success && (
       <div class="m3-alert m3-alert-success">
         {success}
-        <a href="/admin/invoices?status=sent" class="m3-alert-link">View Sent Invoices &rarr;</a>
+        <a href="/admin/invoices?status=unpaid" class="m3-alert-link">View Unpaid Invoices &rarr;</a>
       </div>
     )}
 

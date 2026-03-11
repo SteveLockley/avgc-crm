@@ -5,7 +5,7 @@ interface SocialRenewalMember {
   title?: string;
   first_name: string;
   surname: string;
-  club_number?: string;
+  id: number;
   email?: string;
 }
 
@@ -39,7 +39,8 @@ export function generateSocialRenewalEmail(
   member: SocialRenewalMember,
   fee: number,
   year: number,
-  bankDetails: BankDetails
+  bankDetails: BankDetails,
+  customMessage?: string
 ): string {
   const memberName = [member.title, member.first_name, member.surname]
     .filter(Boolean)
@@ -78,6 +79,7 @@ export function generateSocialRenewalEmail(
               <p style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
                 Dear ${escapeHtml(memberName)},
               </p>
+              ${customMessage ? `<p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6; background: #fff8e1; padding: 12px; border-radius: 6px; border-left: 4px solid #f9a825;">${escapeHtml(customMessage).replace(/\n/g, '<br>')}</p>` : ''}
               <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
                 Thank you for your continued Social membership of Alnmouth Village Golf Club. Your
                 membership is due for renewal on <strong>1st April ${year}</strong> for the
@@ -207,6 +209,22 @@ export function generateSocialRenewalEmail(
               </div>
             </td>
           </tr>
+
+          ${fee >= 125 ? `
+          <!-- Direct Debit Mandate -->
+          <tr>
+            <td style="padding: 0 30px 15px 30px;">
+              <div style="background: #f0f7f3; border-radius: 6px; padding: 15px;">
+                <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  Prefer to spread the cost? You can also pay by Direct Debit. Download and complete the
+                  <a href="https://www.alnmouthvillage.golf/documents/dd-mandate-form.pdf" style="color: #1e5631; font-weight: 600;">Direct Debit Mandate Form</a>
+                  and return it to the club, or contact us at
+                  <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>.
+                </p>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
 
           <!-- Closing -->
           <tr>

@@ -1,0 +1,221 @@
+---
+const db = Astro.locals.runtime.env.DB;
+
+let invoices: any[] = [];
+let pageError = '';
+
+try {
+  // Single query: invoices + member info + line items, joined together
+  const result = await db.prepare(`
+    SELECT i.id as invoice_id, i.invoice_number, i.total, i.status,
+           m.first_name, m.surname,
+           ii.description, ii.line_total as item_amount,
+           pi.name as payment_item_name
+    FROM invoices i
+    JOIN members m ON i.member_id = m.id
+    LEFT JOIN invoice_items ii ON ii.invoice_id = i.id
+    LEFT JOIN payment_items pi ON ii.payment_item_id = pi.id
+    WHERE i.status IN ('draft', 'sent')
+    ORDER BY m.surname COLLATE NOCASE, m.first_name COLLATE NOCASE, i.invoice_number, ii.id
+  `).all();
+
+  // Group rows by invoice
+  const invoiceMap = new Map<number, any>();
+  for (const row of (result.results || []) as any[]) {
+    if (!invoiceMap.has(row.invoice_id)) {
+      invoiceMap.set(row.invoice_id, {
+        id: row.invoice_id, invoice_number: row.invoice_number,
+        total: row.total, status: row.status,
+        first_name: row.first_name, surname: row.surname,
+        items: [],
+      });
+    }
+    if (row.description || row.payment_item_name) {
+      invoiceMap.get(row.invoice_id)!.items.push({
+        description: row.description,
+        payment_item_name: row.payment_item_name,
+        amount: row.item_amount,
+      });
+    }
+  }
+  invoices = [...invoiceMap.values()];
+} catch (e: any) {
+  pageError = e.message || String(e);
+}
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(amount);
+}
+
+const now = new Date();
+const dateStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+---
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Unpaid Invoices — {dateStr}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11px;
+      color: #111;
+      padding: 20px;
+      background: #fff;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #1b5e20;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1b5e20;
+    }
+    .header .date {
+      font-size: 11px;
+      color: #666;
+    }
+    .header .count {
+      font-size: 11px;
+      color: #666;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead th {
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #555;
+      padding: 4px 6px;
+      border-bottom: 1.5px solid #333;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 4px 6px;
+      border-bottom: 1px solid #e0e0e0;
+      vertical-align: top;
+    }
+    tbody tr:nth-child(even) {
+      background: #f9f9f9;
+    }
+    .name-col { white-space: nowrap; font-weight: 500; }
+    .amount-col { text-align: right; white-space: nowrap; font-weight: 600; }
+    .items-col { color: #444; font-size: 10px; }
+    .item-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 10px;
+    }
+    .item {
+      white-space: nowrap;
+    }
+    .item-amount {
+      color: #777;
+    }
+    .status-col {
+      text-align: center;
+      white-space: nowrap;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .status-draft { color: #e65100; }
+    .status-sent { color: #1565c0; }
+    .invoice-col { white-space: nowrap; color: #666; font-size: 10px; }
+    .print-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      background: #1b5e20;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .print-btn:hover { background: #2e7d32; }
+    .print-btn svg { width: 14px; height: 14px; }
+    .no-print { }
+    @media print {
+      body { padding: 0; font-size: 10px; }
+      .no-print { display: none !important; }
+      .header { border-bottom-color: #000; }
+      .header h1 { color: #000; }
+      tbody tr:nth-child(even) { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      @page { margin: 10mm; size: landscape; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Unpaid Invoices</h1>
+      <span class="count">{invoices.length} invoice{invoices.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <span class="date">{dateStr}</span>
+      <button class="print-btn no-print" onclick="window.print()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        Print
+      </button>
+    </div>
+  </div>
+
+  {pageError && <p style="padding:20px;color:red;font-weight:bold;">Error: {pageError}</p>}
+  {!pageError && invoices.length === 0 ? (
+    <p style="padding:20px;color:#666;">No unpaid invoices found.</p>
+  ) : !pageError ? (
+    <table>
+      <thead>
+        <tr>
+          <th>Member</th>
+          <th>Invoice</th>
+          <th>Status</th>
+          <th>Line Items</th>
+          <th style="text-align:right;">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {invoices.map(inv => {
+          const items = inv.items;
+          return (
+            <tr>
+              <td class="name-col">{inv.surname}, {inv.first_name}</td>
+              <td class="invoice-col">{inv.invoice_number}</td>
+              <td class="status-col">
+                <span class={`status-${inv.status}`}>{inv.status}</span>
+              </td>
+              <td class="items-col">
+                <div class="item-list">
+                  {items.map((item, idx) => (
+                    <span class="item">
+                      {item.payment_item_name || item.description}
+                      <span class="item-amount">{formatCurrency(item.amount)}</span>
+                      {idx < items.length - 1 ? <span style="color:#ccc;">|</span> : null}
+                    </span>
+                  ))}
+                </div>
+              </td>
+              <td class="amount-col">{formatCurrency(inv.total)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  ) : null}
+</body>
+</html>

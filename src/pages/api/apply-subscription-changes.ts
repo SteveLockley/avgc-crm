@@ -88,7 +88,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         // paid DD invoices never touched balance so should not be subtracted)
         if (inv.status === 'draft') {
           await db.prepare(
-            `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+            `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
           ).bind(inv.total, change.memberId).run();
         }
 

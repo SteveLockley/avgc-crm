@@ -5,7 +5,7 @@ interface SubscriptionChangeMember {
   title?: string;
   first_name: string;
   surname: string;
-  club_number?: string;
+  id: number;
   category: string; // NEW category
   email?: string;
   locker_number?: string;
@@ -256,12 +256,10 @@ export function generateSubscriptionChangeEmail(
                 <tr>
                   <td style="padding: 15px;">
                     <table role="presentation" cellspacing="0" cellpadding="0">
-                      ${member.club_number ? `
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Member No:</td>
-                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${escapeHtml(member.club_number)}</td>
+                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${member.id}</td>
                       </tr>
-                      ` : ''}
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Category:</td>
                         <td style="padding: 4px 0; font-size: 14px; color: #333;">${escapeHtml(newCategory)}</td>

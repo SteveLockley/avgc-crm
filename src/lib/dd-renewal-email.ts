@@ -5,7 +5,7 @@ interface DDRenewalMember {
   title?: string;
   first_name: string;
   surname: string;
-  club_number?: string;
+  id: number;
   category: string;
   email?: string;
   direct_debit_member_id?: string;
@@ -168,7 +168,8 @@ function getMonthName(monthIndex: number): string {
  */
 export function generateDDRenewalEmail(
   member: DDRenewalMember,
-  schedule: DDPaymentSchedule
+  schedule: DDPaymentSchedule,
+  customMessage?: string
 ): string {
   const memberName = [member.title, member.first_name, member.surname]
     .filter(Boolean)
@@ -335,6 +336,7 @@ export function generateDDRenewalEmail(
               <p style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
                 Dear ${escapeHtml(memberName)},
               </p>
+              ${customMessage ? `<p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6; background: #fff8e1; padding: 12px; border-radius: 6px; border-left: 4px solid #f9a825;">${escapeHtml(customMessage).replace(/\n/g, '<br>')}</p>` : ''}
               <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
                 Thank you for your continued membership of Alnmouth Village Golf Club. This letter serves as your
                 <strong>advance notice</strong> that your annual membership subscription will be renewed by Direct Debit
@@ -354,12 +356,10 @@ export function generateDDRenewalEmail(
                 <tr>
                   <td style="padding: 15px;">
                     <table role="presentation" cellspacing="0" cellpadding="0">
-                      ${member.club_number ? `
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Member No:</td>
-                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${escapeHtml(member.club_number)}</td>
+                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${member.id}</td>
                       </tr>
-                      ` : ''}
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Category:</td>
                         <td style="padding: 4px 0; font-size: 14px; color: #333;">${escapeHtml(member.category)}</td>
@@ -512,6 +512,23 @@ export function generateDDRenewalEmail(
             </td>
           </tr>
 
+          ${!member.direct_debit_member_id ? `
+          <!-- DD Mandate Form (new members) -->
+          <tr>
+            <td style="padding: 15px 30px;">
+              <div style="background: #f0f7f3; border: 2px solid #1e5631; border-radius: 6px; padding: 15px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e5631; font-size: 15px;">Set Up Your Direct Debit</h4>
+                <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  To begin your Direct Debit payments, please download and complete the
+                  <a href="https://www.alnmouthvillage.golf/documents/dd-mandate-form.pdf" style="color: #1e5631; font-weight: 600;">Direct Debit Mandate Form</a>
+                  and return it to the club, or contact us at
+                  <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>.
+                </p>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+
           <!-- Direct Debit Guarantee -->
           <tr>
             <td style="padding: 15px 30px 30px 30px;">
@@ -599,7 +616,8 @@ export function generateDDRenewalEmail(
  * Shows each family member's annual charges, then one combined monthly payment schedule.
  */
 export function generateConsolidatedDDRenewalEmail(
-  consolidated: ConsolidatedDDSchedule
+  consolidated: ConsolidatedDDSchedule,
+  customMessage?: string
 ): string {
   const payerName = [consolidated.payer.title, consolidated.payer.first_name, consolidated.payer.surname]
     .filter(Boolean)
@@ -770,6 +788,7 @@ export function generateConsolidatedDDRenewalEmail(
               <p style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
                 Dear ${escapeHtml(payerName)},
               </p>
+              ${customMessage ? `<p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6; background: #fff8e1; padding: 12px; border-radius: 6px; border-left: 4px solid #f9a825;">${escapeHtml(customMessage).replace(/\n/g, '<br>')}</p>` : ''}
               <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
                 Thank you for your continued membership of Alnmouth Village Golf Club. This letter serves as your
                 <strong>advance notice</strong> of the Direct Debit collections for the ${consolidated.membershipYear}
@@ -888,6 +907,23 @@ export function generateConsolidatedDDRenewalEmail(
               </div>
             </td>
           </tr>
+
+          ${!consolidated.payer.direct_debit_member_id ? `
+          <!-- DD Mandate Form (new members) -->
+          <tr>
+            <td style="padding: 15px 30px;">
+              <div style="background: #f0f7f3; border: 2px solid #1e5631; border-radius: 6px; padding: 15px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e5631; font-size: 15px;">Set Up Your Direct Debit</h4>
+                <p style="margin: 0; font-size: 14px; color: #333; line-height: 1.6;">
+                  To begin your Direct Debit payments, please download and complete the
+                  <a href="https://www.alnmouthvillage.golf/documents/dd-mandate-form.pdf" style="color: #1e5631; font-weight: 600;">Direct Debit Mandate Form</a>
+                  and return it to the club, or contact us at
+                  <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>.
+                </p>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
 
           <!-- Direct Debit Guarantee -->
           <tr>

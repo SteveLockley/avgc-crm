@@ -35,7 +35,7 @@ if (filterStatus !== 'all') {
 }
 
 const logs = await db.prepare(
-  `SELECT se.*, m.first_name, m.surname, m.category, m.club_number
+  `SELECT se.*, m.first_name, m.surname, m.category
    FROM sent_emails se
    LEFT JOIN members m ON m.id = se.member_id
    ${whereClause}
@@ -55,7 +55,13 @@ const typeLabels: Record<string, string> = {
   invoice_resend: 'Invoice Resend',
   reminder: 'Reminder',
   subscription_change: 'Subscription Change',
+  member_email: 'Member Email',
 };
+
+// Batch summary logs from email_log table
+const batchLogs = await db.prepare(
+  `SELECT * FROM email_log WHERE strftime('%Y', sent_at) = ? ORDER BY sent_at DESC LIMIT 100`
+).bind(String(year)).all();
 
 function formatDate(dateStr: string) {
   if (!dateStr) return '—';
@@ -130,6 +136,39 @@ function formatDate(dateStr: string) {
     </div>
   )}
 
+  <!-- Batch Summaries -->
+  {batchLogs.results && batchLogs.results.length > 0 && (
+    <div class="batch-section">
+      <h3 class="section-title">Batch Sends</h3>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Subject</th>
+              <th>Sent</th>
+              <th>Failed</th>
+              <th>Total</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batchLogs.results.map((b: any) => (
+              <tr class={b.total_failed > 0 ? 'row-failed' : ''}>
+                <td><span class="type-tag">{typeLabels[b.email_type] || b.email_type}</span></td>
+                <td class="subject-cell">{b.subject || '—'}</td>
+                <td style="color:#2e7d32;font-weight:600;">{b.total_sent}</td>
+                <td style={b.total_failed > 0 ? 'color:#c62828;font-weight:600;' : 'color:#999;'}>{b.total_failed}</td>
+                <td>{b.total_recipients}</td>
+                <td class="date-cell">{formatDate(b.sent_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+
   <!-- Filters -->
   <div class="filters">
     <label class="filter-group">
@@ -144,6 +183,7 @@ function formatDate(dateStr: string) {
         <option value="invoice_resend" selected={filterType === 'invoice_resend'}>Invoice Resend</option>
         <option value="reminder" selected={filterType === 'reminder'}>Reminder</option>
         <option value="subscription_change" selected={filterType === 'subscription_change'}>Subscription Change</option>
+        <option value="member_email" selected={filterType === 'member_email'}>Member Email</option>
       </select>
     </label>
     <label class="filter-group">
@@ -203,7 +243,7 @@ function formatDate(dateStr: string) {
                 )}
               </td>
               <td>
-                {log.club_number ? <span class="member-num">#{log.club_number}</span> : ''}
+                {log.member_id ? <span class="member-num">#{log.member_id}</span> : ''}
                 {[log.first_name, log.surname].filter(Boolean).join(' ') || `ID ${log.member_id}`}
               </td>
               <td>{log.category || '—'}</td>
@@ -556,6 +596,24 @@ function formatDate(dateStr: string) {
     .empty-state p {
       margin: 0;
       color: #666;
+    }
+
+    .batch-section {
+      margin-bottom: 2rem;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin: 0 0 0.75rem 0;
+    }
+
+    .subject-cell {
+      max-width: 250px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     @media (max-width: 600px) {

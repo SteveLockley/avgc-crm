@@ -13,7 +13,6 @@ interface MemberDetails {
   first_name: string;
   surname: string;
   category: string;
-  club_number: string;
 }
 
 interface SubscriptionFee {
@@ -29,7 +28,7 @@ if (db && member?.id) {
   try {
     // Get full member details
     memberDetails = await db.prepare(
-      `SELECT id, first_name, surname, category, club_number FROM members WHERE id = ?`
+      `SELECT id, first_name, surname, category FROM members WHERE id = ?`
     ).bind(member.id).first<MemberDetails>();
 
     // Get subscription fee for this member's category
@@ -45,7 +44,7 @@ if (db && member?.id) {
       `SELECT i.*,
               (SELECT SUM(amount) FROM invoice_items WHERE invoice_id = i.id) as total_amount
        FROM invoices i
-       WHERE i.member_id = ? AND i.status IN ('pending', 'sent', 'overdue')
+       WHERE i.member_id = ? AND i.status = 'draft'
        ORDER BY i.created_at DESC`
     ).bind(member.id).all();
     outstandingInvoices = result.results || [];
@@ -81,7 +80,7 @@ function formatDate(dateStr: string | null): string {
 }
 
 const memberId = memberDetails?.id || member?.id;
-const memberNumber = memberDetails?.club_number || memberId;
+const memberNumber = memberId;
 const memberName = memberDetails ? `${memberDetails.first_name} ${memberDetails.surname}` : `${member?.firstName} ${member?.surname}`;
 const memberCategory = memberDetails?.category || 'Member';
 const annualFee = subscriptionFee?.fee || null;

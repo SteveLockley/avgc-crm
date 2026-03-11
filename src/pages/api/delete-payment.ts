@@ -54,7 +54,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         ).bind(payment.invoice_id).run();
 
         await env.DB.prepare(
-          `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+          `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
         ).bind(invoice.total, invoice.member_id).run();
       }
     }

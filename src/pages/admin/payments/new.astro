@@ -2,6 +2,8 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { PAYMENT_METHODS, formatCurrency, formatDate, formatInvoicePeriod, getInvoiceStatusBadge, type Invoice, type InvoiceItem, type Member, type InvoiceSetting } from '../../../lib/db';
 import { generateInvoiceEmail } from '../../../lib/email-template';
+import { sendEmail } from '../../../lib/email';
+import { generateWelcomeEmail, generateWelcomeEmailSubject } from '../../../lib/welcome-email';
 
 const db = Astro.locals.runtime.env.DB;
 
@@ -44,10 +46,10 @@ if (preselectedMemberId) {
   ).bind(preselectedMemberId).first();
 
   if (preselectedMember) {
-    // Get outstanding invoices for this member (sent but not paid, oldest first)
+    // Get outstanding invoices for this member (unpaid, oldest first)
     const invoicesResult = await db.prepare(
       `SELECT * FROM invoices
-       WHERE member_id = ? AND status = 'sent'
+       WHERE member_id = ? AND status = 'draft'
        ORDER BY invoice_date ASC`
     ).bind(preselectedMemberId).all();
     outstandingInvoices = invoicesResult.results || [];
@@ -141,7 +143,7 @@ if (Astro.request.method === 'POST') {
 
         // Update member: decrement balance, set paid/renewal/expires dates, update payment method
         await db.prepare(
-          `UPDATE members SET account_balance = account_balance - ?, date_subscription_paid = ?, date_renewed = ?, date_expires = ?, default_payment_method = ? WHERE id = ?`
+          `UPDATE members SET account_balance = account_balance + ?, date_subscription_paid = ?, date_renewed = ?, date_expires = ?, default_payment_method = ? WHERE id = ?`
         ).bind(amount, paymentDate, paymentDate, invoice.period_end, paymentMethod || null, memberId).run();
 
         // Log the action
@@ -153,6 +155,54 @@ if (Astro.request.method === 'POST') {
           invoiceId,
           JSON.stringify({ amount, payment_method: paymentMethod, invoice_number: invoice.invoice_number })
         ).run();
+
+        // Send welcome email to new members (joined this membership year, not already sent)
+        try {
+          const member = await db.prepare(
+            'SELECT first_name, surname, pin, email, date_joined FROM members WHERE id = ?'
+          ).bind(memberId).first<{ first_name: string; surname: string; pin: string; email: string; date_joined: string }>();
+
+          if (member?.pin && member?.email && member.date_joined) {
+            // Check if joined within current membership year (Apr-Mar)
+            const now = new Date();
+            const yearStart = now.getMonth() >= 3
+              ? new Date(now.getFullYear(), 3, 1)   // April this year
+              : new Date(now.getFullYear() - 1, 3, 1); // April last year
+            const joinedDate = new Date(member.date_joined);
+            const isNewMember = joinedDate >= yearStart;
+
+            if (isNewMember) {
+              // Check no welcome email already sent
+              const alreadySent = await db.prepare(
+                "SELECT id FROM sent_emails WHERE member_id = ? AND email_type = 'welcome'"
+              ).bind(memberId).first();
+
+              if (!alreadySent) {
+                const env = Astro.locals.runtime.env;
+                const html = generateWelcomeEmail(member);
+                const result = await sendEmail({
+                  to: member.email,
+                  subject: generateWelcomeEmailSubject(),
+                  html
+                }, env);
+
+                await db.prepare(
+                  `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error)
+                   VALUES (?, 'welcome', ?, ?, ?, ?)`
+                ).bind(
+                  memberId,
+                  member.email,
+                  now.getFullYear(),
+                  result.success ? 'sent' : 'failed',
+                  result.error || null
+                ).run();
+              }
+            }
+          }
+        } catch (e: any) {
+          // Don't fail the payment if welcome email fails
+          console.error('Welcome email error:', e.message);
+        }
 
         // Redirect back to member or payments list
         if (preselectedMemberId) {
@@ -171,7 +221,7 @@ const membersWithInvoices = await db.prepare(
   `SELECT DISTINCT m.id, m.first_name, m.surname, m.default_payment_method,
           COUNT(i.id) as outstanding_count
    FROM members m
-   JOIN invoices i ON m.id = i.member_id AND i.status = 'sent'
+   JOIN invoices i ON m.id = i.member_id AND i.status = 'draft'
    GROUP BY m.id
    ORDER BY m.surname, m.first_name`
 ).all();

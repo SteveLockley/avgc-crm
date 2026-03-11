@@ -20,6 +20,7 @@ const offset = (page - 1) * perPage;
 
 // Valid sort columns mapping
 const sortColumns: Record<string, string> = {
+  'id': 'id',
   'name': 'surname',
   'surname': 'surname',
   'category': 'category',
@@ -43,13 +44,20 @@ let whereClause = '1=1';
 const params: any[] = [];
 
 if (search) {
-  whereClause += ` AND (
-    surname LIKE ? OR
-    first_name LIKE ? OR
-    email LIKE ?
-  )`;
-  const searchTerm = `%${search}%`;
-  params.push(searchTerm, searchTerm, searchTerm);
+  // Check if search is a number (member ID lookup)
+  const isNumeric = /^\d+$/.test(search.trim());
+  if (isNumeric) {
+    whereClause += ` AND id = ?`;
+    params.push(parseInt(search.trim(), 10));
+  } else {
+    whereClause += ` AND (
+      surname LIKE ? OR
+      first_name LIKE ? OR
+      email LIKE ?
+    )`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
 }
 
 if (subscriptionType) {
@@ -200,6 +208,9 @@ function getSortIndicator(column: string): string {
           <a href="/admin/members/import" class="dropdown-item">Import</a>
           <a href={`/admin/members/export${buildFilterQueryString()}`} class="dropdown-item">Export</a>
           <a href={`/admin/members/email${buildFilterQueryString()}`} class="dropdown-item">Email All</a>
+          <div class="dropdown-divider"></div>
+          <a href="#" class="dropdown-item" id="send-welcome-emails">Send Welcome Emails</a>
+          <a href="/api/preview-welcome-email" target="_blank" class="dropdown-item">Preview Welcome Email</a>
         </div>
       </div>
     </div>
@@ -220,7 +231,7 @@ function getSortIndicator(column: string): string {
               type="text"
               name="search"
               class="filter-input"
-              placeholder="Name or email..."
+              placeholder="Name, email or member no..."
               value={search}
             />
           </div>
@@ -298,6 +309,7 @@ function getSortIndicator(column: string): string {
       <table class="m3-table">
         <thead>
           <tr>
+            <th class="id-col"><a href={buildSortUrl('id')} class="sort-header">No.{getSortIndicator('id')}</a></th>
             <th><a href={buildSortUrl('name')} class="sort-header">Name{getSortIndicator('name')}</a></th>
             <th class="category-col"><a href={buildSortUrl('category')} class="sort-header">Subscription{getSortIndicator('category')}</a></th>
             <th class="center-col ha-col"><a href={buildSortUrl('home_away')} class="sort-header">H/A{getSortIndicator('home_away')}</a></th>
@@ -311,6 +323,7 @@ function getSortIndicator(column: string): string {
         <tbody>
           {members.results?.map((member) => (
             <tr>
+              <td class="id-col"><code>{member.id}</code></td>
               <td class="name-cell">
                 <a href={`/admin/members/${member.id}`} class="member-name">
                   {member.surname}, {member.first_name}
@@ -368,6 +381,13 @@ function getSortIndicator(column: string): string {
                       </svg>
                     </a>
                   )}
+                  <button type="button" class="action-btn brs-btn" onclick={`sendWelcome(${member.id}, '${member.first_name} ${member.surname}')`} title="Send BRS Welcome Email">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                      <line x1="8" y1="21" x2="16" y2="21"/>
+                      <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                  </button>
                   <button type="button" class="action-btn danger" onclick={`deleteMember(${member.id}, '${member.surname}, ${member.first_name}')`} title="Delete">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <polyline points="3 6 5 6 21 6"/>
@@ -380,7 +400,7 @@ function getSortIndicator(column: string): string {
           ))}
           {(!members.results || members.results.length === 0) && (
             <tr>
-              <td colspan="8" class="empty-row">
+              <td colspan="9" class="empty-row">
                 <div class="empty-state">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -741,6 +761,17 @@ function getSortIndicator(column: string): string {
       text-align: right;
     }
 
+    .id-col {
+      width: 60px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .id-col code {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
     .name-cell {
       min-width: 180px;
     }
@@ -873,6 +904,15 @@ function getSortIndicator(column: string): string {
       color: #dc3545;
     }
 
+    .action-btn.brs-btn {
+      color: #0d6efd;
+    }
+
+    .action-btn.brs-btn:hover {
+      background: #e7f1ff;
+      color: #0a58ca;
+    }
+
     .action-btn svg {
       width: 16px;
       height: 16px;
@@ -1002,6 +1042,7 @@ function getSortIndicator(column: string): string {
     }
 
     @media (max-width: 768px) {
+      .m3-table .id-col,
       .m3-table .ha-col,
       .m3-table .handicap-col,
       .m3-table .notes-col {
@@ -1150,5 +1191,55 @@ function getSortIndicator(column: string): string {
         await m3Alert('Delete failed: ' + error.message, { title: 'Error', type: 'error' });
       }
     }
+
+    async function sendWelcome(id, name) {
+      const confirmed = await m3Confirm(
+        `Send BRS welcome email to ${name}?`,
+        { title: 'Send Welcome Email', confirmText: 'Send', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch('/api/send-welcome-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memberId: id })
+        });
+        const data = await response.json();
+        if (data.success) {
+          await m3Alert(`Welcome email sent to ${data.name} (${data.email})`, { title: 'Email Sent' });
+        } else {
+          await m3Alert('Failed: ' + data.error, { title: 'Error', type: 'error' });
+        }
+      } catch (error) {
+        await m3Alert('Failed: ' + error.message, { title: 'Error', type: 'error' });
+      }
+    }
+
+    document.getElementById('send-welcome-emails')?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const confirmed = await m3Confirm(
+        'This will send a welcome email to all new members who have paid but not yet received one.',
+        { title: 'Send Welcome Emails?', confirmText: 'Send', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch('/api/send-welcome-emails', { method: 'POST' });
+        const data = await response.json();
+        if (data.success) {
+          if (data.total === 0) {
+            await m3Alert('No new members need a welcome email.', { title: 'Welcome Emails' });
+          } else {
+            const details = data.results.map(r => `${r.name}: ${r.status}`).join('\n');
+            await m3Alert(`Sent: ${data.sent}, Failed: ${data.failed}\n\n${details}`, { title: 'Welcome Emails Sent' });
+          }
+        } else {
+          await m3Alert('Failed: ' + data.error, { title: 'Error', type: 'error' });
+        }
+      } catch (error) {
+        await m3Alert('Failed: ' + error.message, { title: 'Error', type: 'error' });
+      }
+    });
   </script>
 </AdminLayout>

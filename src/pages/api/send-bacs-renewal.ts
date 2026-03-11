@@ -84,7 +84,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const html = generateBACSRenewalEmail(
         {
           title: member.title, first_name: member.first_name, surname: member.surname,
-          club_number: member.club_number || member.pin, category: member.category,
+          id: member.id as number, category: member.category,
           email: member.email, locker_number: member.locker_number,
           national_id: member.national_id, home_away: member.home_away,
           handicap_index: member.handicap_index,
@@ -132,7 +132,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const html = generateBACSRenewalEmail(
       {
         title: member.title, first_name: member.first_name, surname: member.surname,
-        club_number: member.club_number || member.pin, category: member.category,
+        id: member.id as number, category: member.category,
         email: member.email, locker_number: member.locker_number,
         national_id: member.national_id, home_away: member.home_away,
         handicap_index: member.handicap_index,
@@ -167,7 +167,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const html = generateBACSRenewalEmail(
       {
         title: member.title, first_name: member.first_name, surname: member.surname,
-        club_number: member.club_number || member.pin, category: member.category,
+        id: member.id as number, category: member.category,
         email: member.email, locker_number: member.locker_number,
         national_id: member.national_id, home_away: member.home_away,
         handicap_index: member.handicap_index,
@@ -237,7 +237,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       {
         title: member.title as string, first_name: member.first_name as string,
         surname: member.surname as string,
-        club_number: (member.club_number || member.pin) as string,
+        id: member.id as number,
         category: member.category as string, email: member.email as string,
         locker_number: member.locker_number as string,
         national_id: member.national_id as string,

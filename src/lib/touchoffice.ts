@@ -160,8 +160,9 @@ export interface SaleReceipt {
 // --- Sales detail fetchers ---
 
 /**
- * Fetch membership (dept 6) and locker (dept 9) sales list for a date range.
- * Sets date filter via POST, then GETs sales from both departments.
+ * Fetch membership sales list for a date range.
+ * Departments: 5 (social memberships), 6 (memberships), 9 (lockers).
+ * Sets date filter via POST, then GETs sales from each department.
  */
 export async function fetchMembershipSalesList(
   sessionCookie: string,
@@ -196,11 +197,11 @@ export async function fetchMembershipSalesList(
     throw new Error('Session expired during sales list fetch.');
   }
 
-  // Step 2: Fetch sales from dept 6 (memberships) and dept 9 (lockers)
+  // Step 2: Fetch sales from dept 5 (social memberships), 6 (memberships), 9 (lockers)
   const allEntries: SalesListEntry[] = [];
   const seenSaleIds = new Set<string>();
 
-  for (const dept of [6, 9]) {
+  for (const dept of [5, 6, 9]) {
     const pageSize = 100;
     let start = 0;
     let totalRecords = 0;

@@ -229,8 +229,9 @@ if (Astro.request.method === 'POST') {
             errors: []
           };
 
-          // Process EGU records
+          // Process EGU records (skip resigned members)
           for (const egu of eguRecords) {
+            if (egu.status && egu.status.toLowerCase() === 'resigned') continue;
             const crm = crmByCdh.get(egu.cdhNumber);
 
             if (crm) {
@@ -254,28 +255,7 @@ if (Astro.request.method === 'POST') {
                 });
               }
 
-              // Email comparison
-              const eguEmail = normalizeEmail(egu.email);
-              const crmEmail = normalizeEmail(crm.email);
-              if (eguEmail && crmEmail && eguEmail !== crmEmail) {
-                discrepancies.push({
-                  field: 'Email',
-                  eguValue: egu.email,
-                  crmValue: crm.email || ''
-                });
-              } else if (eguEmail && !crmEmail) {
-                discrepancies.push({
-                  field: 'Email',
-                  eguValue: egu.email,
-                  crmValue: '(not set)'
-                });
-              } else if (!eguEmail && crmEmail) {
-                discrepancies.push({
-                  field: 'Email',
-                  eguValue: '(not set)',
-                  crmValue: crm.email || ''
-                });
-              }
+              // Email comparison — skipped (differences in email are ignored)
 
               // Date of birth comparison (if available in EGU file)
               if (egu.dob && crm.date_of_birth) {

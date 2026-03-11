@@ -28,8 +28,8 @@ if (eguCategory) {
     .map((m: any) => m.id);
 }
 
-// Build query with filters
-let whereClause = '1=1';
+// Build query with filters - exclude Social members
+let whereClause = "category != 'Social' AND category IS NOT NULL AND category != ''";
 const params: any[] = [];
 
 if (search) {
@@ -73,14 +73,13 @@ if (!members.results || members.results.length === 0) {
 }
 
 // Define CSV columns - HandicapMaster compatible format
-// Only include fields that HandicapMaster supports
+// HandicapMaster import CSV — only fields safe to import
 const columns = [
   'Surname',
   'Middle Initials',
   'First Name',
   'Gender',
   'Age Group',
-  'Handicap Index',
   'Home/Away/Visitor',
   'Home Club',
   'PIN',
@@ -96,35 +95,16 @@ const columns = [
   'E-Mail Address',
   'Club Number',
   'Category',
-  'Officer Title',
   'Date Joined',
-  'Date Renewed',
-  'Date Expires',
-  'Date Subscription Paid',
   'National ID Country',
   'National ID',
-  'Card Number',
   'Date of Birth',
-  'Locker Number',
-  'Default Payment Method',
   'Send Invoice By',
-  'Account Notes',
-  'DD Account Name',
-  'DD Account Number',
-  'DD Sort Code',
-  'DD Reference',
-  'DD New Instruction Set Up',
-  'Notes',
-  'Electronic Communication Consent',
-  'Date Communication Consent Changed',
-  'Parental Consent',
-  'Data Protection Notes',
-  'Account ID'
 ];
 
 // Format date from YYYY-MM-DD to DD/MM/YYYY (HandicapMaster format)
 function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '';
+  if (!dateStr) return ' ';
   // Handle ISO date format YYYY-MM-DD
   const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (match) {
@@ -136,7 +116,7 @@ function formatDate(dateStr: string | null): string {
 
 // Format boolean to Yes/No
 function formatBoolean(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === '') return '';
+  if (value === null || value === undefined || value === '') return ' ';
   if (value === 1 || value === '1' || value === true ||
       String(value).toLowerCase() === 'yes' || String(value).toLowerCase() === 'y') {
     return 'Yes';
@@ -150,7 +130,7 @@ function formatBoolean(value: string | number | null | undefined): string {
 
 // Format Send Invoice By to Letter/Email
 function formatSendInvoiceBy(value: string | null): string {
-  if (!value) return '';
+  if (!value) return ' ';
   const lower = value.toLowerCase();
   if (lower === 'email' || lower === 'e-mail' || lower === 'e' || lower === 'em') {
     return 'Email';
@@ -163,67 +143,34 @@ function formatSendInvoiceBy(value: string | null): string {
 
 // Sanitize text - remove newlines and carriage returns (HandicapMaster requirement)
 function sanitizeText(value: string | null): string {
-  if (!value) return '';
+  if (!value) return ' ';
   // Replace newlines with space, trim, and limit to 4096 chars for notes fields
   return value.replace(/[\r\n]+/g, ' ').trim();
 }
 
-// Format account balance - HandicapMaster expects numeric format
-function formatCurrency(value: number | string | null): string {
-  if (value === null || value === undefined) return '0.00';
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (isNaN(num)) return '0.00';
-  return num.toFixed(2);
-}
 
 // Map database fields to CSV columns
 function mapMemberToRow(m: any): string[] {
   return [
-    sanitizeText(m.surname) || '',
-    sanitizeText(m.middle_initials) || '',
-    sanitizeText(m.first_name) || '',
-    m.gender || '',
-    m.age_group || '',
-    m.handicap_index !== null && m.handicap_index !== undefined ? m.handicap_index.toString() : '',
+    sanitizeText(m.surname) || ' ',
+    sanitizeText(m.middle_initials) || ' ',
+    sanitizeText(m.first_name) || ' ',
+    m.gender || ' ',
+    m.age_group || ' ',
     m.home_away || 'H',
     sanitizeText(m.home_club) || 'Alnmouth Village',
-    m.pin || '',
-    m.title || '',
-    sanitizeText(m.address_1) || '',
-    sanitizeText(m.address_2) || '',
-    sanitizeText(m.address_3) || '',
-    sanitizeText(m.address_4) || '',
-    sanitizeText(m.address_5) || '',
-    m.telephone_1 || '',
-    m.telephone_2 || '',
-    m.telephone_3 || '',
-    m.email || '',
-    m.club_number || '',
-    m.category || '',
-    m.officer_title || 'Not on Committee',
+    m.pin || ' ',
+    m.title || ' ',
+    ' ', ' ', ' ', ' ', ' ', // Address 1-5 blanked
+    ' ', ' ', ' ', // Telephone 1-3 blanked
+    (m.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.email)) ? m.email : 'subscriptions@alnmouthvillage.golf',
+    ' ',
+    m.category === 'Senior Loyalty' ? 'Senior' : m.category === 'Junior (Members Family)' ? 'Junior' : (m.category || ' '),
     formatDate(m.date_joined),
-    formatDate(m.date_renewed),
-    formatDate(m.date_expires),
-    formatDate(m.date_subscription_paid),
-    m.national_id_country || '',
-    m.national_id || '',
-    m.card_number || '',
+    m.national_id_country || ' ',
+    m.national_id || ' ',
     formatDate(m.date_of_birth),
-    m.locker_number || '',
-    m.default_payment_method || '',
     formatSendInvoiceBy(m.send_invoice_by),
-    sanitizeText(m.account_notes)?.substring(0, 4096) || '',
-    sanitizeText(m.dd_account_name)?.substring(0, 20) || '',
-    m.dd_account_number || '',
-    m.dd_sort_code || '',
-    sanitizeText(m.dd_reference)?.substring(0, 18) || '',
-    formatBoolean(m.dd_new_instruction_set_up),
-    sanitizeText(m.notes)?.substring(0, 4096) || '',
-    formatBoolean(m.electronic_communication_consent),
-    formatDate(m.date_communication_consent_changed),
-    formatBoolean(m.parental_consent),
-    sanitizeText(m.data_protection_notes)?.substring(0, 4096) || '',
-    m.account_id || ''
   ];
 }
 

@@ -31,7 +31,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // If deleting a non-cancelled invoice, decrement the member's balance
   if (invoice.status !== 'cancelled') {
     await env.DB.prepare(
-      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
     ).bind(invoice.total, invoice.member_id).run();
   }
 

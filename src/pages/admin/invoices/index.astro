@@ -395,6 +395,14 @@ function buildQueryString(pageNum: number): string {
         </button>
         <span id="selected-count" class="selected-count">0 selected</span>
         <div class="bulk-actions-right" style="margin-left: auto; display: flex; gap: 0.5rem;">
+          <a href="/admin/invoices/unpaid-print" target="_blank" class="btn btn-sm btn-secondary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+              <polyline points="6 9 6 2 18 2 18 9"/>
+              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+              <rect x="6" y="14" width="12" height="8"/>
+            </svg>
+            Print Unpaid
+          </a>
           <a href="/admin/members/email-log" class="btn btn-sm btn-secondary">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
               <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>

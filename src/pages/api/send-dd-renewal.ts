@@ -19,7 +19,7 @@ function buildMemberData(member: any) {
     title: member.title,
     first_name: member.first_name,
     surname: member.surname,
-    club_number: member.club_number || member.pin,
+    id: member.id as number,
     category: member.category,
     email: member.email,
     direct_debit_member_id: member.direct_debit_member_id,

@@ -106,7 +106,7 @@ export async function checkInvoiceMatch(
   // First try unpaid invoices (draft/sent)
   let invoice = await db.prepare(
     `SELECT id, total, status FROM invoices
-     WHERE member_id = ? AND status IN ('draft', 'sent')
+     WHERE member_id = ? AND status = 'draft'
      ORDER BY invoice_date DESC
      LIMIT 1`
   ).bind(memberId).first<{ id: number; total: number; status: string }>();
@@ -137,7 +137,7 @@ export async function checkInvoiceMatch(
   for (const fm of familyMembers) {
     const famInvoice = await db.prepare(
       `SELECT id, total, status FROM invoices
-       WHERE member_id = ? AND status IN ('draft', 'sent')
+       WHERE member_id = ? AND status = 'draft'
        ORDER BY invoice_date DESC LIMIT 1`
     ).bind(fm.id).first<{ id: number; total: number; status: string }>();
     if (famInvoice) {
@@ -168,11 +168,11 @@ export async function checkInvoiceMatch(
   const extraItems: { name: string; qty: number; amount: number }[] = [];
 
   // Build maps by item name — aggregate quantities across all invoices
-  // Strip "(Member Name)" suffix from consolidated family items for matching
+  // The COALESCE in the SQL returns pi.name (canonical payment item name) when available,
+  // which is the clean name like "Junior (Members Family)" without person name suffixes.
   const invoiceMap = new Map<string, { qty: number; amount: number }>();
   for (const ii of invoiceItems) {
-    // "Junior (Members Family) (Flora McQueen)" → "Junior (Members Family)"
-    const name = ii.name.replace(/\s+\([A-Z][a-z]+ [A-Z][a-z]+\)$/, '');
+    const name = ii.name;
     const existing = invoiceMap.get(name);
     if (existing) {
       existing.qty += ii.quantity;

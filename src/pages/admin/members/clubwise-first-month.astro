@@ -49,7 +49,7 @@ for (const member of members as any[]) {
   const firstMonth = Math.round((totalFees + firstMonthSub) * 100) / 100;
 
   rows.push({
-    clubwiseNo: member.direct_debit_member_id || member.club_number || '',
+    clubwiseNo: member.direct_debit_member_id || String(member.id),
     surname: member.surname || '',
     firstName: member.first_name || '',
     firstMonth,

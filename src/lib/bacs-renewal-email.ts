@@ -5,7 +5,7 @@ interface BACSRenewalMember {
   title?: string;
   first_name: string;
   surname: string;
-  club_number?: string;
+  id: number;
   category: string;
   email?: string;
   locker_number?: string;
@@ -44,7 +44,8 @@ export function generateBACSRenewalEmail(
   member: BACSRenewalMember,
   subscriptionFee: number,
   year: number,
-  bankDetails: BankDetails
+  bankDetails: BankDetails,
+  customMessage?: string
 ): string {
   const memberName = [member.title, member.first_name, member.surname]
     .filter(Boolean)
@@ -164,6 +165,7 @@ export function generateBACSRenewalEmail(
               <p style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
                 Dear ${escapeHtml(memberName)},
               </p>
+              ${customMessage ? `<p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6; background: #fff8e1; padding: 12px; border-radius: 6px; border-left: 4px solid #f9a825;">${escapeHtml(customMessage).replace(/\n/g, '<br>')}</p>` : ''}
               <p style="margin: 0 0 15px 0; font-size: 14px; color: #333; line-height: 1.6;">
                 Thank you for your continued membership of Alnmouth Village Golf Club. Your membership
                 subscription is due for renewal on <strong>1st April ${year}</strong> for the
@@ -179,12 +181,10 @@ export function generateBACSRenewalEmail(
                 <tr>
                   <td style="padding: 15px;">
                     <table role="presentation" cellspacing="0" cellpadding="0">
-                      ${member.club_number ? `
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Member No:</td>
-                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${escapeHtml(member.club_number)}</td>
+                        <td style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #333;">${member.id}</td>
                       </tr>
-                      ` : ''}
                       <tr>
                         <td style="padding: 4px 20px 4px 0; font-size: 14px; color: #666;">Category:</td>
                         <td style="padding: 4px 0; font-size: 14px; color: #333;">${escapeHtml(member.category)}</td>
@@ -279,6 +279,7 @@ export function generateBACSRenewalEmail(
             </td>
           </tr>
 
+          ${subscriptionFee >= 125 ? `
           <!-- Switch to DD Promotion -->
           <tr>
             <td style="padding: 15px 30px;">
@@ -332,6 +333,7 @@ export function generateBACSRenewalEmail(
               </div>
             </td>
           </tr>
+          ` : ''}
 
           <!-- Junior Membership Promotion -->
           <tr>

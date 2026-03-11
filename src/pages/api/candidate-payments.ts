@@ -2,6 +2,39 @@ import type { APIRoute } from 'astro';
 import { ensureSession, loginForSession, fetchMembershipSalesList, fetchSaleReceipt } from '../../lib/touchoffice';
 import { matchMember, checkInvoiceMatch, mapToCrmItems } from '../../lib/candidate-matching';
 import { sendEmail } from '../../lib/email';
+import { generateWelcomeEmail, generateWelcomeEmailSubject } from '../../lib/welcome-email';
+
+/** Send welcome email if member is new (joined this year) and hasn't received one yet */
+async function sendWelcomeIfNew(db: any, env: any, memberId: number) {
+  const member = await db.prepare(
+    'SELECT first_name, surname, pin, email, date_joined FROM members WHERE id = ?'
+  ).bind(memberId).first<{ first_name: string; surname: string; pin: string; email: string; date_joined: string }>();
+
+  if (!member?.pin || !member?.email || !member.date_joined) return;
+
+  const now = new Date();
+  const yearStart = now.getMonth() >= 3
+    ? new Date(now.getFullYear(), 3, 1)
+    : new Date(now.getFullYear() - 1, 3, 1);
+  if (new Date(member.date_joined) < yearStart) return;
+
+  const alreadySent = await db.prepare(
+    "SELECT id FROM sent_emails WHERE member_id = ? AND email_type = 'welcome'"
+  ).bind(memberId).first();
+  if (alreadySent) return;
+
+  const html = generateWelcomeEmail(member);
+  const result = await sendEmail({
+    to: member.email,
+    subject: generateWelcomeEmailSubject(),
+    html
+  }, env);
+
+  await db.prepare(
+    `INSERT INTO sent_emails (member_id, email_type, email_address, year, status, error)
+     VALUES (?, 'welcome', ?, ?, ?, ?)`
+  ).bind(memberId, member.email, now.getFullYear(), result.success ? 'sent' : 'failed', result.error || null).run();
+}
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const db = locals.runtime.env.DB;
@@ -94,6 +127,102 @@ async function createPaymentLineItems(
   }
 
   return count;
+}
+
+/**
+ * Post-sync: coalesce multiple unprocessed candidates for the same member.
+ * When a member pays with separate transactions (e.g., £10 Locker + £490.50 sub),
+ * combine them into one primary candidate with the merged items and total amount,
+ * then re-run invoice matching on the combined payment.
+ */
+async function coalesceCandidates(db: any): Promise<number> {
+  // Find members with multiple unprocessed, non-coalesced candidates
+  const groups = await db.prepare(
+    `SELECT matched_member_id, COUNT(*) as cnt
+     FROM candidate_payments
+     WHERE processed = 0 AND matched_member_id IS NOT NULL AND coalesced_into IS NULL
+     GROUP BY matched_member_id
+     HAVING COUNT(*) > 1`
+  ).all();
+
+  let coalesced = 0;
+
+  for (const group of (groups.results || []) as any[]) {
+    const memberId = group.matched_member_id;
+
+    // Get all unprocessed candidates for this member, largest amount first
+    const candidatesResult = await db.prepare(
+      `SELECT * FROM candidate_payments
+       WHERE processed = 0 AND matched_member_id = ? AND coalesced_into IS NULL
+       ORDER BY amount DESC`
+    ).bind(memberId).all();
+
+    const rows = (candidatesResult.results || []) as any[];
+    if (rows.length < 2) continue;
+
+    const primary = rows[0];
+    const others = rows.slice(1);
+
+    // Combine line items (merge by name, sum quantities)
+    const mergedItems = new Map<string, { name: string; qty: number; amount: number }>();
+    for (const row of rows) {
+      const items = row.line_items ? JSON.parse(row.line_items) : [];
+      for (const item of items) {
+        const existing = mergedItems.get(item.name);
+        if (existing) {
+          existing.qty += item.qty;
+        } else {
+          mergedItems.set(item.name, { name: item.name, qty: item.qty, amount: item.amount });
+        }
+      }
+    }
+
+    const combinedItems = Array.from(mergedItems.values());
+    const combinedAmount = rows.reduce((sum: number, r: any) => sum + r.amount, 0);
+    const coalescedSaleIds = others.map((r: any) => r.sale_id);
+
+    // Re-run invoice match with combined data
+    const invoiceMatch = await checkInvoiceMatch(db, memberId, combinedAmount, combinedItems);
+
+    // Merge receipt text for reference
+    const combinedReceipt = rows.map((r: any) =>
+      `--- Sale #${r.sale_id} (£${r.amount.toFixed(2)}) ---\n${r.receipt_text || '(no receipt)'}`
+    ).join('\n\n');
+
+    // Update primary with combined data
+    await db.prepare(
+      `UPDATE candidate_payments
+       SET amount = ?, line_items = ?,
+           amount_matches_invoice = ?, matched_invoice_id = ?,
+           invoice_total = ?, outstanding_items = ?, extra_items = ?,
+           coalesced_sale_ids = ?, family_invoices = ?, receipt_text = ?
+       WHERE id = ?`
+    ).bind(
+      combinedAmount,
+      JSON.stringify(combinedItems),
+      invoiceMatch.matches ? 1 : 0,
+      invoiceMatch.invoiceId,
+      invoiceMatch.invoiceTotal,
+      invoiceMatch.outstandingItems.length > 0 ? JSON.stringify(invoiceMatch.outstandingItems) : null,
+      invoiceMatch.extraItems.length > 0 ? JSON.stringify(invoiceMatch.extraItems) : null,
+      JSON.stringify(coalescedSaleIds),
+      invoiceMatch.familyInvoices ? JSON.stringify(invoiceMatch.familyInvoices) : null,
+      combinedReceipt,
+      primary.id,
+    ).run();
+
+    // Mark others as coalesced (processed so they disappear from the list)
+    for (const other of others) {
+      await db.prepare(
+        `UPDATE candidate_payments SET processed = 1, coalesced_into = ?,
+         notes = ? WHERE id = ?`
+      ).bind(primary.id, `Coalesced into candidate #${primary.id}`, other.id).run();
+    }
+
+    coalesced += others.length;
+  }
+
+  return coalesced;
 }
 
 /**
@@ -234,7 +363,11 @@ async function handleSync(db: any, env: any, body: any) {
     if (matchResult.status === 'matched') matched++;
   }
 
-  return json({ success: true, fetched, new: newCount, matched, skipped });
+  // Post-sync: coalesce multiple unprocessed candidates for the same member
+  // e.g., £10 Locker + £490.50 subscription = £500.50 covering one invoice
+  const coalesced = await coalesceCandidates(db);
+
+  return json({ success: true, fetched, new: newCount, matched, skipped, coalesced });
 }
 
 /**
@@ -305,7 +438,19 @@ async function handleProcess(db: any, body: any, locals: any) {
 
   // Create the real payment
   const paymentMethod = candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
-  const reference = `TouchOffice Sale ${candidate.sale_id}`;
+  const coalescedSaleIds = candidate.coalesced_sale_ids ? JSON.parse(candidate.coalesced_sale_ids) : [];
+  const allSaleIds = [candidate.sale_id, ...coalescedSaleIds];
+  const reference = allSaleIds.length > 1
+    ? `TouchOffice Sales ${allSaleIds.join(', ')}`
+    : `TouchOffice Sale ${candidate.sale_id}`;
+
+  let notes = `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
+  if (coalescedSaleIds.length > 0) {
+    notes = `Combined from ${allSaleIds.length} TouchOffice sales. Card: ${candidate.discount_card || 'N/A'}`;
+  }
+  if (familyInvoices.length > 0) {
+    notes = `Family payment covering ${familyInvoices.map((fi: any) => fi.memberName).join(', ')}. ${notes}`;
+  }
 
   const paymentResult = await db.prepare(
     `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
@@ -317,9 +462,7 @@ async function handleProcess(db: any, body: any, locals: any) {
     candidate.sale_date,
     paymentMethod,
     reference,
-    familyInvoices.length > 0
-      ? `Family payment covering ${familyInvoices.map((fi: any) => fi.memberName).join(', ')}. Card: ${candidate.discount_card || 'N/A'}`
-      : `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`,
+    notes,
     locals.user?.email || 'system',
   ).run();
 
@@ -333,11 +476,21 @@ async function handleProcess(db: any, body: any, locals: any) {
     await createPaymentLineItems(db, paymentId, invId, crmItems);
   }
 
-  // Mark payer's invoice as paid
+  // Mark payer's invoice as paid and update member dates
   if (targetInvoiceId) {
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = ? WHERE id = ?`
     ).bind(candidate.sale_date, targetInvoiceId).run();
+
+    // Set renewal/expiry dates on payer
+    const inv = await db.prepare(
+      `SELECT period_start, period_end FROM invoices WHERE id = ?`
+    ).bind(targetInvoiceId).first<{ period_start: string; period_end: string }>();
+    if (inv) {
+      await db.prepare(
+        `UPDATE members SET date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+      ).bind(inv.period_start, inv.period_end, candidate.sale_date, candidate.matched_member_id).run();
+    }
   }
 
   // Mark family invoices as paid
@@ -346,22 +499,35 @@ async function handleProcess(db: any, body: any, locals: any) {
       `UPDATE invoices SET status = 'paid', updated_at = ? WHERE id = ?`
     ).bind(candidate.sale_date, fi.invoiceId).run();
 
-    // Decrement family member's account balance by their invoice total
+    // Decrement family member's account balance and set dates
+    const famInv = await db.prepare(
+      `SELECT period_start, period_end FROM invoices WHERE id = ?`
+    ).bind(fi.invoiceId).first<{ period_start: string; period_end: string }>();
     await db.prepare(
-      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
-    ).bind(fi.total, fi.memberId).run();
+      `UPDATE members SET account_balance = account_balance + ?, date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+    ).bind(fi.total, famInv?.period_start || null, famInv?.period_end || null, candidate.sale_date, fi.memberId).run();
   }
 
-  // Decrement payer's account balance (by payer's own invoice total, not full payment)
+  // Payment clears payer's debt (by payer's own invoice total, not full payment)
   const payerInvoiceTotal = combinedTotal - familyInvoices.reduce((sum: number, fi: any) => sum + fi.total, 0);
   await db.prepare(
-    `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+    `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
   ).bind(payerInvoiceTotal, candidate.matched_member_id).run();
 
   // Mark candidate as processed
   await db.prepare(
     `UPDATE candidate_payments SET processed = 1, processed_at = datetime('now'), matched_invoice_id = ? WHERE id = ?`
   ).bind(targetInvoiceId, candidateId).run();
+
+  // Send welcome email to new members (payer + family)
+  const allMemberIds = [candidate.matched_member_id, ...familyInvoices.map((fi: any) => fi.memberId)];
+  for (const mid of allMemberIds) {
+    try {
+      await sendWelcomeIfNew(db, locals.runtime.env, mid);
+    } catch (e: any) {
+      console.error('Welcome email error:', e.message);
+    }
+  }
 
   return json({ success: true, paymentId, familyInvoicesPaid: familyInvoices.length });
 }
@@ -423,10 +589,15 @@ async function handleLinkInvoice(db: any, body: any) {
   // Parse candidate's CRM items
   const crmItems = candidate.line_items ? JSON.parse(candidate.line_items) : [];
 
-  // Compare items
+  // Compare items — aggregate invoice items by name (family items may have same pi.name)
   const invoiceMap = new Map<string, { qty: number; amount: number }>();
   for (const ii of invoiceItems) {
-    invoiceMap.set(ii.name, { qty: ii.quantity, amount: ii.unit_price });
+    const existing = invoiceMap.get(ii.name);
+    if (existing) {
+      existing.qty += ii.quantity;
+    } else {
+      invoiceMap.set(ii.name, { qty: ii.quantity, amount: ii.unit_price });
+    }
   }
   const paidMap = new Map<string, { qty: number; amount: number }>();
   for (const ci of crmItems) {
@@ -609,11 +780,21 @@ async function handleReinvoice(db: any, body: any, locals: any) {
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = ? WHERE id = ?`
     ).bind(saleDate, invoiceId).run();
+
+    // Set renewal/expiry dates from the invoice period
+    const inv = await db.prepare(
+      `SELECT period_start, period_end FROM invoices WHERE id = ?`
+    ).bind(invoiceId).first<{ period_start: string; period_end: string }>();
+    if (inv) {
+      await db.prepare(
+        `UPDATE members SET date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+      ).bind(inv.period_start, inv.period_end, saleDate, candidate.matched_member_id).run();
+    }
   }
 
-  // Decrement member's account balance
+  // Payment clears member's debt
   await db.prepare(
-    `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+    `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
   ).bind(candidate.amount, candidate.matched_member_id).run();
 
   // Mark candidate as processed
@@ -642,7 +823,19 @@ async function handleProcessAll(db: any, locals: any) {
     const targetInvoiceId = candidate.matched_invoice_id;
     const familyInvoices = candidate.family_invoices ? JSON.parse(candidate.family_invoices) : [];
     const paymentMethod = candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
-    const reference = `TouchOffice Sale ${candidate.sale_id}`;
+    const coalescedSaleIds = candidate.coalesced_sale_ids ? JSON.parse(candidate.coalesced_sale_ids) : [];
+    const allSaleIds = [candidate.sale_id, ...coalescedSaleIds];
+    const reference = allSaleIds.length > 1
+      ? `TouchOffice Sales ${allSaleIds.join(', ')}`
+      : `TouchOffice Sale ${candidate.sale_id}`;
+
+    let processNotes = `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
+    if (coalescedSaleIds.length > 0) {
+      processNotes = `Combined from ${allSaleIds.length} TouchOffice sales. Card: ${candidate.discount_card || 'N/A'}`;
+    }
+    if (familyInvoices.length > 0) {
+      processNotes = `Family payment covering ${familyInvoices.map((fi: any) => fi.memberName).join(', ')}. ${processNotes}`;
+    }
 
     const paymentResult = await db.prepare(
       `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
@@ -654,9 +847,7 @@ async function handleProcessAll(db: any, locals: any) {
       candidate.sale_date,
       paymentMethod,
       reference,
-      familyInvoices.length > 0
-        ? `Family payment covering ${familyInvoices.map((fi: any) => fi.memberName).join(', ')}. Card: ${candidate.discount_card || 'N/A'}`
-        : `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`,
+      processNotes,
       locals.user?.email || 'system',
     ).run();
 
@@ -669,32 +860,54 @@ async function handleProcessAll(db: any, locals: any) {
       await createPaymentLineItems(db, paymentId, invId, crmItems);
     }
 
-    // Mark payer's invoice as paid
+    // Mark payer's invoice as paid and set renewal dates
     if (targetInvoiceId) {
       await db.prepare(
         `UPDATE invoices SET status = 'paid', updated_at = ? WHERE id = ?`
       ).bind(candidate.sale_date, targetInvoiceId).run();
+
+      const inv = await db.prepare(
+        `SELECT period_start, period_end FROM invoices WHERE id = ?`
+      ).bind(targetInvoiceId).first<{ period_start: string; period_end: string }>();
+      if (inv) {
+        await db.prepare(
+          `UPDATE members SET date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+        ).bind(inv.period_start, inv.period_end, candidate.sale_date, candidate.matched_member_id).run();
+      }
     }
 
-    // Mark family invoices as paid and decrement their balances
+    // Mark family invoices as paid, decrement balances, set dates
     for (const fi of familyInvoices) {
       await db.prepare(
         `UPDATE invoices SET status = 'paid', updated_at = ? WHERE id = ?`
       ).bind(candidate.sale_date, fi.invoiceId).run();
+      const famInv = await db.prepare(
+        `SELECT period_start, period_end FROM invoices WHERE id = ?`
+      ).bind(fi.invoiceId).first<{ period_start: string; period_end: string }>();
       await db.prepare(
-        `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
-      ).bind(fi.total, fi.memberId).run();
+        `UPDATE members SET account_balance = account_balance + ?, date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+      ).bind(fi.total, famInv?.period_start || null, famInv?.period_end || null, candidate.sale_date, fi.memberId).run();
     }
 
-    // Decrement payer's account balance (their own invoice portion)
+    // Payment clears payer's debt (their own invoice portion)
     const payerTotal = candidate.amount - familyInvoices.reduce((sum: number, fi: any) => sum + fi.total, 0);
     await db.prepare(
-      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
     ).bind(payerTotal, candidate.matched_member_id).run();
 
     await db.prepare(
       `UPDATE candidate_payments SET processed = 1, processed_at = datetime('now') WHERE id = ?`
     ).bind(candidate.id).run();
+
+    // Send welcome email to new members
+    const allMemberIds = [candidate.matched_member_id, ...familyInvoices.map((fi: any) => fi.memberId)];
+    for (const mid of allMemberIds) {
+      try {
+        await sendWelcomeIfNew(db, locals.runtime.env, mid);
+      } catch (e: any) {
+        console.error('Welcome email error:', e.message);
+      }
+    }
 
     processed++;
   }

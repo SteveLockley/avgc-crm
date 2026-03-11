@@ -78,7 +78,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const html = generateSocialRenewalEmail(
         {
           title: member.title, first_name: member.first_name, surname: member.surname,
-          club_number: member.club_number || member.pin, email: member.email,
+          id: member.id as number, email: member.email,
         },
         member.subscription_fee as number, year, bankDetails
       );
@@ -121,7 +121,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const html = generateSocialRenewalEmail(
       {
         title: member.title, first_name: member.first_name, surname: member.surname,
-        club_number: member.club_number || member.pin, email: member.email,
+        id: member.id as number, email: member.email,
       },
       member.subscription_fee, year, bankDetails
     );
@@ -153,7 +153,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const html = generateSocialRenewalEmail(
       {
         title: member.title, first_name: member.first_name, surname: member.surname,
-        club_number: member.club_number || member.pin, email: member.email,
+        id: member.id as number, email: member.email,
       },
       member.subscription_fee, year, bankDetails
     );
@@ -218,7 +218,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       {
         title: member.title as string, first_name: member.first_name as string,
         surname: member.surname as string,
-        club_number: (member.club_number || member.pin) as string,
+        id: member.id as number,
         email: member.email as string,
       },
       member.subscription_fee as number, year, bankDetails

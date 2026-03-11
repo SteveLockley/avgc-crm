@@ -16,7 +16,7 @@ export const GET: APIRoute = async ({ locals }) => {
   const members = await env.DB.prepare(
     `SELECT m.id, m.title, m.first_name, m.surname, m.category, m.email,
             m.direct_debit_member_id, m.locker_number, m.national_id,
-            m.home_away, m.handicap_index, m.club_number, m.pin,
+            m.home_away, m.handicap_index, m.pin,
             p.fee as subscription_fee
      FROM members m
      LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
@@ -63,7 +63,7 @@ export const GET: APIRoute = async ({ locals }) => {
         title: m.title as string,
         first_name: m.first_name as string,
         surname: m.surname as string,
-        club_number: (m.club_number || m.pin) as string,
+        id: m.id as number,
         category: m.category as string,
         email: m.email as string,
         direct_debit_member_id: m.direct_debit_member_id as string,
@@ -77,7 +77,7 @@ export const GET: APIRoute = async ({ locals }) => {
     );
 
     const name = `${m.first_name} ${m.surname}`;
-    const membershipNumber = (m.club_number || m.pin || '') as string;
+    const membershipNumber = String(m.id);
     const crmType = (m.category || '') as string;
     const ddType = ddMembershipTypes.get(m.id as number) || '';
     const ddId = m.direct_debit_member_id || '';
