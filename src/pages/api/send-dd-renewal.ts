@@ -31,11 +31,17 @@ function buildMemberData(member: any) {
 }
 
 // Fetch dependants for a given payer ID
+// Uses flexible category matching: tries exact match first (e.g. "Junior"),
+// then strips parenthetical suffix (e.g. "Junior (Members Family)" → "Junior")
 async function getDependants(db: any, payerId: number) {
   const rows = await db.prepare(
-    `SELECT m.*, p.fee as subscription_fee
+    `SELECT m.*,
+            COALESCE(p1.fee, p2.fee) as subscription_fee,
+            COALESCE(p1.id, p2.id) as subscription_item_id
      FROM members m
-     LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
+     LEFT JOIN payment_items p1 ON p1.name = m.category AND p1.category = 'Subscription' AND p1.active = 1
+     LEFT JOIN payment_items p2 ON p2.category = 'Subscription' AND p2.active = 1
+       AND p2.name = TRIM(SUBSTR(m.category, 1, CASE WHEN INSTR(m.category, '(') > 0 THEN INSTR(m.category, '(') - 1 ELSE LENGTH(m.category) END))
      WHERE m.family_payer_id = ?
      ORDER BY m.surname, m.first_name`
   ).bind(payerId).all();

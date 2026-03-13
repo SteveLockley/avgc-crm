@@ -1,8 +1,12 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { formatDate, formatCurrency } from '../../../lib/db';
+import { coalesceCandidates } from '../../../lib/candidate-matching';
 
 const db = Astro.locals.runtime.env.DB;
+
+// Coalesce any multi-payment candidates before displaying
+await coalesceCandidates(db);
 
 // Get unprocessed count for badge
 const unprocessedCount = await db.prepare(

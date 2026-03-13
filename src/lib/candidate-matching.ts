@@ -230,6 +230,106 @@ export interface CrmLineItem {
 }
 
 /**
+ * Post-sync / on-demand: coalesce multiple unprocessed candidates for the same member.
+ * When a member pays with separate transactions (e.g., £10 Locker + £490.50 sub),
+ * combine them into one primary candidate with the merged items and total amount,
+ * then re-run invoice matching on the combined payment.
+ */
+export async function coalesceCandidates(db: any): Promise<number> {
+  // Find members with multiple unprocessed, non-coalesced candidates
+  const groups = await db.prepare(
+    `SELECT matched_member_id, COUNT(*) as cnt
+     FROM candidate_payments
+     WHERE processed = 0 AND matched_member_id IS NOT NULL AND coalesced_into IS NULL
+     GROUP BY matched_member_id
+     HAVING COUNT(*) > 1`
+  ).all();
+
+  let coalesced = 0;
+
+  for (const group of (groups.results || []) as any[]) {
+    const memberId = group.matched_member_id;
+
+    // Get all unprocessed candidates for this member, largest amount first
+    const candidatesResult = await db.prepare(
+      `SELECT * FROM candidate_payments
+       WHERE processed = 0 AND matched_member_id = ? AND coalesced_into IS NULL
+       ORDER BY amount DESC`
+    ).bind(memberId).all();
+
+    const rows = (candidatesResult.results || []) as any[];
+    if (rows.length < 2) continue;
+
+    const primary = rows[0];
+    const others = rows.slice(1);
+
+    // Combine line items (merge by name, sum quantities)
+    const mergedItems = new Map<string, { name: string; qty: number; amount: number }>();
+    for (const row of rows) {
+      const items = row.line_items ? JSON.parse(row.line_items) : [];
+      for (const item of items) {
+        const existing = mergedItems.get(item.name);
+        if (existing) {
+          existing.qty += item.qty;
+        } else {
+          mergedItems.set(item.name, { name: item.name, qty: item.qty, amount: item.amount });
+        }
+      }
+    }
+
+    const combinedItems = Array.from(mergedItems.values());
+    const combinedAmount = rows.reduce((sum: number, r: any) => sum + r.amount, 0);
+
+    // Preserve any previously coalesced sale IDs from the primary
+    const existingCoalesced = primary.coalesced_sale_ids ? JSON.parse(primary.coalesced_sale_ids) : [];
+    const newSaleIds = others.map((r: any) => r.sale_id);
+    const coalescedSaleIds = [...existingCoalesced, ...newSaleIds];
+
+    // Re-run invoice match with combined data
+    const invoiceMatch = await checkInvoiceMatch(db, memberId, combinedAmount, combinedItems);
+
+    // Merge receipt text for reference
+    const combinedReceipt = rows.map((r: any) =>
+      `--- Sale #${r.sale_id} (£${r.amount.toFixed(2)}) ---\n${r.receipt_text || '(no receipt)'}`
+    ).join('\n\n');
+
+    // Update primary with combined data
+    await db.prepare(
+      `UPDATE candidate_payments
+       SET amount = ?, line_items = ?,
+           amount_matches_invoice = ?, matched_invoice_id = ?,
+           invoice_total = ?, outstanding_items = ?, extra_items = ?,
+           coalesced_sale_ids = ?, family_invoices = ?, receipt_text = ?
+       WHERE id = ?`
+    ).bind(
+      combinedAmount,
+      JSON.stringify(combinedItems),
+      invoiceMatch.matches ? 1 : 0,
+      invoiceMatch.invoiceId,
+      invoiceMatch.invoiceTotal,
+      invoiceMatch.outstandingItems.length > 0 ? JSON.stringify(invoiceMatch.outstandingItems) : null,
+      invoiceMatch.extraItems.length > 0 ? JSON.stringify(invoiceMatch.extraItems) : null,
+      JSON.stringify(coalescedSaleIds),
+      invoiceMatch.familyInvoices ? JSON.stringify(invoiceMatch.familyInvoices) : null,
+      combinedReceipt,
+      primary.id,
+    ).run();
+
+    // Mark others as coalesced (processed so they disappear from the list)
+    for (const other of others) {
+      await db.prepare(
+        `UPDATE candidate_payments SET processed = 1, coalesced_into = ?,
+         notes = ? WHERE id = ?`
+      ).bind(primary.id, `Coalesced into candidate #${primary.id}`, other.id).run();
+    }
+
+    coalesced += others.length;
+  }
+
+  return coalesced;
+}
+
+/**
  * Map TouchOffice receipt line items to CRM payment item names.
  * Patterns:
  * - "Locker" £10 → Locker
