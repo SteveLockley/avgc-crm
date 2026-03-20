@@ -1,0 +1,26 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+---
+
+<AdminLayout title="Decision Support">
+  <div class="stats-grid">
+    <a href="/admin/foodbar" class="stat-card" style="text-decoration: none; color: inherit;">
+      <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+          <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/>
+        </svg>
+        <div class="stat-value" style="font-size: 1.25rem;">Food & Bar</div>
+      </div>
+      <div class="stat-label">TouchOffice sales data, weekly reports, and candidate payment matching</div>
+    </a>
+    <a href="/admin/decision-support/architecture" class="stat-card" style="text-decoration: none; color: inherit;">
+      <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+          <rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="8.5" y="16" width="7" height="5" rx="1"/><line x1="6.5" y1="8" x2="6.5" y2="13"/><line x1="17.5" y1="8" x2="17.5" y2="13"/><line x1="6.5" y1="13" x2="17.5" y2="13"/><line x1="12" y1="13" x2="12" y2="16"/>
+        </svg>
+        <div class="stat-value" style="font-size: 1.25rem;">System Architecture</div>
+      </div>
+      <div class="stat-label">Interactive diagrams of all club systems, data flows, and object models</div>
+    </a>
+  </div>
+</AdminLayout>

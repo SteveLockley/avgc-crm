@@ -13,11 +13,23 @@ const navItems = [
   { href: '/admin/payments', label: 'Payments', icon: 'credit-card' },
   { href: '/admin/invoices', label: 'Invoices', icon: 'invoice' },
   { href: '/admin/revenue', label: 'Revenue', icon: 'chart' },
-  { href: '/admin/foodbar', label: 'Food & Bar', icon: 'utensils' },
+  { href: '/admin/decision-support', label: 'Decision Support', icon: 'compass', children: [
+    { href: '/admin/foodbar', label: 'Food & Bar', icon: 'utensils' },
+    { href: '/admin/decision-support/architecture', label: 'System Architecture', icon: 'sitemap' },
+  ]},
   { href: '/admin/statistics', label: 'Statistics', icon: 'bar-chart-2' },
   { href: '/admin/database', label: 'Database', icon: 'database' },
   { href: '/admin/content', label: 'Website', icon: 'globe' },
 ];
+
+const isChildActive = (item: any) => {
+  if (!item.children) return false;
+  return item.children.some((child: any) => currentPath === child.href || currentPath.startsWith(child.href + '/'));
+};
+const isItemActive = (item: any) => {
+  if (item.href === '/admin') return currentPath === '/admin';
+  return currentPath === item.href || currentPath.startsWith(item.href + '/') || isChildActive(item);
+};
 ---
 
 <!DOCTYPE html>
@@ -136,6 +148,70 @@ const navItems = [
     .nav-item.active {
       background: var(--primary-dark);
       border-left: 3px solid var(--white);
+    }
+
+    .nav-group-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1.5rem;
+      color: var(--white);
+      text-decoration: none;
+      transition: background 0.2s;
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      font-size: inherit;
+      font-family: inherit;
+    }
+
+    .nav-group-header svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .nav-group-header:hover {
+      background: var(--primary-light);
+    }
+
+    .nav-group-header.active {
+      background: var(--primary-dark);
+      border-left: 3px solid var(--white);
+    }
+
+    .nav-group-chevron {
+      margin-left: auto;
+      width: 16px !important;
+      height: 16px !important;
+      transition: transform 0.2s;
+      opacity: 0.7;
+    }
+
+    .nav-group.open .nav-group-chevron {
+      transform: rotate(90deg);
+    }
+
+    .nav-children {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.25s ease;
+      background: rgba(0,0,0,0.15);
+    }
+
+    .nav-group.open .nav-children {
+      max-height: 200px;
+    }
+
+    .nav-children .nav-item {
+      padding-left: 2.75rem;
+      font-size: 0.9em;
+    }
+
+    .nav-children .nav-item svg {
+      width: 16px;
+      height: 16px;
     }
 
     .sidebar-footer {
@@ -844,17 +920,36 @@ const navItems = [
       </a>
 
       <nav class="sidebar-nav">
-        {navItems.map(item => (
+        {navItems.map(item => item.children ? (
+          <div class={`nav-group ${isChildActive(item) ? 'open' : ''}`} data-nav-group>
+            <button class={`nav-group-header ${isItemActive(item) ? 'active' : ''}`} data-nav-toggle>
+              {item.icon === 'compass' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>}
+              <span>{item.label}</span>
+              <svg class="nav-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <div class="nav-children">
+              {item.children.map(child => (
+                <a
+                  href={child.href}
+                  class={`nav-item ${currentPath === child.href || currentPath.startsWith(child.href + '/') ? 'active' : ''}`}
+                >
+                  {child.icon === 'utensils' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>}
+                  {child.icon === 'sitemap' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="8.5" y="16" width="7" height="5" rx="1"/><line x1="6.5" y1="8" x2="6.5" y2="13"/><line x1="17.5" y1="8" x2="17.5" y2="13"/><line x1="6.5" y1="13" x2="17.5" y2="13"/><line x1="12" y1="13" x2="12" y2="16"/></svg>}
+                  <span>{child.label}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ) : (
           <a
             href={item.href}
-            class={`nav-item ${currentPath === item.href || (item.href !== '/admin' && currentPath.startsWith(item.href + '/')) || (item.href === '/admin' && currentPath === '/admin') ? 'active' : ''}`}
+            class={`nav-item ${isItemActive(item) ? 'active' : ''}`}
           >
             {item.icon === 'home' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>}
             {item.icon === 'users' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
             {item.icon === 'credit-card' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>}
             {item.icon === 'invoice' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>}
             {item.icon === 'chart' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>}
-            {item.icon === 'utensils' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>}
             {item.icon === 'bar-chart-2' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>}
             {item.icon === 'database' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}
             {item.icon === 'globe' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
@@ -936,6 +1031,13 @@ const navItems = [
       sidebar.querySelectorAll('.nav-item').forEach(link => {
         link.addEventListener('click', () => {
           if (window.innerWidth <= 768) closeSidebar();
+        });
+      });
+
+      // Submenu toggle
+      document.querySelectorAll('[data-nav-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.closest('[data-nav-group]').classList.toggle('open');
         });
       });
     })();

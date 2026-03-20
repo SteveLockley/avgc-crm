@@ -1,0 +1,756 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+---
+
+<AdminLayout title="System Architecture">
+  <style>
+    .diagram-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .diagram-nav button { background: #e8f5e9; color: #1e5631; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+    .diagram-nav button:hover { background: #c8e6c9; }
+    .diagram-nav button.active { background: #1e5631; color: #fff; }
+    .diagram-controls { display: flex; gap: 8px; margin-bottom: 1rem; }
+    .diagram-controls button { background: #f4f4f4; border: 1px solid #ddd; width: 40px; height: 40px; border-radius: 6px; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+    .diagram-controls button:hover { background: #e0e0e0; }
+    #diagram-wrapper { transform-origin: top left; transition: transform 0.2s; }
+    #diagram-title { font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem; }
+    #render-target { background: #fff; padding: 24px; border-radius: 8px; border: 1px solid #ddd; min-height: 300px; overflow: auto; }
+    #render-target pre { color: red; }
+  </style>
+
+  <div class="diagram-nav" id="diagram-nav">
+    <button onclick="show('domain')" class="active" id="btn-domain">Domain Overview</button>
+    <button onclick="show('systems')" id="btn-systems">System Diagram</button>
+    <button onclick="show('context')" id="btn-context">L1 System Context</button>
+    <button onclick="show('containers')" id="btn-containers">L2 Containers</button>
+    <button onclick="show('sage')" id="btn-sage">Sage Adapter</button>
+    <button onclick="show('crm')" id="btn-crm">CRM Adapter</button>
+    <button onclick="show('reconciler')" id="btn-reconciler">Reconciliation</button>
+    <button onclick="show('reporter')" id="btn-reporter">Report Generator</button>
+    <button onclick="show('datamodel')" id="btn-datamodel">L4 Data Model</button>
+    <button onclick="show('objects')" id="btn-objects">Cross-System Objects</button>
+    <button onclick="show('crosser')" id="btn-crosser">Cross-System ER</button>
+  </div>
+
+  <div class="diagram-controls">
+    <button onclick="zoomIn()" title="Zoom In">+</button>
+    <button onclick="zoomOut()" title="Zoom Out">&minus;</button>
+    <button onclick="zoomReset()" title="Reset Zoom">&#x27F3;</button>
+    <button onclick="window.print()" title="Print">&#128424;</button>
+  </div>
+
+  <div id="diagram-title"></div>
+  <div style="overflow: auto;">
+    <div id="diagram-wrapper">
+      <div id="render-target"></div>
+    </div>
+  </div>
+
+  <script is:inline src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script is:inline>
+    mermaid.initialize({ startOnLoad: false, theme: 'default', flowchart: { useMaxWidth: false, htmlLabels: true }, er: { useMaxWidth: false } });
+
+    const diagrams = {
+      domain: {
+        title: 'L0 — Business Domain Overview',
+        code: `flowchart TB
+    root((AVGC Decision Support<br/>Domain))
+    root --- REV[Revenue]
+    root --- EXP[Expenditure]
+    root --- PLAN[Planning]
+    root --- RPT[Reporting]
+    REV --- MI
+    REV --- CHI
+    REV --- COI
+    REV --- CMI
+    REV --- OI
+    subgraph MI[Membership Income]
+        MI1[Subscriptions]
+        MI2[Joining Fees]
+        MI3[Locker Fees]
+        MI4[DD Collections]
+    end
+    subgraph CHI[Clubhouse Income]
+        CHI1[Bar Sales]
+        CHI2[Food & Catering]
+        CHI3[Coffee]
+        CHI4[Merchandise]
+    end
+    subgraph COI[Course Income]
+        COI1[Visitor Green Fees]
+        COI2[Buggy & Trolley Hire]
+        COI3[Society Days]
+    end
+    subgraph CMI[Competition Income]
+        CMI1[Entry Fees]
+        CMI2[Prize Funds]
+    end
+    subgraph OI[Other Income]
+        OI1[Sponsorship]
+        OI2[England Golf Levy]
+        OI3[Sundry]
+    end
+    EXP --- SC
+    EXP --- CMT
+    EXP --- CR
+    EXP --- ADM
+    EXP --- FC
+    EXP --- CAP
+    subgraph SC[Staff Costs]
+        SC1[Greenkeeping Wages]
+        SC2[Clubhouse Wages]
+        SC3[Pro Shop Staff]
+        SC4[Admin Staff]
+    end
+    subgraph CMT[Course Maintenance]
+        CMT1[Machinery]
+        CMT2[Chemicals & Fertiliser]
+        CMT3[Fuel & Water]
+        CMT4[Repairs]
+    end
+    subgraph CR[Clubhouse Running]
+        CR1[Cost of Sales]
+        CR2[Utilities]
+        CR3[Cleaning]
+        CR4[Equipment]
+    end
+    subgraph ADM[Administration]
+        ADM1[Insurance]
+        ADM2[Rates]
+        ADM3[Professional Fees]
+        ADM4[IT & Software]
+    end
+    subgraph FC[Finance Costs]
+        FC1[Bank Charges]
+        FC2[Loan Interest]
+        FC3[Depreciation]
+    end
+    subgraph CAP[Capital Expenditure]
+        CAP1[Course Improvements]
+        CAP2[Clubhouse Improvements]
+        CAP3[Machinery Purchase]
+    end
+    subgraph PLAN_D[Planning]
+        P1[Annual Budget]
+        P2[Monthly Phasing]
+        P3[Business Plan 1yr]
+        P4[Business Plan 3yr]
+        P5[Assumptions]
+    end
+    subgraph RPT_D[Reporting]
+        R1[P&L Summary]
+        R2[Budget vs Actual]
+        R3[Variance Analysis]
+        R4[Cash Flow]
+        R5[Dashboard]
+    end
+    PLAN --- PLAN_D
+    RPT --- RPT_D
+    style root fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style REV fill:#1a6e2d,stroke:#0d4419,color:#fff
+    style EXP fill:#6e1a1a,stroke:#440d0d,color:#fff
+    style PLAN fill:#1a4a6e,stroke:#0d2d44,color:#fff
+    style RPT fill:#6e4a1a,stroke:#442d0d,color:#fff
+    style MI fill:#e8f5e9,stroke:#1a6e2d,color:#000
+    style CHI fill:#e8f5e9,stroke:#1a6e2d,color:#000
+    style COI fill:#e8f5e9,stroke:#1a6e2d,color:#000
+    style CMI fill:#e8f5e9,stroke:#1a6e2d,color:#000
+    style OI fill:#e8f5e9,stroke:#1a6e2d,color:#000
+    style SC fill:#ffebee,stroke:#6e1a1a,color:#000
+    style CMT fill:#ffebee,stroke:#6e1a1a,color:#000
+    style CR fill:#ffebee,stroke:#6e1a1a,color:#000
+    style ADM fill:#ffebee,stroke:#6e1a1a,color:#000
+    style FC fill:#ffebee,stroke:#6e1a1a,color:#000
+    style CAP fill:#ffebee,stroke:#6e1a1a,color:#000
+    style PLAN_D fill:#e3f2fd,stroke:#1a4a6e,color:#000
+    style RPT_D fill:#fff3e0,stroke:#6e4a1a,color:#000`
+      },
+      systems: {
+        title: 'L0 — Conceptual System Diagram',
+        code: `flowchart TB
+    subgraph external[External Operational Systems]
+        direction TB
+        subgraph touchoffice[TouchOffice EPOS]
+            direction TB
+            to_sales[Till Transactions<br/>Sales by Department]
+            to_receipts[Individual Receipts<br/>Line Items, Payment Type]
+        end
+        subgraph clubwise[Clubwise Direct Debit]
+            direction TB
+            cw_members[DD Members<br/>ID, Status, Fee, Billing]
+            cw_schedule[Collection Schedule<br/>Monthly, First Month]
+        end
+        subgraph brs[BRS Golf]
+            direction TB
+            brs_members[Registered Members<br/>Username = PIN]
+            brs_bookings[Tee Bookings<br/>Visitors & Members]
+        end
+        subgraph msb[Master Scoreboard]
+            direction TB
+            msb_comps[Competitions<br/>Entries, Results]
+            msb_handicaps[Handicaps<br/>WHS Index]
+        end
+    end
+    subgraph accounting[Accounting & Banking]
+        direction TB
+        subgraph sage[Sage Accounting Cloud]
+            direction TB
+            s_ledger[Chart of Accounts<br/>Nominal Codes]
+            s_transactions[Financial Transactions<br/>Journals, Bank Txns]
+            s_invoices[Sales & Purchase<br/>Invoices]
+            s_bank[Bank Reconciliation<br/>HSBC Feed]
+            s_vat[VAT Returns &<br/>Tax Rates]
+            s_trial[Trial Balance &<br/>P&L]
+            s_contacts[Contacts<br/>Customers & Suppliers]
+        end
+        subgraph bank[HSBC Business Banking]
+            b_txns[Bank Transactions<br/>All Money In/Out]
+        end
+    end
+    subgraph operations[Club Operations Hub]
+        subgraph crm[AVGC CRM]
+            direction TB
+            c_members[Members<br/>Demographics, Categories,<br/>Balances, PINs]
+            c_subs[Subscriptions &<br/>Payment Items<br/>Fee Catalogue]
+            c_invoices[Member Invoices<br/>& Payments]
+            c_dd[DD Consolidation<br/>Clubwise Import]
+            c_candidates[Candidate Payments<br/>TouchOffice Matching]
+            c_sales[Weekly Sales<br/>Dept Aggregates]
+            c_brs[BRS Consolidation<br/>Member Sync]
+        end
+    end
+    subgraph finance[AVGC Decision Support - This System]
+        direction TB
+        f_mapping[Account Mapping<br/>Sage Codes to Budget Categories]
+        f_budget[Budgets<br/>Annual, Phased Monthly]
+        f_actuals[Actual Summaries<br/>Aggregated from Sources]
+        f_recon[Reconciliation<br/>Budget vs Actual]
+        f_plan[Business Plans<br/>1yr & 3yr]
+        f_reports[Reports & Dashboard]
+    end
+    subgraph consumers[Report Consumers]
+        treasurer[Club Treasurer]
+        committee[Management Committee]
+        captain[Club Captain]
+    end
+    to_sales -->|Weekly dept totals<br/>scraped| c_sales
+    to_receipts -->|Individual receipts<br/>scraped, matched| c_candidates
+    cw_members -->|CSV import<br/>manual upload| c_dd
+    brs_members -->|CSV import<br/>manual upload| c_brs
+    msb_comps -->|API proxy| c_members
+    msb_handicaps -->|WHS data| c_members
+    b_txns -->|Bank feed<br/>automatic| s_bank
+    c_invoices -.->|Pushes invoices<br/>future| s_invoices
+    s_ledger -->|Nominal codes| f_mapping
+    s_trial -->|Period actuals| f_actuals
+    s_transactions -->|Transaction detail| f_actuals
+    c_invoices -->|Member payments| f_actuals
+    c_sales -->|Weekly dept sales| f_actuals
+    c_subs -->|Fee schedule| f_budget
+    c_members -->|Member counts<br/>by category| f_plan
+    f_mapping --> f_budget
+    f_mapping --> f_actuals
+    f_budget --> f_recon
+    f_actuals --> f_recon
+    f_recon --> f_reports
+    f_plan --> f_reports
+    f_reports --> treasurer
+    f_reports --> committee
+    f_reports --> captain
+    brs_bookings -.->|Visitor revenue<br/>TBC| f_actuals
+    style sage fill:#1a4a6e,stroke:#0d2d44,color:#fff
+    style crm fill:#6e4a1a,stroke:#442d0d,color:#fff
+    style bank fill:#4a1a6e,stroke:#2d0d44,color:#fff
+    style finance fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style consumers fill:#555,stroke:#333,color:#fff
+    style touchoffice fill:#8b4513,stroke:#5c2d0a,color:#fff
+    style clubwise fill:#2e4057,stroke:#1a2a3a,color:#fff
+    style brs fill:#4a6741,stroke:#2d4028,color:#fff
+    style msb fill:#6b4c8a,stroke:#3d2d52,color:#fff`
+      },
+      context: {
+        title: 'L1 — System Context',
+        code: `flowchart TB
+    subgraph people[Actors]
+        treasurer[Club Treasurer<br/>Manages accounts, budgets,<br/>and financial reporting]
+        committee[Management Committee<br/>Reviews financial reports<br/>and business plans]
+        captain[Club Captain / Secretary<br/>Oversees competition<br/>finances and fees]
+    end
+    avgcFinance[AVGC Decision Support System<br/>Integration & reporting layer for<br/>business planning, budgeting, and<br/>consolidated financial views]
+    subgraph externals[External Systems]
+        sage[Sage Accounting Cloud<br/>System of record: accounts, ledger,<br/>invoices, bank transactions, VAT]
+        hsbc[HSBC Business Banking<br/>Club bank account]
+        avgcCrm[AVGC CRM<br/>Members, subscriptions,<br/>invoicing, payments]
+        touchoffice[TouchOffice Web<br/>Clubhouse POS: bar, food,<br/>coffee, merchandise]
+        clubwiseDD[Clubwise Direct Debit<br/>Monthly DD collections<br/>for subscriptions]
+        masterscoreboard[Master Scoreboard<br/>Competitions, handicaps]
+        brsgolf[BRS Golf<br/>Tee bookings: members<br/>and visitors]
+    end
+    treasurer -->|Manages budgets,<br/>reviews reports| avgcFinance
+    committee -->|Views dashboards,<br/>business plans| avgcFinance
+    captain -->|Views competition<br/>finances| avgcFinance
+    avgcFinance -->|Reads ledger, P&L,<br/>transactions via OAuth 2.0| sage
+    avgcFinance -->|Reads member payments,<br/>subscriptions, invoices| avgcCrm
+    hsbc -->|Bank feed<br/>automatic| sage
+    avgcCrm -.->|Pushes invoices<br/>future| sage
+    touchoffice -->|Weekly sales &<br/>receipts scraped| avgcCrm
+    clubwiseDD -->|DD members<br/>CSV import| avgcCrm
+    masterscoreboard -->|Competition data<br/>API proxy| avgcCrm
+    brsgolf -->|Member list<br/>CSV import| avgcCrm
+    style avgcFinance fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style sage fill:#1a4a6e,stroke:#0d2d44,color:#fff
+    style hsbc fill:#4a1a6e,stroke:#2d0d44,color:#fff
+    style avgcCrm fill:#6e4a1a,stroke:#442d0d,color:#fff
+    style touchoffice fill:#8b4513,stroke:#5c2d0a,color:#fff
+    style clubwiseDD fill:#2e4057,stroke:#1a2a3a,color:#fff
+    style masterscoreboard fill:#6b4c8a,stroke:#3d2d52,color:#fff
+    style brsgolf fill:#4a6741,stroke:#2d4028,color:#fff
+    style people fill:#333,stroke:#555,color:#fff
+    style externals fill:#1a1a2e,stroke:#333,color:#fff`
+      },
+      containers: {
+        title: 'L2 — Container Diagram',
+        code: `flowchart TB
+    treasurer[Club Treasurer]
+    committee[Management Committee]
+    subgraph finance[AVGC Decision Support System]
+        webapp[Finance Web App<br/>Astro / TypeScript]
+        api[Finance API<br/>Astro API Routes]
+        db[(Finance Database<br/>Cloudflare D1)]
+        sageAdapter[Sage Adapter<br/>OAuth tokens, API client]
+        crmAdapter[CRM Adapter<br/>Member financial data]
+        reconciler[Reconciliation Engine<br/>Budget vs actual matching]
+        reporter[Report Generator<br/>P&L, plans, dashboards]
+    end
+    sage[Sage Accounting Cloud]
+    crmExt[AVGC CRM]
+    treasurer -->|Manages budgets,<br/>runs reports| webapp
+    committee -->|Views dashboards<br/>and plans| webapp
+    webapp --> api
+    api --> db
+    api --> sageAdapter
+    api --> crmAdapter
+    api --> reconciler
+    api --> reporter
+    sageAdapter -->|REST API<br/>OAuth 2.0| sage
+    crmAdapter -->|API calls<br/>or D1 reads| crmExt
+    style finance fill:#1a2e1a,stroke:#2d5016,color:#fff
+    style sage fill:#1a4a6e,stroke:#0d2d44,color:#fff
+    style crmExt fill:#6e4a1a,stroke:#442d0d,color:#fff
+    style webapp fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style api fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style db fill:#3a3a1a,stroke:#555520,color:#fff
+    style sageAdapter fill:#1a3a4e,stroke:#0d2530,color:#fff
+    style crmAdapter fill:#4e3a1a,stroke:#302510,color:#fff
+    style reconciler fill:#2d5016,stroke:#1a3a0a,color:#fff
+    style reporter fill:#2d5016,stroke:#1a3a0a,color:#fff`
+      },
+      sage: {
+        title: 'L3 — Sage Adapter Components',
+        code: `flowchart TB
+    subgraph SageAdapter[Sage Adapter]
+        auth[OAuth Manager<br/>Token obtain/refresh/cache]
+        client[Sage API Client<br/>HTTP requests, pagination, rate limiting]
+        mapper[Data Mapper<br/>Sage schema to internal model]
+        cache[Response Cache<br/>Avoid redundant API calls]
+    end
+    subgraph SageEndpoints[Sage API Endpoints Used]
+        ledger[/ledger_accounts/]
+        journals[/journals/]
+        banktxn[/bank_transactions/]
+        contacts[/contacts/]
+        invoices[/sales_invoices/]
+        taxrates[/tax_rates/]
+        payments[/contact_payments/]
+    end
+    auth -->|Bearer token| client
+    client --> mapper
+    client --> cache
+    client --> ledger
+    client --> journals
+    client --> banktxn
+    client --> contacts
+    client --> invoices
+    client --> taxrates
+    client --> payments`
+      },
+      crm: {
+        title: 'L3 — CRM Adapter Components',
+        code: `flowchart TB
+    subgraph CRMAdapter[CRM Adapter]
+        memberData[Member Financial Data<br/>Subscriptions, payments, balances]
+        invoiceData[Invoice Data<br/>Generated invoices, payment status]
+        salesData[Sales Data<br/>TouchOffice weekly summaries]
+        compData[Competition Data<br/>Entry fees, prize funds]
+    end
+    subgraph CRMSources[CRM Data Sources]
+        members[(members table)]
+        paymentsT[(payments table)]
+        invoicesT[(invoices table)]
+        weeklySales[(weekly_sales table)]
+        paymentItems[(payment_items table)]
+    end
+    memberData --> members
+    memberData --> paymentsT
+    invoiceData --> invoicesT
+    salesData --> weeklySales
+    compData --> paymentsT
+    compData --> paymentItems`
+      },
+      reconciler: {
+        title: 'L3 — Reconciliation Engine',
+        code: `flowchart TB
+    subgraph Reconciler[Reconciliation Engine]
+        matcher[Transaction Matcher<br/>Maps Sage actuals to budget lines]
+        variance[Variance Calculator<br/>Budget vs actual by period]
+        trend[Trend Analyser<br/>Month-on-month, year-on-year]
+        alerts[Variance Alerts<br/>Flags significant deviations]
+    end
+    sageData[(Sage Actuals)] --> matcher
+    budget[(Budget Data)] --> matcher
+    matcher --> variance
+    variance --> trend
+    variance --> alerts`
+      },
+      reporter: {
+        title: 'L3 — Report Generator',
+        code: `flowchart TB
+    subgraph Reporter[Report Generator]
+        pnl[P&L Report<br/>Income & expenditure summary]
+        bva[Budget vs Actual<br/>Variance report by category]
+        cashflow[Cash Flow Report<br/>Projected vs actual cash position]
+        plan1[1-Year Business Plan<br/>Annual budget with monthly phasing]
+        plan3[3-Year Business Plan<br/>Strategic financial projections]
+        dashboard[Dashboard Builder<br/>Key metrics and charts]
+    end
+    subgraph Outputs[Output Formats]
+        web[Web Dashboard]
+        pdf[PDF Export]
+        csv[CSV Export]
+    end
+    pnl --> web
+    bva --> web
+    cashflow --> web
+    plan1 --> web
+    plan3 --> web
+    dashboard --> web
+    pnl --> pdf
+    bva --> pdf
+    plan1 --> pdf
+    plan3 --> pdf
+    bva --> csv`
+      },
+      datamodel: {
+        title: 'L4 — Finance Database Schema',
+        code: `erDiagram
+    BUDGET_YEAR ||--o{ BUDGET_LINE : contains
+    BUDGET_LINE }o--|| ACCOUNT_CATEGORY : mapped_to
+    ACCOUNT_CATEGORY }o--|| ACCOUNT_GROUP : belongs_to
+    SAGE_ACCOUNT_MAPPING }o--|| ACCOUNT_CATEGORY : maps_to
+    BUDGET_YEAR ||--o{ BUDGET_PHASE : phased_by
+    BUDGET_PHASE }o--|| BUDGET_LINE : phases
+    BUSINESS_PLAN ||--o{ PLAN_YEAR : contains
+    PLAN_YEAR ||--o{ PLAN_ASSUMPTION : based_on
+    ACTUAL_SUMMARY }o--|| ACCOUNT_CATEGORY : categorised_as
+    VARIANCE_REPORT ||--o{ VARIANCE_LINE : contains
+    VARIANCE_LINE }o--|| BUDGET_LINE : compares
+    VARIANCE_LINE }o--|| ACTUAL_SUMMARY : against
+    BUDGET_YEAR {
+        int id PK
+        int year
+        string name
+        string status
+        date approved_date
+    }
+    BUDGET_LINE {
+        int id PK
+        int budget_year_id FK
+        int account_category_id FK
+        string line_type
+        decimal annual_amount
+    }
+    BUDGET_PHASE {
+        int id PK
+        int budget_line_id FK
+        int month
+        decimal amount
+    }
+    ACCOUNT_GROUP {
+        int id PK
+        string name
+        string group_type
+        int display_order
+    }
+    ACCOUNT_CATEGORY {
+        int id PK
+        int account_group_id FK
+        string name
+        string category_type
+        string vat_treatment
+    }
+    SAGE_ACCOUNT_MAPPING {
+        int id PK
+        int account_category_id FK
+        string sage_ledger_account_id
+        string sage_nominal_code
+    }
+    ACTUAL_SUMMARY {
+        int id PK
+        int account_category_id FK
+        int year
+        int month
+        decimal amount
+        string source
+    }
+    BUSINESS_PLAN {
+        int id PK
+        string name
+        int duration_years
+        string status
+    }
+    PLAN_YEAR {
+        int id PK
+        int business_plan_id FK
+        int year
+        decimal total_income
+        decimal total_expenditure
+    }
+    PLAN_ASSUMPTION {
+        int id PK
+        int plan_year_id FK
+        string assumption_type
+        decimal value
+        string unit
+    }
+    VARIANCE_REPORT {
+        int id PK
+        int budget_year_id FK
+        string report_type
+    }
+    VARIANCE_LINE {
+        int id PK
+        int variance_report_id FK
+        decimal budget_amount
+        decimal actual_amount
+        decimal variance_percent
+        string flag
+    }`
+      },
+      objects: {
+        title: 'L5 — Cross-System Object Map',
+        code: `flowchart LR
+    subgraph sage[Sage Accounting Cloud]
+        direction TB
+        SLA[LedgerAccount]
+        SBA[BankAccount]
+        SC[Contact]
+        STR[TaxRate]
+        SBT[BankTransaction]
+        SSI[SalesInvoice]
+        SJ[Journal]
+        SLE[LedgerEntry]
+        STB[TrialBalance]
+    end
+    subgraph touchoffice[TouchOffice EPOS]
+        direction TB
+        TWR[WeeklyReport]
+        TDS[DepartmentSale]
+        TSR[SaleReceipt]
+        TSLI[SaleLineItem]
+    end
+    subgraph clubwise[Clubwise Direct Debit]
+        direction TB
+        CWM[DDMember]
+        CWBS[BillingSchedule]
+    end
+    subgraph brsG[BRS Golf]
+        direction TB
+        BRSM[BRSMember]
+        BRSB[TeeBooking]
+    end
+    subgraph crmSys[AVGC CRM]
+        direction TB
+        CM[Member]
+        CI[Invoice]
+        CP[Payment]
+        CPI[PaymentItem]
+        CWS[WeeklySales]
+        CCPAY[CandidatePayment]
+    end
+    subgraph financeSys[AVGC Decision Support]
+        direction TB
+        FAG[AccountGroup]
+        FAC[AccountCategory]
+        FSAM[SageAccountMapping]
+        FBL[BudgetLine]
+        FAS[ActualSummary]
+        FVL[VarianceLine]
+        FPL[BusinessPlan]
+    end
+    TDS -.->|scraped weekly| CWS
+    TSR -.->|scraped & matched| CCPAY
+    CCPAY -->|processed into| CP
+    CWM -.->|CSV import| CM
+    BRSM -.->|PIN match| CM
+    SLA -.->|nominal_code| FSAM
+    FSAM -->|maps to| FAC
+    FAC -->|belongs to| FAG
+    FAC -->|budgeted in| FBL
+    FAC -->|actuals in| FAS
+    STB -.->|period totals| FAS
+    CWS -.->|dept sales| FAS
+    CP -.->|payments| FAS
+    CPI -.->|fee schedule| FBL
+    style sage fill:#1a4a6e,stroke:#0d2d44,color:#fff
+    style touchoffice fill:#8b4513,stroke:#5c2d0a,color:#fff
+    style clubwise fill:#2e4057,stroke:#1a2a3a,color:#fff
+    style brsG fill:#4a6741,stroke:#2d4028,color:#fff
+    style crmSys fill:#6e4a1a,stroke:#442d0d,color:#fff
+    style financeSys fill:#2d5016,stroke:#1a3a0a,color:#fff`
+      },
+      crosser: {
+        title: 'L5 — Cross-System Entity Relationships',
+        code: `erDiagram
+    SAGE_LedgerAccount {
+        string id
+        int nominal_code
+        string name
+        string ledger_account_type
+    }
+    SAGE_TaxRate {
+        string id
+        string name
+        decimal percentage
+    }
+    SAGE_TrialBalance {
+        string ledger_account_id
+        decimal debit
+        decimal credit
+    }
+    TO_DepartmentSale {
+        string department
+        decimal value
+        decimal quantity
+    }
+    TO_SaleReceipt {
+        string saleId
+        string memberName
+        string paymentType
+        decimal total
+    }
+    CW_DDMember {
+        string ddMemberNo
+        string ddMembershipType
+        string ddStatus
+        decimal ddFee
+    }
+    BRS_Member {
+        string Username
+        string MembershipType
+    }
+    CRM_Member {
+        int id
+        string category
+        string pin
+        string direct_debit_member_id
+        decimal account_balance
+    }
+    CRM_WeeklySales {
+        string department
+        decimal value
+        int week_number
+    }
+    CRM_CandidatePayment {
+        string sale_id
+        decimal amount
+        string match_status
+    }
+    CRM_Payment {
+        int id
+        decimal amount
+        string payment_type
+    }
+    CRM_PaymentItem {
+        string name
+        decimal fee
+        string category
+    }
+    FIN_AccountGroup {
+        int id
+        string name
+        string group_type
+    }
+    FIN_AccountCategory {
+        int id
+        string name
+        string vat_treatment
+    }
+    FIN_SageAccountMapping {
+        int id
+        string sage_nominal_code
+    }
+    FIN_BudgetLine {
+        int id
+        decimal annual_amount
+    }
+    FIN_ActualSummary {
+        int id
+        decimal amount
+        string source
+    }
+    SAGE_LedgerAccount ||--o{ SAGE_TrialBalance : reported_in
+    SAGE_LedgerAccount }o--o| SAGE_TaxRate : default_rate
+    TO_DepartmentSale }o--o{ CRM_WeeklySales : scraped_into
+    TO_SaleReceipt ||--|| CRM_CandidatePayment : parsed_into
+    CRM_CandidatePayment }o--o| CRM_Member : matched_to
+    CRM_CandidatePayment }o--o| CRM_Payment : processed_into
+    CW_DDMember ||--o| CRM_Member : dd_member_id_link
+    BRS_Member ||--o| CRM_Member : PIN_equals_Username
+    SAGE_LedgerAccount ||--o{ FIN_SageAccountMapping : nominal_code_mapped
+    FIN_SageAccountMapping }o--|| FIN_AccountCategory : maps_to_category
+    FIN_AccountCategory }o--|| FIN_AccountGroup : grouped_in
+    FIN_AccountCategory ||--o{ FIN_BudgetLine : budgeted_as
+    FIN_AccountCategory ||--o{ FIN_ActualSummary : actuals_for
+    CRM_WeeklySales }o..o{ FIN_ActualSummary : dept_sales_to_actuals
+    CRM_Payment }o..o{ FIN_ActualSummary : payments_to_actuals
+    CRM_PaymentItem }o..o{ FIN_BudgetLine : fee_schedule_to_budget`
+      }
+    };
+
+    let currentZoom = 1;
+    let renderCounter = 0;
+
+    async function show(id) {
+      currentZoom = 1;
+      document.getElementById('diagram-wrapper').style.transform = 'scale(1)';
+      document.querySelectorAll('.diagram-nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById('btn-' + id).classList.add('active');
+
+      const d = diagrams[id];
+      document.getElementById('diagram-title').textContent = d.title;
+
+      const target = document.getElementById('render-target');
+      target.innerHTML = '';
+      renderCounter++;
+      const elId = 'mermaid-' + renderCounter;
+      try {
+        const { svg } = await mermaid.render(elId, d.code);
+        target.innerHTML = svg;
+      } catch (e) {
+        target.innerHTML = '<pre style="color:red">' + e.message + '</pre>';
+      }
+    }
+
+    function updateZoom() {
+      document.getElementById('diagram-wrapper').style.transform = 'scale(' + currentZoom + ')';
+    }
+    function zoomIn() { currentZoom = Math.min(currentZoom + 0.2, 3); updateZoom(); }
+    function zoomOut() { currentZoom = Math.max(currentZoom - 0.2, 0.2); updateZoom(); }
+    function zoomReset() { currentZoom = 1; updateZoom(); }
+
+    document.addEventListener('wheel', function(e) {
+      if (e.ctrlKey) { e.preventDefault(); if (e.deltaY < 0) zoomIn(); else zoomOut(); }
+    }, { passive: false });
+
+    show('domain');
+  </script>
+</AdminLayout>
