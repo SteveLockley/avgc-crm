@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { ensureSession, loginForSession, fetchMembershipSalesList, fetchSaleReceipt } from '../../lib/touchoffice';
 import { matchMember, checkInvoiceMatch, mapToCrmItems, coalesceCandidates } from '../../lib/candidate-matching';
+import { parseBacsFile, isNonMembershipPayment, matchBacsMember } from '../../lib/bacs-parser';
 import { sendEmail } from '../../lib/email';
 import { generateWelcomeEmail, generateWelcomeEmailSubject } from '../../lib/welcome-email';
 
@@ -63,6 +64,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         return await handleReinvoice(db, body, locals);
       case 'send-outstanding-reminder':
         return await handleSendOutstandingReminder(db, body, locals);
+      case 'import-bacs':
+        return await handleImportBacs(db, body);
       default:
         return json({ error: 'Unknown action' }, 400);
     }
@@ -341,15 +344,20 @@ async function handleProcess(db: any, body: any, locals: any) {
   }
 
   // Create the real payment
-  const paymentMethod = candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
+  const isBacs = candidate.payment_source === 'bacs';
+  const paymentMethod = isBacs ? 'BACS' : candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
   const coalescedSaleIds = candidate.coalesced_sale_ids ? JSON.parse(candidate.coalesced_sale_ids) : [];
   const allSaleIds = [candidate.sale_id, ...coalescedSaleIds];
-  const reference = allSaleIds.length > 1
-    ? `TouchOffice Sales ${allSaleIds.join(', ')}`
-    : `TouchOffice Sale ${candidate.sale_id}`;
+  const reference = isBacs
+    ? `BACS ${candidate.sale_id}`
+    : allSaleIds.length > 1
+      ? `TouchOffice Sales ${allSaleIds.join(', ')}`
+      : `TouchOffice Sale ${candidate.sale_id}`;
 
-  let notes = `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
-  if (coalescedSaleIds.length > 0) {
+  let notes = isBacs
+    ? `Auto-matched from BACS import.`
+    : `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
+  if (!isBacs && coalescedSaleIds.length > 0) {
     notes = `Combined from ${allSaleIds.length} TouchOffice sales. Card: ${candidate.discount_card || 'N/A'}`;
   }
   if (familyInvoices.length > 0) {
@@ -655,8 +663,9 @@ async function handleReinvoice(db: any, body: any, locals: any) {
   ).bind(newInvoiceTotal, invoiceId).run();
 
   // Create payment record
-  const paymentMethod = candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
-  const reference = `TouchOffice Sale ${candidate.sale_id}`;
+  const isBacs = candidate.payment_source === 'bacs';
+  const paymentMethod = isBacs ? 'BACS' : candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
+  const reference = isBacs ? `BACS ${candidate.sale_id}` : `TouchOffice Sale ${candidate.sale_id}`;
   const saleDate = candidate.sale_date.split(' ')[0]; // date only for payment_date
 
   const paymentResult = await db.prepare(
@@ -669,7 +678,7 @@ async function handleReinvoice(db: any, body: any, locals: any) {
     saleDate,
     paymentMethod,
     reference,
-    `Reinvoiced & paid from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`,
+    isBacs ? `Reinvoiced & paid from BACS import.` : `Reinvoiced & paid from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`,
     locals.user?.email || 'system',
   ).run();
 
@@ -726,15 +735,20 @@ async function handleProcessAll(db: any, locals: any) {
   for (const candidate of candidates as any[]) {
     const targetInvoiceId = candidate.matched_invoice_id;
     const familyInvoices = candidate.family_invoices ? JSON.parse(candidate.family_invoices) : [];
-    const paymentMethod = candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
+    const isBacs = candidate.payment_source === 'bacs';
+    const paymentMethod = isBacs ? 'BACS' : candidate.payment_type === 'card' ? 'Card' : candidate.payment_type === 'cheque' ? 'Cheque' : 'Cash';
     const coalescedSaleIds = candidate.coalesced_sale_ids ? JSON.parse(candidate.coalesced_sale_ids) : [];
     const allSaleIds = [candidate.sale_id, ...coalescedSaleIds];
-    const reference = allSaleIds.length > 1
-      ? `TouchOffice Sales ${allSaleIds.join(', ')}`
-      : `TouchOffice Sale ${candidate.sale_id}`;
+    const reference = isBacs
+      ? `BACS ${candidate.sale_id}`
+      : allSaleIds.length > 1
+        ? `TouchOffice Sales ${allSaleIds.join(', ')}`
+        : `TouchOffice Sale ${candidate.sale_id}`;
 
-    let processNotes = `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
-    if (coalescedSaleIds.length > 0) {
+    let processNotes = isBacs
+      ? `Auto-matched from BACS import.`
+      : `Auto-matched from TouchOffice. Card: ${candidate.discount_card || 'N/A'}`;
+    if (!isBacs && coalescedSaleIds.length > 0) {
       processNotes = `Combined from ${allSaleIds.length} TouchOffice sales. Card: ${candidate.discount_card || 'N/A'}`;
     }
     if (familyInvoices.length > 0) {
@@ -953,6 +967,112 @@ async function handleSendOutstandingReminder(db: any, body: any, locals: any) {
   }
 
   return json({ success: true, email: candidate.email });
+}
+
+/**
+ * Import BACS payments from pasted/uploaded text file.
+ * Parses, filters non-membership, matches members & invoices, inserts as candidates.
+ */
+async function handleImportBacs(db: any, body: any) {
+  const { text } = body;
+  if (!text) return json({ error: 'No BACS data provided' }, 400);
+
+  const records = parseBacsFile(text);
+  if (records.length === 0) return json({ error: 'No valid BACS records found' }, 400);
+
+  let newCount = 0;
+  let matched = 0;
+  let skipped = 0;
+  let duplicates = 0;
+
+  for (const record of records) {
+    // Skip non-membership payments
+    if (isNonMembershipPayment(record)) {
+      skipped++;
+      continue;
+    }
+
+    // Generate a unique sale_id for BACS records
+    const saleId = `BACS-${record.date}-${record.amount.toFixed(2)}-${record.description.substring(0, 20).replace(/\s+/g, '_')}`;
+
+    // Check for existing candidate with same sale_id
+    const existing = await db.prepare(
+      `SELECT id FROM candidate_payments WHERE sale_id = ?`
+    ).bind(saleId).first();
+    if (existing) { duplicates++; continue; }
+
+    // Also check if already recorded as a payment
+    const alreadyPaid = await db.prepare(
+      `SELECT id FROM payments WHERE reference = ?`
+    ).bind(`BACS ${saleId}`).first();
+    if (alreadyPaid) { duplicates++; continue; }
+
+    // Match member
+    const matchResult = await matchBacsMember(db, record);
+
+    // Check invoice match — BACS has no line items, just amount
+    let invoiceMatch = { matches: false, invoiceId: null as number | null, invoiceTotal: null as number | null, invoiceStatus: null as string | null, outstandingItems: [] as any[], extraItems: [] as any[], familyInvoices: undefined as any };
+
+    // If we matched via invoice number, look up that invoice directly
+    if (record.invoiceNumber && matchResult.memberId) {
+      const inv = await db.prepare(
+        `SELECT id, total, status FROM invoices WHERE invoice_number = ? AND member_id = ?`
+      ).bind(record.invoiceNumber, matchResult.memberId).first<any>();
+      if (inv) {
+        invoiceMatch = {
+          matches: Math.abs(record.amount - inv.total) < 0.01,
+          invoiceId: inv.id,
+          invoiceTotal: inv.total,
+          invoiceStatus: inv.status,
+          outstandingItems: [],
+          extraItems: [],
+          familyInvoices: undefined,
+        };
+      }
+    }
+
+    // If no invoice match yet but we have a member, check by amount
+    if (!invoiceMatch.invoiceId && matchResult.memberId) {
+      invoiceMatch = await checkInvoiceMatch(db, matchResult.memberId, record.amount, []);
+    }
+
+    // Build receipt text from raw BACS line
+    const receiptText = `BACS Payment\nDate: ${record.date}\nDescription: ${record.description}\nReference: ${record.reference}\nAmount: £${record.amount.toFixed(2)}${record.invoiceNumber ? `\nInvoice: ${record.invoiceNumber}` : ''}`;
+
+    await db.prepare(
+      `INSERT INTO candidate_payments
+        (sale_id, sale_date, amount, member_name, discount_card, payment_type,
+         line_items, receipt_text, matched_member_id, match_status,
+         amount_matches_invoice, matched_invoice_id, invoice_total,
+         outstanding_items, extra_items, family_invoices, payment_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bacs')`
+    ).bind(
+      saleId,
+      record.date,
+      record.amount,
+      record.description,
+      null,   // no discount card for BACS
+      null,   // payment_type NULL for BACS (CHECK constraint allows NULL)
+      null,   // no line items — BACS is a lump sum
+      receiptText,
+      matchResult.memberId,
+      matchResult.status,
+      invoiceMatch.matches ? 1 : 0,
+      invoiceMatch.invoiceId,
+      invoiceMatch.invoiceTotal,
+      invoiceMatch.outstandingItems?.length > 0 ? JSON.stringify(invoiceMatch.outstandingItems) : null,
+      invoiceMatch.extraItems?.length > 0 ? JSON.stringify(invoiceMatch.extraItems) : null,
+      invoiceMatch.familyInvoices ? JSON.stringify(invoiceMatch.familyInvoices) : null,
+    ).run();
+
+    newCount++;
+    if (matchResult.status === 'matched') matched++;
+  }
+
+  // Coalesce any multi-payment BACS for same member
+  const coalesced = await coalesceCandidates(db);
+
+  return json({ success: true, total: records.length, new: newCount, matched, skipped, duplicates, coalesced });
 }
 
 function json(data: any, status = 200) {

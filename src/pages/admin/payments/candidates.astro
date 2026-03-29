@@ -28,6 +28,8 @@ const candidates = await db.prepare(
 ).all();
 
 const rows = candidates.results || [];
+const tillRows = rows.filter((r: any) => r.payment_source !== 'bacs');
+const bacsRows = rows.filter((r: any) => r.payment_source === 'bacs');
 const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amount_matches_invoice).length;
 ---
 
@@ -99,7 +101,7 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
           </tr>
         </thead>
         <tbody id="candidatesBody">
-          {rows.map((row: any) => {
+          {tillRows.map((row: any) => {
             const items = row.line_items ? JSON.parse(row.line_items) : [];
             const itemsSummary = items.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
             const outstanding = row.outstanding_items ? JSON.parse(row.outstanding_items) : [];
@@ -233,7 +235,7 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
               </tr>
             );
           })}
-          {rows.length === 0 && (
+          {tillRows.length === 0 && (
             <tr>
               <td colspan="7" class="empty-row">
                 <div class="empty-state">
@@ -269,8 +271,8 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
     </div>
   </div>
 
-  <!-- BACS Placeholder -->
-  <div class="m3-card placeholder-card">
+  <!-- BACS Section -->
+  <div class="m3-card">
     <div class="card-header">
       <div class="card-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -279,9 +281,162 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
           <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/>
         </svg>
         <span>BACS</span>
+        {bacsRows.length > 0 && <span class="tab-badge" style="margin-left:0.5rem;">{bacsRows.length}</span>}
       </div>
-      <span class="coming-soon-badge">Coming soon</span>
+      <div class="card-actions">
+        <label class="btn btn-primary btn-sm" id="bacsImportLabel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span id="bacsImportText">Import BACS File</span>
+          <input type="file" id="bacsFileInput" accept=".txt,.csv,.tsv" style="display:none;" />
+        </label>
+      </div>
     </div>
+
+    <div id="bacsStatus" class="sync-status" style="display:none;">
+      <div class="sync-spinner"></div>
+      <span id="bacsMessage">Importing BACS payments...</span>
+    </div>
+
+    {bacsRows.length > 0 && (
+      <div class="table-container">
+        <table class="m3-table">
+          <thead>
+            <tr>
+              <th class="date-col">Date</th>
+              <th>Member</th>
+              <th>Description</th>
+              <th class="text-right">Amount</th>
+              <th>Invoice</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bacsRows.map((row: any) => {
+              const outstanding = row.outstanding_items ? JSON.parse(row.outstanding_items) : [];
+              const extra = row.extra_items ? JSON.parse(row.extra_items) : [];
+              const matchClass = row.match_status === 'matched' ? 'badge-green'
+                : row.match_status === 'ambiguous' ? 'badge-amber'
+                : 'badge-red';
+              const matchLabel = row.match_status === 'matched' ? 'Matched'
+                : row.match_status === 'ambiguous' ? 'Ambiguous'
+                : 'No Match';
+
+              const outstandingWithValue = outstanding.filter((i: any) => i.amount * i.qty > 0);
+              const outstandingTotal = outstandingWithValue.reduce((sum: number, i: any) => sum + (i.amount * i.qty), 0);
+              const hasOutstanding = outstandingWithValue.length > 0 && outstandingTotal > 0;
+              const hasExtra = extra.length > 0;
+              const outstandingSummary = outstandingWithValue.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+              const extraSummary = extra.map((i: any) => i.qty > 1 ? `${i.name} x ${i.qty}` : i.name).join(', ');
+              const familyInvoices = row.family_invoices ? JSON.parse(row.family_invoices) : [];
+              const familySummary = familyInvoices.map((fi: any) => `${fi.memberName} (£${fi.total.toFixed(2)})`).join(', ');
+
+              return (
+                <tr data-id={row.id}>
+                  <td class="date-cell date-col">{formatDate(row.sale_date)}</td>
+                  <td class="member-cell">
+                    <div class="member-info">
+                      <span class="member-name">
+                        {row.matched_member_id ? (
+                          <a href={`/admin/members/${row.matched_member_id}`} class="member-link">
+                            {row.m_surname}, {row.m_first_name}
+                          </a>
+                        ) : (
+                          row.member_name || 'Unknown'
+                        )}
+                      </span>
+                      <span class={`match-badge ${matchClass}`}>{matchLabel}</span>
+                    </div>
+                  </td>
+                  <td class="items-cell items-col" title={row.member_name || ''}>
+                    {(row.member_name || '').length > 40 ? (row.member_name || '').substring(0, 40) + '...' : row.member_name || '-'}
+                  </td>
+                  <td class="text-right amount-cell">
+                    {formatCurrency(row.amount)}
+                  </td>
+                  <td class="invoice-cell">
+                    {row.amount_matches_invoice && row.invoice_number ? (
+                      <div class="invoice-detail">
+                        <span class="invoice-match">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <polyline points="20 6 9 17 4 12"/>
+                          </svg>
+                          {row.invoice_number}
+                        </span>
+                        {familyInvoices.length > 0 && (
+                          <span class="family-badge" title={`Family: ${familySummary}`}>
+                            + {familyInvoices.length} family
+                          </span>
+                        )}
+                      </div>
+                    ) : row.matched_invoice_id && row.invoice_number ? (
+                      <div class="invoice-detail">
+                        <span class="invoice-partial">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/>
+                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                          </svg>
+                          {row.invoice_number}
+                        </span>
+                        {hasOutstanding && (
+                          <span class="outstanding-badge" title={`Outstanding: ${outstandingSummary}`}>
+                            Outstanding: {outstandingSummary}
+                            <span class="outstanding-amount">
+                              £{outstandingTotal.toFixed(2)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div class="invoice-search-wrap" data-candidate-id={row.id}>
+                        <input type="text" class="invoice-search" placeholder="Search invoice..."
+                               data-candidate-id={row.id} autocomplete="off" />
+                        <div class="invoice-dropdown" style="display:none;"></div>
+                      </div>
+                    )}
+                  </td>
+                  <td class="actions-col">
+                    <button class="action-btn receipt-btn" title="View Details"
+                            data-receipt={row.receipt_text || ''} data-sale-id={row.sale_id}
+                            data-amount={row.amount} data-date={row.sale_date}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                      </svg>
+                    </button>
+                    {row.match_status === 'matched' && !!row.amount_matches_invoice && (
+                      <button class="action-btn action-btn-success process-btn" title="Record as Paid"
+                              data-id={row.id} data-invoice={row.matched_invoice_id || ''}>
+                        <span class="pound-icon">£</span>
+                      </button>
+                    )}
+                    <button class="action-btn action-btn-muted dismiss-btn" title="Dismiss"
+                            data-id={row.id}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {bacsRows.length === 0 && (
+      <div style="padding: 2rem; text-align: center; color: #888;">
+        <p style="margin: 0; font-size: 0.95rem;">No BACS candidates. Import a BACS payments file to get started.</p>
+      </div>
+    )}
   </div>
 
   <!-- Card (Dojo) Placeholder -->
@@ -1259,5 +1414,57 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
         await m3Alert('Failed to dismiss payment', { title: 'Error', type: 'error' });
       }
     });
+  });
+
+  // BACS file import handler
+  document.getElementById('bacsFileInput')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const statusDiv = document.getElementById('bacsStatus');
+    const msgSpan = document.getElementById('bacsMessage');
+    const importText = document.getElementById('bacsImportText');
+
+    statusDiv.style.display = 'flex';
+    statusDiv.style.background = '#eff6ff';
+    statusDiv.style.color = '#1e40af';
+    msgSpan.textContent = `Importing ${file.name}...`;
+    importText.textContent = 'Importing...';
+
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/candidate-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'import-bacs', text }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        const parts = [`${data.new} new`];
+        if (data.matched) parts.push(`${data.matched} matched`);
+        if (data.skipped) parts.push(`${data.skipped} non-membership skipped`);
+        if (data.duplicates) parts.push(`${data.duplicates} duplicates skipped`);
+        if (data.coalesced) parts.push(`${data.coalesced} coalesced`);
+        msgSpan.textContent = `Done! ${parts.join(', ')}.`;
+        if (data.new > 0) {
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+        }
+      } else {
+        msgSpan.textContent = `Error: ${data.error}`;
+        statusDiv.style.background = '#fef2f2';
+        statusDiv.style.color = '#dc2626';
+      }
+    } catch (err) {
+      msgSpan.textContent = `Error: ${err.message}`;
+      statusDiv.style.background = '#fef2f2';
+      statusDiv.style.color = '#dc2626';
+    }
+
+    importText.textContent = 'Import BACS File';
+    // Reset file input so same file can be re-imported
+    e.target.value = '';
   });
 </script>

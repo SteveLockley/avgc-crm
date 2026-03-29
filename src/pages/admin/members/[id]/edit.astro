@@ -128,16 +128,16 @@ if (Astro.request.method === 'POST') {
 
       const newId = result.meta.last_row_id;
 
-      // Auto-generate PIN: next after max, wrapping to reuse gaps if past 9999
+      // Auto-generate PIN: next after max (minimum 1000), wrapping to reuse gaps if past 9999
       const usedPins = await db.prepare(
         `SELECT CAST(pin AS INTEGER) as p FROM members WHERE pin IS NOT NULL AND pin != ''`
       ).all();
       const pinSet = new Set((usedPins.results || []).map((r: any) => r.p as number));
-      const maxPin = Math.max(0, ...pinSet);
+      const maxPin = Math.max(999, ...pinSet);
       let newPin = maxPin + 1;
       if (newPin > 9999) {
-        // Wrap around — find first unused from 1
-        newPin = 1;
+        // Wrap around — find first unused from 1000
+        newPin = 1000;
         while (pinSet.has(newPin) && newPin <= 9999) newPin++;
       }
       if (newPin <= 9999) {

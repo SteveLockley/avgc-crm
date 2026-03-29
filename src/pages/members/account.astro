@@ -11,12 +11,7 @@ let memberDetails: any = null;
 if (db && member?.id) {
   try {
     memberDetails = await db.prepare(
-      `SELECT m.*,
-              mc.name as category_name,
-              mc.description as category_description
-       FROM members m
-       LEFT JOIN membership_categories mc ON m.category_id = mc.id
-       WHERE m.id = ?`
+      `SELECT * FROM members WHERE id = ?`
     ).bind(member.id).first();
   } catch (e) {
     console.error('Error fetching member details:', e);
@@ -27,12 +22,7 @@ if (db && member?.id) {
 if (!memberDetails && isAdmin && db && user?.email) {
   try {
     memberDetails = await db.prepare(
-      `SELECT m.*,
-              mc.name as category_name,
-              mc.description as category_description
-       FROM members m
-       LEFT JOIN membership_categories mc ON m.category_id = mc.id
-       WHERE m.email = ?`
+      `SELECT * FROM members WHERE email = ?`
     ).bind(user.email).first();
   } catch (e) {
     console.error('Error fetching admin member details:', e);
@@ -52,16 +42,20 @@ function formatDate(dateStr: string | null): string {
 function getMembershipStatus(member: any): { label: string; color: string } {
   if (!member) return { label: 'Unknown', color: 'gray' };
 
-  const status = member.status?.toLowerCase();
-  const statuses: Record<string, { label: string; color: string }> = {
-    'active': { label: 'Active', color: 'green' },
-    'pending': { label: 'Pending', color: 'yellow' },
-    'lapsed': { label: 'Lapsed', color: 'red' },
-    'resigned': { label: 'Resigned', color: 'gray' },
-    'suspended': { label: 'Suspended', color: 'red' },
-  };
+  // Check if membership has expired
+  if (member.date_expires) {
+    const expires = new Date(member.date_expires);
+    if (expires < new Date()) {
+      return { label: 'Expired', color: 'red' };
+    }
+  }
 
-  return statuses[status] || { label: member.status || 'Unknown', color: 'gray' };
+  // Active if they have a category
+  if (member.category) {
+    return { label: 'Active', color: 'green' };
+  }
+
+  return { label: 'Unknown', color: 'gray' };
 }
 
 const status = getMembershipStatus(memberDetails);
@@ -101,11 +95,11 @@ const status = getMembershipStatus(memberDetails);
               </div>
               <div class="detail-item">
                 <span class="detail-label">Phone</span>
-                <span class="detail-value">{memberDetails.phone || 'Not provided'}</span>
+                <span class="detail-value">{memberDetails.telephone_1 || 'Not provided'}</span>
               </div>
               <div class="detail-item">
                 <span class="detail-label">Mobile</span>
-                <span class="detail-value">{memberDetails.mobile || 'Not provided'}</span>
+                <span class="detail-value">{memberDetails.telephone_2 || 'Not provided'}</span>
               </div>
             </div>
           </section>
@@ -122,12 +116,12 @@ const status = getMembershipStatus(memberDetails);
               <div class="detail-item">
                 <span class="detail-label">Address</span>
                 <span class="detail-value">
-                  {memberDetails.address1 || ''}
-                  {memberDetails.address2 && <><br/>{memberDetails.address2}</>}
-                  {memberDetails.town && <><br/>{memberDetails.town}</>}
-                  {memberDetails.county && <><br/>{memberDetails.county}</>}
-                  {memberDetails.postcode && <><br/>{memberDetails.postcode}</>}
-                  {!memberDetails.address1 && 'Not provided'}
+                  {memberDetails.address_1 || ''}
+                  {memberDetails.address_2 && <><br/>{memberDetails.address_2}</>}
+                  {memberDetails.address_3 && <><br/>{memberDetails.address_3}</>}
+                  {memberDetails.address_4 && <><br/>{memberDetails.address_4}</>}
+                  {memberDetails.address_5 && <><br/>{memberDetails.address_5}</>}
+                  {!memberDetails.address_1 && 'Not provided'}
                 </span>
               </div>
             </div>
@@ -149,11 +143,11 @@ const status = getMembershipStatus(memberDetails);
               </div>
               <div class="detail-item">
                 <span class="detail-label">Category</span>
-                <span class="detail-value">{memberDetails.category_name || 'Not assigned'}</span>
+                <span class="detail-value">{memberDetails.category || 'Not assigned'}</span>
               </div>
               <div class="detail-item">
                 <span class="detail-label">Join Date</span>
-                <span class="detail-value">{formatDate(memberDetails.join_date)}</span>
+                <span class="detail-value">{formatDate(memberDetails.date_joined)}</span>
               </div>
               <div class="detail-item">
                 <span class="detail-label">Status</span>
@@ -164,7 +158,7 @@ const status = getMembershipStatus(memberDetails);
             </div>
           </section>
 
-          {memberDetails.handicap && (
+          {memberDetails.handicap_index != null && (
             <section class="account-section">
               <h3>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -177,11 +171,11 @@ const status = getMembershipStatus(memberDetails);
               <div class="detail-grid">
                 <div class="detail-item">
                   <span class="detail-label">Handicap Index</span>
-                  <span class="detail-value">{memberDetails.handicap}</span>
+                  <span class="detail-value">{memberDetails.handicap_index}</span>
                 </div>
                 <div class="detail-item">
-                  <span class="detail-label">CDH Number</span>
-                  <span class="detail-value">{memberDetails.cdh_number || 'Not provided'}</span>
+                  <span class="detail-label">National ID</span>
+                  <span class="detail-value">{memberDetails.national_id || 'Not provided'}</span>
                 </div>
               </div>
             </section>
