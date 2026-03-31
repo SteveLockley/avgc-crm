@@ -346,7 +346,6 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
                   <option value="">-</option>
                   <option value="H" selected={val('home_away') === 'H'}>Home</option>
                   <option value="A" selected={val('home_away') === 'A'}>Away</option>
-                  <option value="V" selected={member.home_away === 'V'}>Visitor</option>
                 </select>
               </div>
               <div class="field">
@@ -401,6 +400,12 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
           <div class="m3-card">
             <div class="card-icon">⛳</div>
             <h2>Golf / WHS</h2>
+
+            <div id="egu-warning" style="display:none; background:#fff3cd; border:1px solid #ffc107; border-radius:8px; padding:0.75rem 1rem; margin-bottom:0.75rem; font-size:0.875rem; color:#856404;">
+              <strong>⚠️ WHS National ID missing</strong> — this home member has no WHS National ID (CDH number).
+              EGU and county fees will not be invoiced until it is added.
+              <a href="https://sso.whsplatform.englandgolf.org/login?v=https%3a%2f%2flive.whsplatform.englandgolf.org%2fvalidate.aspx" target="_blank" rel="noopener" style="color:#856404; font-weight:600; margin-left:0.5rem;">Register on England Golf ↗</a>
+            </div>
 
             <div class="field-row three-col">
               <div class="field">
@@ -458,14 +463,14 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
 
             {!isNew && (
               <div class="field">
-                <label for="family_payer_id">Family DD Payer</label>
+                <label for="family_payer_id">Family Payer</label>
                 <select name="family_payer_id" id="family_payer_id">
                   <option value="">None</option>
                   {potentialPayers.map(p => (
                     <option value={p.id} selected={member.family_payer_id === p.id}>{p.surname}, {p.first_name}</option>
                   ))}
                 </select>
-                <span class="field-hint">Primary DD payer for family memberships</span>
+                <span class="field-hint">Primary payer for family memberships</span>
               </div>
             )}
           </div>
@@ -893,58 +898,51 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
     }
 
     dobInput.addEventListener('change', updateAgeGroup);
-    // Calculate on page load from existing DOB
-    if (dobInput.value) updateAgeGroup();
 
-    // Home/Away → Home Club (auto-set for Home, searchable select for Away/Visitor)
+    // Home/Away → Home Club (readonly for Home, searchable select for Away)
     const homeAwaySelect = document.getElementById('home_away');
     const homeClubSelect = document.getElementById('home_club');
     const homeClubSearch = document.getElementById('home_club_search');
+    const homeClubHidden = document.getElementById('home_club_hidden');
 
-    // Filter the select options based on search text
+    // Filter the select options based on search text (Away only)
     homeClubSearch.addEventListener('input', function() {
+      if (homeAwaySelect.value === 'H') return;
       const search = this.value.toLowerCase();
-      const isAway = homeAwaySelect.value !== 'H';
       const options = homeClubSelect.options;
       let firstMatch = null;
       for (let i = 0; i < options.length; i++) {
-        // Hide & disable Alnmouth Village when Away/Visitor
-        if (isAway && options[i].value === 'Alnmouth Village') {
-          options[i].hidden = true;
-          options[i].disabled = true;
-          continue;
-        }
         const text = options[i].textContent.toLowerCase();
         const show = !search || text.includes(search);
         options[i].hidden = !show;
         if (show && !firstMatch && options[i].value) firstMatch = options[i];
       }
-      // Auto-select first match as user types
       if (firstMatch && search.length >= 2) {
         homeClubSelect.value = firstMatch.value;
       }
     });
 
-    // Hidden input to ensure value submits when select is disabled
-    const homeClubHidden = document.getElementById('home_club_hidden');
-
-    // Find the Alnmouth Village option to show/hide it
-    const avOption = [...homeClubSelect.options].find(o => o.value === 'Alnmouth Village');
-
     function updateHomeClub() {
       if (homeAwaySelect.value === 'H') {
-        if (avOption) { avOption.hidden = false; avOption.disabled = false; }
-        homeClubSelect.value = 'Alnmouth Village';
+        // Home: readonly text box showing Alnmouth Village, dropdown hidden
+        homeClubSearch.value = 'Alnmouth Village';
+        homeClubSearch.readOnly = true;
+        homeClubSearch.placeholder = '';
+        homeClubSearch.classList.add('field-readonly');
+        homeClubSearch.style.display = '';
+        homeClubSelect.style.display = 'none';
         homeClubSelect.disabled = true;
-        homeClubSelect.classList.add('field-readonly');
-        homeClubSearch.style.display = 'none';
         homeClubHidden.value = 'Alnmouth Village';
         homeClubHidden.disabled = false;
       } else {
-        if (avOption) { avOption.hidden = true; avOption.disabled = true; }
-        homeClubSelect.disabled = false;
-        homeClubSelect.classList.remove('field-readonly');
+        // Away: search filter box + dropdown select
+        homeClubSearch.value = '';
+        homeClubSearch.readOnly = false;
+        homeClubSearch.placeholder = 'Type to search clubs...';
+        homeClubSearch.classList.remove('field-readonly');
         homeClubSearch.style.display = '';
+        homeClubSelect.style.display = '';
+        homeClubSelect.disabled = false;
         homeClubHidden.disabled = true;
         if (homeClubSelect.value === 'Alnmouth Village') {
           homeClubSelect.value = '';
@@ -975,6 +973,8 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
     categorySelect.addEventListener('change', () => {
       updateFeeTemplateVisibility();
     });
+    // Calculate on page load from existing DOB (must be after parentalSelect/parentalGroup are declared)
+    if (dobInput.value) updateAgeGroup();
     updateParentalConsent();
 
     // New member: auto-calculate subscription from DOB
@@ -1096,7 +1096,41 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
       return getFormDataString(initialFormData) !== getFormDataString(new FormData(form));
     }
 
-    form.addEventListener('submit', () => { formSubmitting = true; });
+    // EGU warning: show if home member has no WHS National ID (unless excluded category)
+    const eguWarning = document.getElementById('egu-warning');
+    const nationalIdInput = document.getElementById('national_id');
+    const EGU_EXCLUDED = ['social', 'junior academy', 'twilight', 'honorary', 'gratis', 'retention', 'life', 'winter'];
+
+    function needsEguRegistration() {
+      const isHome = homeAwaySelect.value === 'H' || homeAwaySelect.value === '';
+      const hasCDH = nationalIdInput.value.trim() !== '';
+      const cat = (categorySelect.value || '').toLowerCase();
+      const isExcluded = EGU_EXCLUDED.some(ex => cat.includes(ex));
+      return isHome && !hasCDH && !isExcluded;
+    }
+
+    function updateEguWarning() {
+      if (eguWarning) eguWarning.style.display = needsEguRegistration() ? 'block' : 'none';
+    }
+
+    nationalIdInput.addEventListener('input', updateEguWarning);
+    homeAwaySelect.addEventListener('change', updateEguWarning);
+    categorySelect.addEventListener('change', updateEguWarning);
+    // Run after a tick to ensure updateHomeClub() has set initial state
+    setTimeout(updateEguWarning, 0);
+
+    form.addEventListener('submit', async (e) => {
+      if (needsEguRegistration()) {
+        e.preventDefault();
+        const proceed = await m3Confirm(
+          'This member has no WHS National ID. They should be registered with England Golf to get their CDH number — EGU and county fees will not be invoiced until it is added. Save anyway?',
+          { title: 'WHS National ID Missing', confirmText: 'Save Anyway', cancelText: 'Cancel' }
+        );
+        if (proceed) { formSubmitting = true; form.submit(); }
+        return;
+      }
+      formSubmitting = true;
+    });
 
     window.addEventListener('beforeunload', (e) => {
       if (!formSubmitting && hasUnsavedChanges()) {
@@ -1106,6 +1140,7 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
     });
 
     document.querySelectorAll('a[href]').forEach(link => {
+      if (link.target === '_blank') return;
       link.addEventListener('click', async (e) => {
         if (!formSubmitting && hasUnsavedChanges()) {
           e.preventDefault();

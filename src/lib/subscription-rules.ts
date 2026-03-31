@@ -7,7 +7,7 @@ export interface MemberForSubscription {
   surname: string;
   date_of_birth: string | null;
   date_joined: string | null;
-  home_away: 'H' | 'A' | 'V' | null;
+  home_away: 'H' | 'A' | null;
   category: string | null; // Subscription type is stored in category field
 }
 

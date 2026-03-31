@@ -51,19 +51,21 @@ export function generateBACSRenewalEmail(
     .filter(Boolean)
     .join(' ');
 
-  const isHome = member.home_away === 'H';
+  const isHome = member.home_away === 'H' || member.home_away === null || member.home_away === undefined;
   const hasCDH = !!member.national_id && member.national_id.trim() !== '';
   const isOutOfCounty = member.category.toLowerCase().includes('out of county');
-  const hasHomeHandicap = member.handicap_index !== null && member.handicap_index !== undefined;
   const hasLocker = !!member.locker_number && member.locker_number.trim() !== '';
+  const categoryLower = member.category.toLowerCase();
+  // Eligible: home + has CDH, excluding Social, Junior Academy
+  const eligibleForEgu = isHome && hasCDH && !categoryLower.includes('junior academy') && !categoryLower.includes('social');
 
   let englandGolfFee = 0;
   let countyFee = 0;
-  if (hasCDH) {
-    if (isHome && !isOutOfCounty) {
+  if (eligibleForEgu) {
+    if (!isOutOfCounty) {
       englandGolfFee = 12.0;
       countyFee = 6.5;
-    } else if (isOutOfCounty && hasHomeHandicap) {
+    } else {
       englandGolfFee = 12.0;
     }
   }

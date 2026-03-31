@@ -94,17 +94,16 @@ function hasHomeHandicap(member: Member): boolean {
  * Check if member is a home member
  */
 function isHomeMember(member: Member): boolean {
-  return member.home_away === 'H';
+  return member.home_away === 'H' || member.home_away === null;
 }
 
 /**
  * Calculate the invoice for a member
  *
  * Fee rules:
- * - Home members with CDH (not out of county) → England Golf (£12) + Northumberland County (£6.50)
- * - Out of county members with home handicap + CDH → England Golf (£12) only
- * - Members without CDH → No golf fees
- * - Members with locker → Locker fee (£10)
+ * - Home members with handicap (not Social/Junior Academy/Life-without-CDH) → England Golf + Northumberland County
+ * - Out of county home members with handicap → England Golf only
+ * - Members with locker → Locker fee
  */
 export function calculateInvoiceForMember(
   member: Member,
@@ -122,15 +121,19 @@ export function calculateInvoiceForMember(
   }
   items.push(subscriptionItem);
 
-  // 2. Check fee eligibility based on CDH and membership type
+  // 2. Check fee eligibility based on handicap and membership type
   const memberHasCDH = hasCDH(member);
   const memberIsHome = isHomeMember(member);
   const memberIsOutOfCounty = isOutOfCounty(member);
-  const memberHasHomeHandicap = hasHomeHandicap(member);
+  const categoryLower = (member.category || '').toLowerCase();
+  // Eligible: home + has CDH, excluding Social, Junior Academy
+  const eligibleForEgu = memberIsHome && memberHasCDH
+    && !categoryLower.includes('social')
+    && !categoryLower.includes('junior academy');
 
-  if (memberHasCDH) {
-    if (memberIsHome && !memberIsOutOfCounty) {
-      // Home member with CDH (not out of county) → England Golf + Northumberland
+  if (eligibleForEgu) {
+    if (!memberIsOutOfCounty) {
+      // Standard home member → England Golf + Northumberland County
       const englandGolf = findFeeItem('England Golf', paymentItems);
       if (englandGolf) {
         items.push({
@@ -141,7 +144,6 @@ export function calculateInvoiceForMember(
           lineTotal: englandGolf.fee,
         });
       }
-
       const northumberland = findFeeItem('Northumberland County', paymentItems);
       if (northumberland) {
         items.push({
@@ -152,8 +154,8 @@ export function calculateInvoiceForMember(
           lineTotal: northumberland.fee,
         });
       }
-    } else if (memberIsOutOfCounty && memberHasHomeHandicap) {
-      // Out of county with home handicap + CDH → England Golf only
+    } else {
+      // Out of county home member → England Golf only
       const englandGolf = findFeeItem('England Golf', paymentItems);
       if (englandGolf) {
         items.push({
@@ -227,13 +229,16 @@ export function getFeeSummary(member: Member): string[] {
   const memberHasCDH = hasCDH(member);
   const memberIsHome = isHomeMember(member);
   const memberIsOutOfCounty = isOutOfCounty(member);
-  const memberHasHomeHandicap = hasHomeHandicap(member);
+  const categoryLower = (member.category || '').toLowerCase();
+  const eligibleForEgu = memberIsHome && memberHasCDH
+    && !categoryLower.includes('social')
+    && !categoryLower.includes('junior academy');
 
-  if (memberHasCDH) {
-    if (memberIsHome && !memberIsOutOfCounty) {
+  if (eligibleForEgu) {
+    if (!memberIsOutOfCounty) {
       fees.push('England Golf');
       fees.push('Northumberland County');
-    } else if (memberIsOutOfCounty && memberHasHomeHandicap) {
+    } else {
       fees.push('England Golf');
     }
   }

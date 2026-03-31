@@ -429,7 +429,7 @@ allMembers.forEach(member => {
                   const fees = getFeeSummary(member);
                   const calculation = calculateInvoiceForMember(member, paymentItems, period.start, period.end);
                   const isDD = member.default_payment_method === 'Clubwise Direct Debit';
-                  const deps = (!isDD && familyByPayer[member.id]) || [];
+                  const deps = familyByPayer[member.id] || [];
                   const familyTotal = deps.reduce((sum: number, d: FamilyDep) => sum + (d.fee || 0), 0);
                   const combinedTotal = (calculation?.total || 0) + familyTotal;
 

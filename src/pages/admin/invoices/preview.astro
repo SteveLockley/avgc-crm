@@ -71,8 +71,8 @@ for (const invoiceId of invoiceIds) {
   const isDD = member.default_payment_method === 'Clubwise Direct Debit';
   const correctItems = calculateLineItems(member, feeItems, isSocial);
 
-  // Include family dependants' items (same logic as generate-invoice.ts)
-  if (!isDD) {
+  // Include family dependants' items
+  {
     const famResult = await db.prepare(
       `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
        FROM members m
@@ -80,7 +80,7 @@ for (const invoiceId of invoiceIds) {
        WHERE m.family_payer_id = ?`
     ).bind(member.id).all();
     for (const dep of (famResult.results || []) as any[]) {
-      if (dep.subscription_fee === null && dep.subscription_fee === undefined) continue;
+      if (!dep.category) continue;
       const depSocial = (dep.category || '').toLowerCase() === 'social';
       const depItems = calculateLineItems(dep, feeItems, depSocial);
       for (const item of depItems) {

@@ -21,9 +21,10 @@ const FEE_CONFIG: Record<FeeType, {
     memberFilter: `m.locker_number IS NOT NULL AND m.locker_number != '' AND LOWER(m.category) NOT LIKE '%social%'`,
   },
   egu: {
-    label: 'England Golf',
+    label: 'England Golf (away/out-of-county only)',
     feeNames: ['england golf'],
-    memberFilter: `m.national_id IS NOT NULL AND m.national_id != '' AND LOWER(m.category) NOT LIKE '%social%'`,
+    // Excludes home, non-out-of-county members — they must use egu_county to get both fees together
+    memberFilter: `m.national_id IS NOT NULL AND m.national_id != '' AND LOWER(m.category) NOT LIKE '%social%' AND NOT (m.home_away = 'H' AND LOWER(m.category) NOT LIKE '%out of county%')`,
   },
   county: {
     label: 'Northumberland County',

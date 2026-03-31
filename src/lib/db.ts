@@ -21,7 +21,7 @@ export interface Member {
   club_number: string | null;
   category: string | null;
   age_group: string | null;
-  home_away: 'H' | 'A' | 'V' | null;
+  home_away: 'H' | 'A' | null;
   home_club: string | null;
   subscription_template: string | null;
   officer_title: string | null;

@@ -25,31 +25,39 @@ export function calculateLineItems(
 ): InvoiceLineItem[] {
   const items: InvoiceLineItem[] = [];
 
-  if (member.subscription_fee === null || member.subscription_fee === undefined) {
+  // If no subscription fee found but member has a category, treat as £0 (zero-cost subscription e.g. Life)
+  // If no category at all, bail out — cannot invoice without knowing what they are
+  if ((member.subscription_fee === null || member.subscription_fee === undefined) && !member.category) {
     return [];
   }
-  items.push({
-    paymentItemId: member.subscription_item_id || null,
-    description: `${member.category} subscription`,
-    unitPrice: member.subscription_fee,
-  });
+  const subscriptionFee = member.subscription_fee ?? 0;
+  if (subscriptionFee > 0) {
+    items.push({
+      paymentItemId: member.subscription_item_id || null,
+      description: `${member.category} subscription`,
+      unitPrice: subscriptionFee,
+    });
+  }
 
   if (isSocial) return items;
 
   const hasCDH = !!member.national_id && String(member.national_id).trim() !== '';
-  const isHome = member.home_away === 'H';
+  const isHome = member.home_away === 'H' || member.home_away === null || member.home_away === undefined;
   const isOutOfCounty = (member.category || '').toLowerCase().includes('out of county');
-  const hasHomeHandicap = member.handicap_index !== null && member.handicap_index !== undefined;
+  const categoryLower = (member.category || '').toLowerCase();
+  // Eligible: home + has CDH, excluding Social (isSocial), Junior Academy, Life without CDH
+  const eligibleForEgu = isHome && hasCDH && !categoryLower.includes('junior academy');
 
-  if (hasCDH) {
-    if (isHome && !isOutOfCounty) {
+  if (eligibleForEgu) {
+    if (!isOutOfCounty) {
       if (feeItems['england golf']) {
         items.push({ paymentItemId: feeItems['england golf'].id, description: 'England Golf', unitPrice: feeItems['england golf'].fee });
       }
       if (feeItems['northumberland county']) {
         items.push({ paymentItemId: feeItems['northumberland county'].id, description: 'Northumberland County', unitPrice: feeItems['northumberland county'].fee });
       }
-    } else if (isOutOfCounty && isHome && hasHomeHandicap) {
+    } else {
+      // Out of county home member with handicap → England Golf only
       if (feeItems['england golf']) {
         items.push({ paymentItemId: feeItems['england golf'].id, description: 'England Golf', unitPrice: feeItems['england golf'].fee });
       }
@@ -135,9 +143,9 @@ export async function generateInvoiceForMember(
     return { success: false, error: `No subscription fee for category ${member.category}` };
   }
 
-  // Include family dependants' items on the payer's invoice (for non-DD payments)
+  // Include family dependants' items on the payer's invoice
   const familyMemberIds: number[] = [];
-  if (options.includeFamily && !isDD) {
+  if (options.includeFamily) {
     // Use flexible matching for category → payment item name:
     // Member category may have a suffix like "(Members Family)" that doesn't match the payment item name.
     // Try exact match first, then strip parenthetical suffix, then try base word match.

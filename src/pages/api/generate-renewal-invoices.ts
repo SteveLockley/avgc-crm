@@ -49,13 +49,14 @@ function calculateLineItems(
 
   // 2. England Golf + County fees
   const hasCDH = !!member.national_id && String(member.national_id).trim() !== '';
-  const isHome = member.home_away === 'H';
+  const isHome = member.home_away === 'H' || member.home_away === null || member.home_away === undefined;
   const isOutOfCounty = (member.category || '').toLowerCase().includes('out of county');
-  const hasHomeHandicap = member.handicap_index !== null && member.handicap_index !== undefined;
+  const categoryLower = (member.category || '').toLowerCase();
+  // Eligible: home + has CDH, excluding Social (isSocial), Junior Academy
+  const eligibleForEgu = isHome && hasCDH && !categoryLower.includes('junior academy');
 
-  if (hasCDH) {
-    if (isHome && !isOutOfCounty) {
-      // Home member with CDH → England Golf + Northumberland County
+  if (eligibleForEgu) {
+    if (!isOutOfCounty) {
       if (feeItems['england golf']) {
         items.push({
           paymentItemId: feeItems['england golf'].id,
@@ -70,8 +71,8 @@ function calculateLineItems(
           unitPrice: feeItems['northumberland county'].fee,
         });
       }
-    } else if (isOutOfCounty && hasHomeHandicap) {
-      // Out of county with CDH + handicap → England Golf only
+    } else {
+      // Out of county home member with handicap → England Golf only
       if (feeItems['england golf']) {
         items.push({
           paymentItemId: feeItems['england golf'].id,

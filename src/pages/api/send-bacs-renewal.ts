@@ -195,7 +195,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // Bulk mode — skip already-sent members
   const members = await env.DB.prepare(
-    `SELECT m.*, p.fee as subscription_fee
+    `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
      FROM members m
      LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
      LEFT JOIN sent_emails se ON se.member_id = m.id AND se.email_type = 'bacs_renewal' AND se.year = ? AND se.status = 'sent'
