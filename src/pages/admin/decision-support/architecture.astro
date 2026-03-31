@@ -202,9 +202,22 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
             s_trial[Trial Balance &<br/>P&L]
             s_contacts[Contacts<br/>Customers & Suppliers]
         end
-        subgraph bank[HSBC Business Banking]
-            b_txns[Bank Transactions<br/>All Money In/Out]
+        subgraph bank[Banking]
+            b_txns_hsbc[HSBC Transactions<br/>All Money In/Out]
+            b_txns_barclays[Barclays Transactions<br/>All Money In/Out]
         end
+    end
+    subgraph supplierSystems[Operational & Supplier Systems]
+        direction TB
+        lwc_s[LWC<br/>Beer & Wine]
+        bookers_s[Bookers<br/>Grocery]
+        payroll_s[Payroll System<br/>HR & Wages]
+        crownEnergy_s[Crown Energy<br/>Gas & Electric]
+        microsoft_s[Microsoft 365<br/>Email & Intranet]
+        secSurv_s[Security & Surveillance<br/>CCTV & Access]
+        bt_s[BT<br/>Internet & Telephony]
+        northumbriaWater_s[Northumbria Water<br/>Water Supply]
+        hsSafety_s[Health & Safety DB<br/>Compliance]
     end
     subgraph operations[Club Operations Hub]
         subgraph crm[AVGC CRM]
@@ -238,8 +251,17 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
     brs_members -->|CSV import<br/>manual upload| c_brs
     msb_comps -->|API proxy| c_members
     msb_handicaps -->|WHS data| c_members
-    b_txns -->|Bank feed<br/>automatic| s_bank
+    b_txns_hsbc -->|Bank feed<br/>automatic| s_bank
+    b_txns_barclays -->|Bank feed<br/>automatic| s_bank
     c_invoices -.->|Pushes invoices<br/>future| s_invoices
+    lwc_s -->|Purchase invoices| s_invoices
+    bookers_s -->|Purchase invoices| s_invoices
+    payroll_s -->|Wages journals| s_transactions
+    crownEnergy_s -->|Utility invoices| s_invoices
+    microsoft_s -->|Software invoices| s_invoices
+    secSurv_s -->|Service invoices| s_invoices
+    bt_s -->|Telecoms invoices| s_invoices
+    northumbriaWater_s -->|Utility invoices| s_invoices
     s_ledger -->|Nominal codes| f_mapping
     s_trial -->|Period actuals| f_actuals
     s_transactions -->|Transaction detail| f_actuals
@@ -265,7 +287,8 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
     style touchoffice fill:#8b4513,stroke:#5c2d0a,color:#fff
     style clubwise fill:#2e4057,stroke:#1a2a3a,color:#fff
     style brs fill:#4a6741,stroke:#2d4028,color:#fff
-    style msb fill:#6b4c8a,stroke:#3d2d52,color:#fff`
+    style msb fill:#6b4c8a,stroke:#3d2d52,color:#fff
+    style supplierSystems fill:#1e1a1a,stroke:#444,color:#fff`
       },
       context: {
         title: 'L1 — System Context',
@@ -278,12 +301,26 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
     avgcFinance[AVGC Decision Support System<br/>Integration & reporting layer for<br/>business planning, budgeting, and<br/>consolidated financial views]
     subgraph externals[External Systems]
         sage[Sage Accounting Cloud<br/>System of record: accounts, ledger,<br/>invoices, bank transactions, VAT]
-        hsbc[HSBC Business Banking<br/>Club bank account]
         avgcCrm[AVGC CRM<br/>Members, subscriptions,<br/>invoicing, payments]
         touchoffice[TouchOffice Web<br/>Clubhouse POS: bar, food,<br/>coffee, merchandise]
         clubwiseDD[Clubwise Direct Debit<br/>Monthly DD collections<br/>for subscriptions]
         masterscoreboard[Master Scoreboard<br/>Competitions, handicaps]
         brsgolf[BRS Golf<br/>Tee bookings: members<br/>and visitors]
+        subgraph banking[Banking]
+            hsbc[HSBC Business Banking<br/>Club bank account]
+            barclays[Barclays Bank<br/>Club bank account]
+        end
+        subgraph suppliers[Operational & Supplier Systems]
+            lwc[LWC<br/>Beer & Wine]
+            bookers[Bookers<br/>Grocery]
+            payroll[Payroll System<br/>HR & Wages]
+            crownEnergy[Crown Energy<br/>Gas & Electric]
+            microsoft[Microsoft 365<br/>Email & Intranet]
+            secSurv[Security & Surveillance<br/>CCTV & Access]
+            bt[BT<br/>Internet & Telephony]
+            northumbriaWater[Northumbria Water<br/>Water Supply]
+            hsSafety[Health & Safety DB<br/>Compliance]
+        end
     end
     treasurer -->|Manages budgets,<br/>reviews reports| avgcFinance
     committee -->|Views dashboards,<br/>business plans| avgcFinance
@@ -291,21 +328,33 @@ import AdminLayout from '../../../layouts/AdminLayout.astro';
     avgcFinance -->|Reads ledger, P&L,<br/>transactions via OAuth 2.0| sage
     avgcFinance -->|Reads member payments,<br/>subscriptions, invoices| avgcCrm
     hsbc -->|Bank feed<br/>automatic| sage
+    barclays -->|Bank feed<br/>automatic| sage
     avgcCrm -.->|Pushes invoices<br/>future| sage
     touchoffice -->|Weekly sales &<br/>receipts scraped| avgcCrm
     clubwiseDD -->|DD members<br/>CSV import| avgcCrm
     masterscoreboard -->|Competition data<br/>API proxy| avgcCrm
     brsgolf -->|Member list<br/>CSV import| avgcCrm
+    lwc -->|Purchase invoices| sage
+    bookers -->|Purchase invoices| sage
+    payroll -->|Wages journals| sage
+    crownEnergy -->|Utility invoices| sage
+    microsoft -->|Software invoices| sage
+    secSurv -->|Service invoices| sage
+    bt -->|Telecoms invoices| sage
+    northumbriaWater -->|Utility invoices| sage
     style avgcFinance fill:#2d5016,stroke:#1a3a0a,color:#fff
     style sage fill:#1a4a6e,stroke:#0d2d44,color:#fff
     style hsbc fill:#4a1a6e,stroke:#2d0d44,color:#fff
+    style barclays fill:#00395d,stroke:#002040,color:#fff
     style avgcCrm fill:#6e4a1a,stroke:#442d0d,color:#fff
     style touchoffice fill:#8b4513,stroke:#5c2d0a,color:#fff
     style clubwiseDD fill:#2e4057,stroke:#1a2a3a,color:#fff
     style masterscoreboard fill:#6b4c8a,stroke:#3d2d52,color:#fff
     style brsgolf fill:#4a6741,stroke:#2d4028,color:#fff
     style people fill:#333,stroke:#555,color:#fff
-    style externals fill:#1a1a2e,stroke:#333,color:#fff`
+    style externals fill:#1a1a2e,stroke:#333,color:#fff
+    style banking fill:#1a1a3e,stroke:#333,color:#fff
+    style suppliers fill:#1e1a1a,stroke:#333,color:#fff`
       },
       containers: {
         title: 'L2 — Container Diagram',
