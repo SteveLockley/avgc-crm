@@ -136,7 +136,7 @@ async function createPaymentLineItems(
  * Sync: fetch new sales from TouchOffice, parse receipts, match members, insert into DB.
  */
 async function handleSync(db: any, env: any, body: any) {
-  let session = await ensureSession(db, env);
+  let { session } = await ensureSession(db, env);
 
   // Get latest sale_date from candidate_payments or default to 01/02/{year}
   const latest = await db.prepare(
@@ -171,7 +171,7 @@ async function handleSync(db: any, env: any, body: any) {
   } catch (err: any) {
     if (err.message?.includes('Session expired')) {
       // Force fresh login and retry
-      session = await loginForSession(env.TOUCHOFFICE_USERNAME, env.TOUCHOFFICE_PASSWORD);
+      ({ session } = await loginForSession(env.TOUCHOFFICE_USERNAME, env.TOUCHOFFICE_PASSWORD));
       await db.prepare(
         `INSERT INTO app_settings (key, value) VALUES ('touchoffice_session', ?)
          ON CONFLICT(key) DO UPDATE SET value = ?`

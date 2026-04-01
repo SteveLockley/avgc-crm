@@ -1,0 +1,426 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+const currentYear = new Date().getFullYear();
+
+// Load stored entries for current year at build time for initial render
+const result = await db.prepare(`
+  SELECT id, sale_id, sale_date, balance_adj, running_balance, receipt_text, receipt_items, fetched_at
+  FROM seniors_purse_entries
+  WHERE year = ?
+  ORDER BY sale_date ASC
+`).bind(currentYear).all().catch(() => ({ results: [] }));
+
+const rows = (result.results || []) as any[];
+const totalCredits = rows.filter((r: any) => r.balance_adj > 0).reduce((s: number, r: any) => s + r.balance_adj, 0);
+const totalDebits  = rows.filter((r: any) => r.balance_adj < 0).reduce((s: number, r: any) => s + r.balance_adj, 0);
+const currentBalance = rows.length > 0 ? rows[rows.length - 1].running_balance : null;
+const lastFetched = rows.length > 0
+  ? rows.reduce((latest: string, r: any) => r.fetched_at > latest ? r.fetched_at : latest, '')
+  : null;
+
+function fmt(n: number) {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
+}
+function fmtDate(iso: string) {
+  if (!iso) return '-';
+  const d = new Date(iso.replace(' ', 'T'));
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+---
+
+<AdminLayout title="Seniors' Competition Purse">
+  <div class="sp-page">
+
+    <!-- Page header -->
+    <div class="sp-page-header">
+      <div>
+        <h1 class="sp-title">Seniors' Competition Purse</h1>
+        <p class="sp-sub">Customer Statement — Senior Section (1035) · Financial Year Jan–Dec</p>
+      </div>
+      <div class="sp-controls">
+        <select id="yearSelect" class="sp-year-select">
+          {[currentYear, currentYear - 1, currentYear - 2].map(y => (
+            <option value={y} selected={y === currentYear}>{y}</option>
+          ))}
+        </select>
+        <button id="syncBtn" class="sp-btn sp-btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span id="syncLabel">Sync from TouchOffice</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sync status -->
+    <div id="syncStatus" class="sp-sync-status" style="display:none;">
+      <div class="sp-spinner"></div>
+      <span id="syncMessage">Fetching statement from TouchOffice…</span>
+    </div>
+    <div id="syncResult" class="sp-sync-result" style="display:none;"></div>
+
+    <!-- Summary bar -->
+    <div class="sp-summary-bar" id="summaryBar">
+      <div class="sp-summary-item">
+        <span class="sp-summary-num" id="statBalance">{currentBalance !== null ? fmt(currentBalance) : '—'}</span>
+        <span class="sp-summary-label">current balance</span>
+      </div>
+      <div class="sp-summary-item">
+        <span class="sp-summary-num sp-positive" id="statCredits">{fmt(totalCredits)}</span>
+        <span class="sp-summary-label">total credits</span>
+      </div>
+      {totalDebits < 0 && (
+        <div class="sp-summary-item">
+          <span class="sp-summary-num sp-negative" id="statDebits">{fmt(totalDebits)}</span>
+          <span class="sp-summary-label">total debits</span>
+        </div>
+      )}
+      <div class="sp-summary-item">
+        <span class="sp-summary-num" id="statCount">{rows.length}</span>
+        <span class="sp-summary-label">transactions</span>
+      </div>
+      {lastFetched && (
+        <div class="sp-summary-item sp-summary-meta">
+          <span class="sp-summary-label">last synced</span>
+          <span class="sp-summary-date" id="statLastFetched">{fmtDate(lastFetched)}</span>
+        </div>
+      )}
+    </div>
+
+    <!-- Transactions table -->
+    <div class="sp-card">
+      <div class="sp-card-header">
+        <h3>Transactions</h3>
+        <span class="sp-badge" id="transCount">{rows.length} entries</span>
+      </div>
+      <div class="sp-table-wrap">
+        <table class="sp-table" id="transTable">
+          <thead>
+            <tr>
+              <th class="col-date">Date</th>
+              <th class="col-sale">Sale ID</th>
+              <th class="col-adj text-right">Amount</th>
+              <th class="col-bal text-right">Balance</th>
+              <th class="col-receipt">Receipt</th>
+            </tr>
+          </thead>
+          <tbody id="transBody">
+            {rows.map((row: any) => (
+              <>
+                <tr class="trans-row" data-id={row.id}>
+                  <td class="col-date">{fmtDate(row.sale_date)}</td>
+                  <td class="col-sale sp-mono">{row.sale_id}</td>
+                  <td class={`col-adj text-right ${row.balance_adj >= 0 ? 'sp-positive' : 'sp-negative'}`}>
+                    {row.balance_adj >= 0 ? '+' : ''}{fmt(row.balance_adj)}
+                  </td>
+                  <td class="col-bal text-right sp-mono">{fmt(row.running_balance)}</td>
+                  <td class="col-receipt">
+                    {row.receipt_text ? (
+                      <button class="sp-receipt-btn" data-id={row.id}>View</button>
+                    ) : (
+                      <span class="sp-no-receipt">—</span>
+                    )}
+                  </td>
+                </tr>
+                <tr class="receipt-row" id={`receipt-${row.id}`} style="display:none;">
+                  <td colspan="5">
+                    <pre class="sp-receipt-pre">{row.receipt_text}</pre>
+                  </td>
+                </tr>
+              </>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colspan="5" class="sp-empty">No entries for {currentYear}. Use "Sync from TouchOffice" to fetch.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</AdminLayout>
+
+<style>
+  .sp-page { max-width: 1000px; }
+
+  /* Header */
+  .sp-page-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    flex-wrap: wrap; gap: 1rem; margin-bottom: 1.25rem;
+  }
+  .sp-title { font-size: 1.375rem; font-weight: 700; color: #1a1a1a; margin: 0 0 0.2rem; }
+  .sp-sub { font-size: 0.8125rem; color: #666; margin: 0; }
+  .sp-controls { display: flex; align-items: center; gap: 0.625rem; flex-wrap: wrap; }
+
+  .sp-year-select {
+    padding: 0.5rem 0.75rem; border: 1px solid #c8c8c8; border-radius: 100px;
+    font-size: 0.875rem; background: #fff; color: #1a1a1a; cursor: pointer;
+  }
+  .sp-year-select:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+  /* Sync status */
+  .sp-sync-status {
+    display: flex; align-items: center; gap: 0.625rem;
+    font-size: 0.8125rem; color: #666; margin-bottom: 0.75rem;
+  }
+  .sp-spinner {
+    width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #1e5631;
+    border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .sp-sync-result {
+    font-size: 0.8125rem; padding: 0.5rem 0.75rem; border-radius: 8px;
+    margin-bottom: 0.75rem;
+  }
+  .sp-sync-result.success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+  .sp-sync-result.error   { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+  /* Buttons */
+  .sp-btn {
+    display: inline-flex; align-items: center; gap: 0.375rem;
+    padding: 0.5rem 1rem; border-radius: 100px; font-size: 0.875rem; font-weight: 600;
+    border: none; cursor: pointer; transition: background 0.15s;
+  }
+  .sp-btn-primary { background: #1e5631; color: #fff; }
+  .sp-btn-primary:hover { background: #164424; }
+  .sp-btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+
+  /* Summary bar */
+  .sp-summary-bar {
+    display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem;
+    background: #fff; border-radius: 16px; padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    border: 1px solid #e8e8e8;
+  }
+  .sp-summary-item { display: flex; flex-direction: column; align-items: center; min-width: 80px; flex: 1; }
+  .sp-summary-num {
+    font-size: 1.25rem; font-weight: 700; color: #1e5631; line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  .sp-summary-label { font-size: 0.6875rem; color: #888; text-align: center; margin-top: 0.1rem; }
+  .sp-summary-meta { align-items: flex-start; }
+  .sp-summary-date { font-size: 0.8125rem; color: #555; margin-top: 0.1rem; }
+  .sp-positive { color: #166534 !important; }
+  .sp-negative { color: #b91c1c !important; }
+
+  /* Card */
+  .sp-card {
+    background: #fff; border-radius: 16px; border: 1px solid #e8e8e8;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06); overflow: hidden;
+  }
+  .sp-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.875rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa;
+  }
+  .sp-card-header h3 { font-size: 0.9375rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+  .sp-badge {
+    font-size: 0.75rem; padding: 0.2rem 0.625rem;
+    background: #e8f5e9; color: #1e5631; border-radius: 20px; font-weight: 500;
+  }
+
+  /* Table */
+  .sp-table-wrap { overflow-x: auto; }
+  .sp-table {
+    width: 100%; border-collapse: collapse;
+    font-variant-numeric: tabular-nums; font-size: 0.875rem;
+  }
+  .sp-table th {
+    padding: 0.5rem 0.875rem; text-align: left;
+    background: #fafafa; font-weight: 600; color: #666;
+    font-size: 0.75rem; letter-spacing: 0.4px; text-transform: uppercase;
+    border-bottom: 2px solid #e8e8e8; white-space: nowrap;
+  }
+  .sp-table th.text-right { text-align: right; }
+  .sp-table td {
+    padding: 0.625rem 0.875rem; border-bottom: 1px solid #f5f5f5;
+    color: #333; vertical-align: middle;
+  }
+  .sp-table td.text-right { text-align: right; }
+  .trans-row:hover td { background: #fafafa; }
+
+  .col-date { white-space: nowrap; }
+  .col-sale { font-size: 0.8125rem; }
+  .col-adj  { white-space: nowrap; font-weight: 500; }
+  .col-bal  { white-space: nowrap; color: #555; }
+  .sp-mono  { font-family: ui-monospace, monospace; letter-spacing: -0.02em; }
+
+  /* Receipt */
+  .sp-receipt-btn {
+    background: none; border: 1px solid #d1d5db; border-radius: 6px;
+    padding: 0.25rem 0.625rem; font-size: 0.75rem; color: #555;
+    cursor: pointer; transition: all 0.12s;
+  }
+  .sp-receipt-btn:hover { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .sp-receipt-btn.open  { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .sp-no-receipt { color: #bbb; font-size: 0.75rem; }
+  .receipt-row td { padding: 0 0.875rem 0.875rem; }
+  .sp-receipt-pre {
+    background: #f8f8f8; border: 1px solid #e8e8e8; border-radius: 8px;
+    padding: 0.75rem 1rem; font-size: 0.75rem; line-height: 1.6;
+    font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
+    margin: 0; max-height: 300px; overflow-y: auto; color: #333;
+  }
+
+  .sp-empty { text-align: center; color: #888; padding: 2rem; font-size: 0.875rem; }
+</style>
+
+<script is:inline>
+  const syncBtn = document.getElementById('syncBtn');
+  const syncLabel = document.getElementById('syncLabel');
+  const syncStatus = document.getElementById('syncStatus');
+  const syncMessage = document.getElementById('syncMessage');
+  const syncResult = document.getElementById('syncResult');
+  const yearSelect = document.getElementById('yearSelect');
+  const transBody = document.getElementById('transBody');
+  const transCount = document.getElementById('transCount');
+
+  // Receipt toggle
+  document.querySelectorAll('.sp-receipt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const row = document.getElementById('receipt-' + id);
+      const open = row.style.display !== 'none';
+      row.style.display = open ? 'none' : 'table-row';
+      btn.classList.toggle('open', !open);
+      btn.textContent = open ? 'View' : 'Hide';
+    });
+  });
+
+  // Year change → reload entries
+  yearSelect.addEventListener('change', () => loadEntries(parseInt(yearSelect.value)));
+
+  // Sync button
+  syncBtn.addEventListener('click', async () => {
+    const year = parseInt(yearSelect.value);
+    syncBtn.disabled = true;
+    syncLabel.textContent = 'Syncing…';
+    syncStatus.style.display = 'flex';
+    syncResult.style.display = 'none';
+    syncMessage.textContent = 'Fetching statement from TouchOffice…';
+
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync', year }),
+      });
+      const data = await res.json();
+      syncStatus.style.display = 'none';
+      if (data.error) {
+        showResult('error', 'Error: ' + data.error);
+      } else {
+        const msg = data.added > 0
+          ? `Added ${data.added} new transaction${data.added !== 1 ? 's' : ''}${data.skipped ? `, ${data.skipped} already stored` : ''}.`
+          : (data.message || `No new transactions (${data.skipped || 0} already stored).`);
+        showResult('success', msg);
+        if (data.added > 0) await loadEntries(year);
+      }
+    } catch (err) {
+      syncStatus.style.display = 'none';
+      showResult('error', 'Network error — could not reach TouchOffice.');
+    } finally {
+      syncBtn.disabled = false;
+      syncLabel.textContent = 'Sync from TouchOffice';
+    }
+  });
+
+  function showResult(type, msg) {
+    syncResult.className = 'sp-sync-result ' + type;
+    syncResult.textContent = msg;
+    syncResult.style.display = 'block';
+    setTimeout(() => { syncResult.style.display = 'none'; }, 6000);
+  }
+
+  async function loadEntries(year) {
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list', year }),
+      });
+      const data = await res.json();
+      if (data.error) return;
+
+      renderTable(data.entries || []);
+      updateSummary(data.summary || {});
+    } catch {}
+  }
+
+  function fmt(n) {
+    return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso.replace(' ', 'T'));
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function renderTable(entries) {
+    if (!entries.length) {
+      transBody.innerHTML = `<tr><td colspan="5" class="sp-empty">No entries for ${yearSelect.value}. Use "Sync from TouchOffice" to fetch.</td></tr>`;
+      transCount.textContent = '0 entries';
+      return;
+    }
+
+    transCount.textContent = entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies');
+    transBody.innerHTML = entries.map(row => {
+      const adjClass = row.balance_adj >= 0 ? 'sp-positive' : 'sp-negative';
+      const adjSign  = row.balance_adj >= 0 ? '+' : '';
+      const hasReceipt = !!row.receipt_text;
+      return `
+        <tr class="trans-row" data-id="${row.id}">
+          <td class="col-date">${fmtDate(row.sale_date)}</td>
+          <td class="col-sale sp-mono">${escHtml(row.sale_id)}</td>
+          <td class="col-adj text-right ${adjClass}">${adjSign}${fmt(row.balance_adj)}</td>
+          <td class="col-bal text-right sp-mono">${fmt(row.running_balance)}</td>
+          <td class="col-receipt">${
+            hasReceipt
+              ? `<button class="sp-receipt-btn" data-id="${row.id}">View</button>`
+              : `<span class="sp-no-receipt">—</span>`
+          }</td>
+        </tr>
+        <tr class="receipt-row" id="receipt-${row.id}" style="display:none;">
+          <td colspan="5">
+            <pre class="sp-receipt-pre">${escHtml(row.receipt_text || '')}</pre>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // Re-wire receipt toggles
+    transBody.querySelectorAll('.sp-receipt-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const receiptRow = document.getElementById('receipt-' + id);
+        const open = receiptRow.style.display !== 'none';
+        receiptRow.style.display = open ? 'none' : 'table-row';
+        btn.classList.toggle('open', !open);
+        btn.textContent = open ? 'View' : 'Hide';
+      });
+    });
+  }
+
+  function updateSummary(s) {
+    const balEl = document.getElementById('statBalance');
+    const credEl = document.getElementById('statCredits');
+    const countEl = document.getElementById('statCount');
+    if (balEl) balEl.textContent = s.currentBalance !== null && s.currentBalance !== undefined ? fmt(s.currentBalance) : '—';
+    if (credEl) credEl.textContent = fmt(s.totalCredits || 0);
+    if (countEl) countEl.textContent = s.count || 0;
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>

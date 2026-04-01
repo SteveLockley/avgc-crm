@@ -13,33 +13,58 @@ const HOME_URL = BASE_URL + '/';
  * After login POST, follows the redirect to the homepage to capture
  * the final working session cookie.
  */
-export async function loginForSession(username: string, password: string): Promise<string> {
-  // Step 1: GET login page to get initial session cookie
+/** Extract named cookie from Set-Cookie response headers using forEach (handles multiple headers). */
+function extractCookies(headers: Headers): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie') {
+      const pair = value.split(';')[0].trim();
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx > -1) {
+        cookies[pair.substring(0, eqIdx)] = pair.substring(eqIdx + 1);
+      }
+    }
+  });
+  return cookies;
+}
+
+export async function loginForSession(
+  username: string,
+  password: string
+): Promise<{ session: string; csrfToken: string }> {
+  // Step 1: GET login page to get initial session cookie + any CSRF cookie
   const loginPageRes = await fetch(LOGIN_URL, { redirect: 'manual' });
-  const pageCookies = loginPageRes.headers.get('set-cookie') || '';
-  const sessionMatch = pageCookies.match(/icrtouch_connect_login_id=([^;]+)/);
-  const initialSession = sessionMatch ? sessionMatch[1] : '';
+  const pageCookies = extractCookies(loginPageRes.headers);
+  const initialSession = pageCookies['icrtouch_connect_login_id'] ?? '';
 
   if (!initialSession) {
     throw new Error('Could not get initial session from TouchOffice.');
   }
 
-  // Step 2: POST credentials
+  // Track CSRF cookie across all responses
+  let csrfToken = Object.entries(pageCookies).find(([k]) => /csrf/i.test(k))?.[1] ?? '';
+
+  // Step 2: POST credentials — send session + any CSRF cookie we already have
   const formBody = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&submit-login=`;
+  const loginCookie = csrfToken
+    ? `icrtouch_connect_login_id=${initialSession}; ${Object.keys(pageCookies).find(k => /csrf/i.test(k))}=${csrfToken}`
+    : `icrtouch_connect_login_id=${initialSession}`;
+
   const loginRes = await fetch(LOGIN_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': `icrtouch_connect_login_id=${initialSession}`,
+      'Cookie': loginCookie,
     },
     redirect: 'manual',
     body: formBody,
   });
 
-  // Pick up any updated session cookie from login response
-  const resCookies = loginRes.headers.get('set-cookie') || '';
-  const newMatch = resCookies.match(/icrtouch_connect_login_id=([^;]+)/);
-  let session = newMatch ? newMatch[1] : initialSession;
+  // Pick up updated session + CSRF cookies from login response
+  const loginCookies = extractCookies(loginRes.headers);
+  let session = loginCookies['icrtouch_connect_login_id'] ?? initialSession;
+  const loginCsrf = Object.entries(loginCookies).find(([k]) => /csrf/i.test(k))?.[1];
+  if (loginCsrf) csrfToken = loginCsrf;
 
   if (loginRes.status === 200) {
     const html = await loginRes.text();
@@ -48,21 +73,17 @@ export async function loginForSession(username: string, password: string): Promi
     }
   }
 
-  // Step 3: Follow through to the homepage to get the final working session
-  // TouchOffice may issue a different/updated session cookie on the homepage
+  // Step 3: Follow through to the homepage — may issue updated session/CSRF cookies
   const homeRes = await fetch(HOME_URL, {
     method: 'GET',
-    headers: {
-      'Cookie': `icrtouch_connect_login_id=${session}`,
-    },
+    headers: { 'Cookie': `icrtouch_connect_login_id=${session}` },
     redirect: 'manual',
   });
 
-  const homeCookies = homeRes.headers.get('set-cookie') || '';
-  const homeMatch = homeCookies.match(/icrtouch_connect_login_id=([^;]+)/);
-  if (homeMatch) {
-    session = homeMatch[1];
-  }
+  const homeCookies = extractCookies(homeRes.headers);
+  if (homeCookies['icrtouch_connect_login_id']) session = homeCookies['icrtouch_connect_login_id'];
+  const homeCsrf = Object.entries(homeCookies).find(([k]) => /csrf/i.test(k))?.[1];
+  if (homeCsrf) csrfToken = homeCsrf;
 
   // If we got redirected back to login, the credentials didn't actually work
   const location = homeRes.headers.get('location') || '';
@@ -70,7 +91,7 @@ export async function loginForSession(username: string, password: string): Promi
     throw new Error('TouchOffice login failed — redirected back to login.');
   }
 
-  return session;
+  return { session, csrfToken };
 }
 
 // --- Session management ---
@@ -79,35 +100,42 @@ export async function loginForSession(username: string, password: string): Promi
  * Ensure we have a working TouchOffice session.
  * Reads from app_settings, tests it, re-logs in if expired, stores + returns working cookie.
  */
-export async function ensureSession(db: any, env: any): Promise<string> {
+export async function ensureSession(db: any, env: any): Promise<{ session: string; csrfToken: string }> {
   // Try stored session first
-  const stored = await db.prepare(
-    `SELECT value FROM app_settings WHERE key = 'touchoffice_session'`
-  ).first<{ value: string }>();
+  const [storedSession, storedCsrf] = await Promise.all([
+    db.prepare(`SELECT value FROM app_settings WHERE key = 'touchoffice_session'`).first<{ value: string }>(),
+    db.prepare(`SELECT value FROM app_settings WHERE key = 'touchoffice_csrf'`).first<{ value: string }>(),
+  ]);
 
-  if (stored?.value) {
-    // Test it with a quick GET to homepage (follow redirects so we land on login page if expired)
+  if (storedSession?.value) {
+    // Test it with a quick GET to homepage
     const testRes = await fetch(HOME_URL, {
       method: 'GET',
-      headers: { 'Cookie': `icrtouch_connect_login_id=${stored.value}` },
+      headers: { 'Cookie': `icrtouch_connect_login_id=${storedSession.value}` },
     });
 
-    // Capture any rotated session cookie from the response
-    const resCookies = testRes.headers.get('set-cookie') || '';
-    const rotatedMatch = resCookies.match(/icrtouch_connect_login_id=([^;]+)/);
-    const currentSession = rotatedMatch ? rotatedMatch[1] : stored.value;
+    // Capture any rotated session or CSRF cookies from the response
+    const testCookies = extractCookies(testRes.headers);
+    const currentSession = testCookies['icrtouch_connect_login_id'] ?? storedSession.value;
+    const rotatedCsrf = Object.entries(testCookies).find(([k]) => /csrf/i.test(k))?.[1];
+    const currentCsrf = rotatedCsrf ?? storedCsrf?.value ?? '';
 
     const testHtml = await testRes.text();
-    // If we didn't get redirected to login, session is still valid
     if (!testHtml.includes('name="submit-login"') && !testRes.url.includes('auth/login')) {
-      // Update stored session if it was rotated
-      if (currentSession !== stored.value) {
+      // Persist any changes
+      if (currentSession !== storedSession.value) {
         await db.prepare(
           `INSERT INTO app_settings (key, value) VALUES ('touchoffice_session', ?)
            ON CONFLICT(key) DO UPDATE SET value = ?`
         ).bind(currentSession, currentSession).run();
       }
-      return currentSession;
+      if (rotatedCsrf && rotatedCsrf !== storedCsrf?.value) {
+        await db.prepare(
+          `INSERT INTO app_settings (key, value) VALUES ('touchoffice_csrf', ?)
+           ON CONFLICT(key) DO UPDATE SET value = ?`
+        ).bind(rotatedCsrf, rotatedCsrf).run();
+      }
+      return { session: currentSession, csrfToken: currentCsrf };
     }
   }
 
@@ -118,15 +146,19 @@ export async function ensureSession(db: any, env: any): Promise<string> {
     throw new Error('TouchOffice credentials not configured.');
   }
 
-  const session = await loginForSession(username, password);
+  const { session, csrfToken } = await loginForSession(username, password);
 
-  // Store it
+  // Store both
   await db.prepare(
     `INSERT INTO app_settings (key, value) VALUES ('touchoffice_session', ?)
      ON CONFLICT(key) DO UPDATE SET value = ?`
   ).bind(session, session).run();
+  await db.prepare(
+    `INSERT INTO app_settings (key, value) VALUES ('touchoffice_csrf', ?)
+     ON CONFLICT(key) DO UPDATE SET value = ?`
+  ).bind(csrfToken, csrfToken).run();
 
-  return session;
+  return { session, csrfToken };
 }
 
 // --- Sales list + receipt interfaces ---
@@ -436,6 +468,273 @@ function parseReceiptHtml(html: string, saleId: string): SaleReceipt {
 /** Strip HTML tags from a string */
 function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&#163;/g, '£');
+}
+
+// --- Seniors' Purse: Customer Statement report ---
+
+export interface PurseStatementEntry {
+  saleId: string;
+  saleDate: string;    // ISO: YYYY-MM-DD HH:MM:SS
+  balanceAdj: number;
+  runningBalance: number;
+}
+
+const REPORT_VIEW_URL = `${BASE_URL}/reports_engine/report_view`;
+const CUSTOMER_STATEMENT_PATH = 'NRE/standard/Centralised Customers/Customer_Statement';
+const SENIORS_CUSTOMER_ID = '1035';
+
+/**
+ * Fetch the Customer Statement for the Seniors Section (customer 1035) from TouchOffice.
+ *
+ * Uses the same form POST that the browser uses — no CSRF token needed.
+ * POST /reports_engine/report_view with form fields → full HTML page with report embedded.
+ */
+export async function fetchSeniorsPurseStatement(
+  sessionCookie: string,
+  year: number,
+  _csrfToken = '' // kept for API compatibility
+): Promise<PurseStatementEntry[]> {
+  const cookie = `icrtouch_connect_login_id=${sessionCookie}`;
+
+  const body = new URLSearchParams({
+    report: CUSTOMER_STATEMENT_PATH,
+    'filter-report-startdate': `01/01/${year}`,
+    'filter-report-enddate': `31/12/${year}`,
+    'filter-report-starttime': '00:00',
+    'filter-report-endtime': '23:59',
+    'filter-terminals': '0',
+    'filter-location': '0',
+    'custnum_filter_dropdown': `SenIor SectIon (${SENIORS_CUSTOMER_ID})`,
+    'filter-customers': SENIORS_CUSTOMER_ID,
+    'filter-customergroups': '0',
+    'filter-customernotes': '',
+    'format': 'html',
+    'submit-filter': '',
+  });
+
+  const res = await fetch(REPORT_VIEW_URL, {
+    method: 'POST',
+    headers: {
+      'Cookie': cookie,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  const html = await res.text();
+
+  if (html.includes('name="submit-login"')) {
+    throw new Error('Session expired during report fetch.');
+  }
+
+  return parseCustomerStatementHtml(html);
+}
+
+/**
+ * Debug helper: posts the report form and returns a snippet of the HTML response
+ * so we can inspect the report structure.
+ */
+export async function debugFetchPurseReport(
+  sessionCookie: string,
+  year: number,
+  _csrfToken = '' // kept for API compatibility
+): Promise<any> {
+  const cookie = `icrtouch_connect_login_id=${sessionCookie}`;
+
+  const body = new URLSearchParams({
+    report: CUSTOMER_STATEMENT_PATH,
+    'filter-report-startdate': `01/01/${year}`,
+    'filter-report-enddate': `31/12/${year}`,
+    'filter-report-starttime': '00:00',
+    'filter-report-endtime': '23:59',
+    'filter-terminals': '0',
+    'filter-location': '0',
+    'custnum_filter_dropdown': `SenIor SectIon (${SENIORS_CUSTOMER_ID})`,
+    'filter-customers': SENIORS_CUSTOMER_ID,
+    'filter-customergroups': '0',
+    'filter-customernotes': '',
+    'format': 'html',
+    'submit-filter': '',
+  });
+
+  const res = await fetch(REPORT_VIEW_URL, {
+    method: 'POST',
+    headers: {
+      'Cookie': cookie,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  const html = await res.text();
+  const isLogin = html.includes('name="submit-login"');
+
+  // Find "Sale Id" or "Sale ID" in the HTML to locate report tables
+  const saleIdIdx = html.search(/Sale\s*Id/i);
+  const saleIdSnippet = saleIdIdx >= 0 ? html.substring(Math.max(0, saleIdIdx - 200), saleIdIdx + 1000) : '';
+
+  // Also find first <table> after the reportcontainer
+  const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
+  const firstTableIdx = containerStart >= 0 ? html.indexOf('<table', containerStart) : -1;
+  const firstTableSnippet = firstTableIdx >= 0 ? html.substring(firstTableIdx, firstTableIdx + 1500) : '';
+
+  // Try parsing — capture any error
+  let parsedEntries: PurseStatementEntry[] = [];
+  let parseError = '';
+  if (!isLogin) {
+    try { parsedEntries = parseCustomerStatementHtml(html); }
+    catch (e: any) { parseError = e?.message ?? String(e); }
+  }
+
+  // Count how many positioned divs the regex finds (to check regex works at all)
+  const divMatches = html.match(/style="[^"]*left:[\d.]+pt[^"]*top:[\d.]+pt/g) ?? [];
+
+  // Extract first 20 positioned divs from the report section, showing their text+position
+  const containerStart2 = html.search(/<div[^>]+id=["']reportcontainer["']/i);
+  const section2 = containerStart2 >= 0 ? html.substring(containerStart2) : html;
+  const sampleDivs: {left:number,top:number,text:string}[] = [];
+  const parts2 = section2.split('<div ');
+  for (const part of parts2) {
+    if (sampleDivs.length >= 30) break;
+    const styleM = part.match(/style="([^"]*)"/);
+    if (!styleM) continue;
+    const style = styleM[1];
+    const leftM = style.match(/left:([\d.]+)pt/);
+    const topM  = style.match(/top:([\d.]+)pt/);
+    if (!leftM || !topM) continue;
+    const closeTag = part.indexOf('>');
+    if (closeTag === -1) continue;
+    const endDiv = part.indexOf('</div>', closeTag);
+    if (endDiv === -1) continue;
+    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
+    if (text) sampleDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
+  }
+
+  return {
+    status: res.status,
+    isLogin,
+    htmlLength: html.length,
+    containerFoundAt: containerStart2,
+    saleIdFoundAt: saleIdIdx,
+    positionedDivCount: divMatches.length,
+    sectionDivSample: sampleDivs,
+    parseError,
+    parsedCount: parsedEntries.length,
+    parsedSample: parsedEntries.slice(0, 3),
+  };
+}
+
+/**
+ * Parse the Customer Statement HTML report.
+ *
+ * TouchOffice renders reports as absolutely-positioned <div> elements (PDF-style).
+ * Each div has inline style: left:Xpt; top:Ypt; and contains text.
+ *
+ * Strategy:
+ * 1. Extract all positioned divs → { left, top, text }
+ * 2. Find header divs (contain "Sale Id", "Balance Adj", "Balance", "Date")
+ * 3. Use header left-positions to identify columns
+ * 4. Group remaining divs by top coordinate (same row = same top ± 2pt)
+ * 5. For each data row, read values at matching left positions
+ */
+function parseCustomerStatementHtml(html: string): PurseStatementEntry[] {
+  // Work on just the report container section to avoid scanning the full 2MB page
+  const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
+  const section = containerStart >= 0 ? html.substring(containerStart) : html;
+
+  // Extract all absolutely-positioned divs
+  // Format: <div style="left:Xpt;top:Ypt;...">text</div>
+  interface Div { left: number; top: number; text: string; }
+  const divs: Div[] = [];
+
+  // Split on <div to avoid large [\s\S]*? backtracking
+  const parts = section.split('<div ');
+  for (const part of parts) {
+    const styleM = part.match(/style="([^"]*)"/);
+    if (!styleM) continue;
+    const style = styleM[1];
+    const leftM = style.match(/left:([\d.]+)pt/);
+    const topM  = style.match(/top:([\d.]+)pt/);
+    if (!leftM || !topM) continue;
+    const closeTag = part.indexOf('>');
+    if (closeTag === -1) continue;
+    const endDiv = part.indexOf('</div>', closeTag);
+    if (endDiv === -1) continue;
+    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
+    if (text) divs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
+  }
+
+  if (!divs.length) return [];
+
+  // Find header row: the row containing "Sale Id"
+  const saleIdDiv = divs.find(d => /^sale\s*id$/i.test(d.text));
+  if (!saleIdDiv) return [];
+
+  const headerTop = saleIdDiv.top;
+  const headerDivs = divs.filter(d => Math.abs(d.top - headerTop) < 3);
+
+  // Map column names to their left positions
+  const colLeft: Record<string, number> = {};
+  for (const d of headerDivs) {
+    const t = d.text.trim();
+    if (/^date$/i.test(t))                     colLeft.date = d.left;
+    else if (/^sale\s*id$/i.test(t))           colLeft.saleId = d.left;
+    else if (/balance\s*adj/i.test(t))         colLeft.balAdj = d.left;
+    else if (/^\(?£\)?\s*balance$/i.test(t))   colLeft.balance = d.left;
+    else if (/^site$/i.test(t))                colLeft.site = d.left;
+  }
+
+  if (colLeft.saleId === undefined || colLeft.date === undefined || colLeft.balAdj === undefined) return [];
+
+  // Tolerance for matching left positions (columns may vary ±4pt across rows)
+  const COL_TOL = 8;
+  const HEADER_TOL = 3;
+
+  // Group divs into rows by top coordinate (exclude header row)
+  const rowMap = new Map<number, Div[]>();
+  for (const d of divs) {
+    if (Math.abs(d.top - headerTop) < HEADER_TOL) continue;
+    // Round top to nearest 0.5pt bucket
+    const bucket = Math.round(d.top * 2) / 2;
+    if (!rowMap.has(bucket)) rowMap.set(bucket, []);
+    rowMap.get(bucket)!.push(d);
+  }
+
+  const entries: PurseStatementEntry[] = [];
+
+  for (const [, row] of rowMap) {
+    const get = (colX: number) =>
+      row.find(d => Math.abs(d.left - colX) < COL_TOL)?.text ?? '';
+
+    const rawDate = get(colLeft.date);
+    const saleId  = get(colLeft.saleId);
+    const balAdj  = get(colLeft.balAdj);
+    const balance = colLeft.balance ? get(colLeft.balance) : '';
+
+    if (!saleId || !rawDate) continue;
+    // saleId should look numeric
+    if (!/^\d+$/.test(saleId.replace(/\s/g, ''))) continue;
+
+    const saleDate     = parseTouchOfficeDate(rawDate);
+    const balanceAdj   = parseFloat(balAdj.replace(/[£,]/g, '')) || 0;
+    const runningBalance = parseFloat(balance.replace(/[£,]/g, '')) || 0;
+
+    entries.push({ saleId, saleDate, balanceAdj, runningBalance });
+  }
+
+  // Sort by date ascending
+  entries.sort((a, b) => a.saleDate.localeCompare(b.saleDate));
+  return entries;
+}
+
+/**
+ * Parse TouchOffice date format "DD/MM/YYYY HH:MM:SS" → "YYYY-MM-DD HH:MM:SS"
+ */
+function parseTouchOfficeDate(raw: string): string {
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}:\d{2}:\d{2}))?/);
+  if (!m) return raw;
+  const date = `${m[3]}-${m[2]}-${m[1]}`;
+  return m[4] ? `${date} ${m[4]}` : date;
 }
 
 // --- Interfaces ---
