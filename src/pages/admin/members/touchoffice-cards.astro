@@ -1,0 +1,230 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+const today = new Date().toISOString().slice(0, 10);
+
+const rows = await db.prepare(
+  `SELECT id, first_name, surname, category, date_expires, touchoffice_num
+   FROM members
+   ORDER BY surname, first_name`
+).all();
+const members = (rows.results || []) as {
+  id: number;
+  first_name: string;
+  surname: string;
+  category: string;
+  date_expires: string | null;
+  touchoffice_num: number | null;
+}[];
+
+const mapped = members.filter(m => m.touchoffice_num !== null);
+const unmapped = members.filter(m => m.touchoffice_num === null);
+---
+
+<AdminLayout title="TouchOffice Card Sync">
+  <div class="page-header">
+    <h1>TouchOffice Card Sync</h1>
+    <p class="subtitle">Map CRM members to their TouchOffice customer number, then sync name, account number, group and blacklist status.</p>
+  </div>
+
+  <div class="actions-bar">
+    <button id="sync-all-btn" class="btn btn-primary" data-count={mapped.length}>
+      Sync All Mapped ({mapped.length})
+    </button>
+    <span id="sync-status" class="sync-status"></span>
+  </div>
+
+  <div id="sync-results" class="sync-results hidden"></div>
+
+  <h2>Mapped Members ({mapped.length})</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Member</th>
+        <th>Category</th>
+        <th>Expires</th>
+        <th>TO Num</th>
+        <th>TO Group</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {mapped.map(m => {
+        const expired = m.date_expires && m.date_expires < today;
+        const isDead = !!expired;
+        const toGroup = isDead ? 'Dead Cards' : m.category === 'Social' ? 'Social Member' : 'Members';
+        const toGroupClass = isDead ? 'badge-dead' : m.category === 'Social' ? 'badge-social' : 'badge-member';
+        return (
+          <tr data-member-id={m.id}>
+            <td><a href={`/admin/members/${m.id}`}>{m.surname}, {m.first_name}</a></td>
+            <td>{m.category}</td>
+            <td class={isDead ? 'expired' : ''}>{m.date_expires ?? '—'}</td>
+            <td>
+              <input type="number" class="to-num-input" value={m.touchoffice_num} data-member-id={m.id} min="1" style="width:70px" />
+            </td>
+            <td><span class={`badge ${toGroupClass}`}>{toGroup}</span></td>
+            <td>
+              <button class="btn btn-sm sync-one-btn" data-member-id={m.id}>Sync</button>
+            </td>
+          </tr>
+        );
+      })}
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:2rem">Unmapped Members ({unmapped.length})</h2>
+  <p class="hint">Enter the TouchOffice customer number for each member to enable syncing.</p>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Member</th>
+        <th>Category</th>
+        <th>Expires</th>
+        <th>TO Num</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {unmapped.map(m => (
+        <tr data-member-id={m.id}>
+          <td><a href={`/admin/members/${m.id}`}>{m.surname}, {m.first_name}</a></td>
+          <td>{m.category}</td>
+          <td>{m.date_expires ?? '—'}</td>
+          <td>
+            <input type="number" class="to-num-input" value="" data-member-id={m.id} min="1" style="width:70px" placeholder="—" />
+          </td>
+          <td>
+            <button class="btn btn-sm save-num-btn" data-member-id={m.id}>Save</button>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</AdminLayout>
+
+<style>
+  .page-header { margin-bottom: 1.5rem; }
+  .subtitle { color: var(--text-muted, #666); margin: 0.25rem 0 0; }
+  .actions-bar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+  .sync-status { color: var(--text-muted, #666); font-size: 0.9rem; }
+  .sync-results { background: #f4f4f4; border: 1px solid #ddd; border-radius: 4px; padding: 1rem; margin-bottom: 1.5rem; max-height: 300px; overflow-y: auto; font-size: 0.85rem; }
+  .sync-results.hidden { display: none; }
+  .hint { color: var(--text-muted, #666); font-size: 0.9rem; margin: 0.25rem 0 0.75rem; }
+  .expired { color: #c0392b; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 0.8rem; font-weight: 500; }
+  .badge-member { background: #d5f5e3; color: #1e8449; }
+  .badge-social { background: #d6eaf8; color: #1a5276; }
+  .badge-dead { background: #f9ebea; color: #922b21; }
+  .btn-sm { padding: 3px 10px; font-size: 0.85rem; }
+  .result-ok { color: #1e8449; }
+  .result-err { color: #c0392b; }
+</style>
+
+<script>
+  async function setNum(memberId: number, num: number | null) {
+    await fetch('/api/touchoffice-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set-num', memberId, touchofficeNum: num }),
+    });
+  }
+
+  async function syncOne(memberId: number): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch('/api/touchoffice-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'sync-one', memberId }),
+    });
+    return res.json();
+  }
+
+  // Save TO num for unmapped members
+  document.querySelectorAll<HTMLButtonElement>('.save-num-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const memberId = Number(btn.dataset.memberId);
+      const row = btn.closest('tr')!;
+      const input = row.querySelector<HTMLInputElement>('.to-num-input')!;
+      const num = input.value ? Number(input.value) : null;
+      if (!num) return;
+      btn.disabled = true;
+      btn.textContent = '...';
+      await setNum(memberId, num);
+      btn.textContent = 'Saved';
+      // Move row to mapped table by reloading
+      setTimeout(() => location.reload(), 800);
+    });
+  });
+
+  // Update TO num inline for mapped members
+  document.querySelectorAll<HTMLInputElement>('.to-num-input').forEach(input => {
+    const row = input.closest('tr')!;
+    if (!row.querySelector('.save-num-btn')) {
+      // mapped row — save on blur
+      input.addEventListener('blur', async () => {
+        const memberId = Number(input.dataset.memberId);
+        const num = input.value ? Number(input.value) : null;
+        await setNum(memberId, num);
+      });
+    }
+  });
+
+  // Sync individual member
+  document.querySelectorAll<HTMLButtonElement>('.sync-one-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const memberId = Number(btn.dataset.memberId);
+      btn.disabled = true;
+      btn.textContent = '...';
+      const result = await syncOne(memberId);
+      btn.textContent = result.ok ? '✓' : '✗';
+      btn.disabled = false;
+    });
+  });
+
+  // Sync all mapped members — batched with auto-continue
+  document.getElementById('sync-all-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const status = document.getElementById('sync-status')!;
+    const resultsDiv = document.getElementById('sync-results')!;
+    btn.disabled = true;
+    resultsDiv.classList.remove('hidden');
+    resultsDiv.innerHTML = '';
+
+    let offset = 0;
+    let totalOk = 0;
+    let totalErr = 0;
+    let grandTotal = 0;
+
+    while (true) {
+      status.textContent = grandTotal
+        ? `Syncing… ${totalOk + totalErr} of ${grandTotal}`
+        : 'Syncing…';
+
+      const res = await fetch('/api/touchoffice-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync-all', offset }),
+      });
+      const data = await res.json() as {
+        synced: number; total: number; offset: number; nextOffset: number; remaining: number;
+        results: { memberId: number; name: string; ok: boolean; error?: string }[];
+      };
+
+      grandTotal = data.total;
+      for (const r of data.results) {
+        if (r.ok) totalOk++; else totalErr++;
+        const div = document.createElement('div');
+        div.className = r.ok ? 'result-ok' : 'result-err';
+        div.textContent = `${r.ok ? '✓' : '✗'} ${r.name}${r.error ? ` — ${r.error}` : ''}`;
+        resultsDiv.appendChild(div);
+        resultsDiv.scrollTop = resultsDiv.scrollHeight;
+      }
+
+      if (data.remaining <= 0) break;
+      offset = data.nextOffset;
+    }
+
+    status.textContent = `Done: ${totalOk} synced, ${totalErr} errors`;
+    btn.disabled = false;
+  });
+</script>
