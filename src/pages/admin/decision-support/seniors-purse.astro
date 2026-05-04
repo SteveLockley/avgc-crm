@@ -6,16 +6,34 @@ const currentYear = new Date().getFullYear();
 
 // Load stored entries for current year at build time for initial render
 const result = await db.prepare(`
-  SELECT id, sale_id, sale_date, balance_adj, running_balance, receipt_text, receipt_items, fetched_at
-  FROM seniors_purse_entries
-  WHERE year = ?
-  ORDER BY sale_date ASC
+  SELECT spe.id, spe.sale_id, spe.sale_date, spe.balance_adj, spe.running_balance,
+         spe.receipt_text, spe.receipt_items, spe.fetched_at, spe.is_manual,
+         spe.payment_member_id, spe.payment_description,
+         m.first_name || ' ' || m.surname AS payment_member_name
+  FROM seniors_purse_entries spe
+  LEFT JOIN members m ON m.id = spe.payment_member_id
+  WHERE spe.year = ?
+  ORDER BY spe.sale_date DESC, spe.id DESC
 `).bind(currentYear).all().catch(() => ({ results: [] }));
 
+// Load male senior members (55+) for the payment dropdown
+const seniorMembersResult = await db.prepare(`
+  SELECT id, first_name, surname
+  FROM members
+  WHERE gender = 'M'
+    AND (
+      (date_of_birth IS NOT NULL AND CAST(strftime('%Y', 'now') AS INTEGER) - CAST(strftime('%Y', date_of_birth) AS INTEGER) >= 55)
+      OR category LIKE '%Senior%'
+    )
+  ORDER BY surname, first_name
+`).all().catch(() => ({ results: [] }));
+
 const rows = (result.results || []) as any[];
+const seniorMembers = (seniorMembersResult.results || []) as any[];
+
 const totalCredits = rows.filter((r: any) => r.balance_adj > 0).reduce((s: number, r: any) => s + r.balance_adj, 0);
 const totalDebits  = rows.filter((r: any) => r.balance_adj < 0).reduce((s: number, r: any) => s + r.balance_adj, 0);
-const currentBalance = rows.length > 0 ? rows[rows.length - 1].running_balance : null;
+const currentBalance = rows.length > 0 ? rows[0].running_balance : null;
 const lastFetched = rows.length > 0
   ? rows.reduce((latest: string, r: any) => r.fetched_at > latest ? r.fetched_at : latest, '')
   : null;
@@ -53,6 +71,15 @@ function fmtDate(iso: string) {
           </svg>
           <span id="syncLabel">Sync from TouchOffice</span>
         </button>
+        <button id="debugBtn" class="sp-btn sp-btn-ghost" title="Show raw report structure from TouchOffice">Debug</button>
+        <button id="forceSyncBtn" class="sp-btn sp-btn-outline" title="Fetch full year and insert any missing entries">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span id="forceSyncLabel">Backfill</span>
+        </button>
       </div>
     </div>
 
@@ -73,64 +100,180 @@ function fmtDate(iso: string) {
         <span class="sp-summary-num sp-positive" id="statCredits">{fmt(totalCredits)}</span>
         <span class="sp-summary-label">total credits</span>
       </div>
-      {totalDebits < 0 && (
-        <div class="sp-summary-item">
-          <span class="sp-summary-num sp-negative" id="statDebits">{fmt(totalDebits)}</span>
-          <span class="sp-summary-label">total debits</span>
-        </div>
-      )}
+      <!-- Always in DOM; hidden when no debits -->
+      <div class="sp-summary-item" id="statDebitsItem" style={totalDebits >= 0 ? 'display:none;' : ''}>
+        <span class="sp-summary-num sp-negative" id="statDebits">{fmt(totalDebits)}</span>
+        <span class="sp-summary-label">total debits</span>
+      </div>
       <div class="sp-summary-item">
         <span class="sp-summary-num" id="statCount">{rows.length}</span>
         <span class="sp-summary-label">transactions</span>
       </div>
-      {lastFetched && (
-        <div class="sp-summary-item sp-summary-meta">
-          <span class="sp-summary-label">last synced</span>
-          <span class="sp-summary-date" id="statLastFetched">{fmtDate(lastFetched)}</span>
+      <div class="sp-summary-item sp-summary-meta" id="statLastFetchedItem" style={!lastFetched ? 'display:none;' : ''}>
+        <span class="sp-summary-label">last synced</span>
+        <span class="sp-summary-date" id="statLastFetched">{lastFetched ? fmtDate(lastFetched) : ''}</span>
+      </div>
+    </div>
+
+    <!-- Debug panel -->
+    <div id="debugPanel" style="display:none; margin-bottom:1.25rem;">
+      <div class="sp-card">
+        <div class="sp-card-header">
+          <h3>Statement Debug</h3>
+          <button id="debugClose" class="sp-btn sp-btn-ghost" style="padding:0.25rem 0.625rem;font-size:0.75rem;">Close</button>
         </div>
-      )}
+        <div style="padding:1rem 1.25rem;">
+          <pre id="debugOutput" style="font-size:0.7rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;background:#f8f8f8;border:1px solid #e8e8e8;border-radius:8px;padding:0.75rem;margin:0;"></pre>
+        </div>
+      </div>
     </div>
 
     <!-- Transactions table -->
     <div class="sp-card">
       <div class="sp-card-header">
         <h3>Transactions</h3>
-        <span class="sp-badge" id="transCount">{rows.length} entries</span>
+        <div class="sp-card-header-actions">
+          <span class="sp-badge" id="transCount">{rows.length} entries</span>
+          <button id="addDebitToggle" class="sp-btn sp-btn-outline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Add Manual Debit
+          </button>
+        </div>
       </div>
+
+      <!-- Add manual debit panel -->
+      <div id="addDebitPanel" class="sp-add-debit-panel" style="display:none;">
+        <div class="sp-add-debit-form">
+          <div class="sp-field">
+            <label class="sp-field-label">Date</label>
+            <input type="date" id="newDebitDate" class="sp-field-input" />
+          </div>
+          <div class="sp-field">
+            <label class="sp-field-label">Amount (£)</label>
+            <input type="number" id="newDebitAmount" class="sp-field-input sp-field-amount"
+              min="0.01" step="0.01" placeholder="0.00" />
+          </div>
+          <div class="sp-field sp-field-desc">
+            <label class="sp-field-label">Description</label>
+            <input type="text" id="newDebitDesc" class="sp-field-input"
+              placeholder="e.g. Trophy engraving" />
+          </div>
+          <div class="sp-add-debit-actions">
+            <button id="addDebitSubmit" class="sp-btn sp-btn-primary">Add Debit</button>
+            <button id="addDebitCancel" class="sp-btn sp-btn-ghost">Cancel</button>
+            <span id="addDebitFeedback" class="sp-save-feedback"></span>
+          </div>
+        </div>
+      </div>
+
       <div class="sp-table-wrap">
         <table class="sp-table" id="transTable">
           <thead>
             <tr>
               <th class="col-date">Date</th>
-              <th class="col-sale">Sale ID</th>
               <th class="col-adj text-right">Amount</th>
               <th class="col-bal text-right">Balance</th>
+              <th class="col-details">Description / Payment Details</th>
               <th class="col-receipt">Receipt</th>
             </tr>
           </thead>
           <tbody id="transBody">
             {rows.map((row: any) => (
               <>
-                <tr class="trans-row" data-id={row.id}>
+                <tr class="trans-row" data-id={row.id} data-adj={row.balance_adj} data-manual={row.is_manual ? '1' : '0'}>
                   <td class="col-date">{fmtDate(row.sale_date)}</td>
-                  <td class="col-sale sp-mono">{row.sale_id}</td>
                   <td class={`col-adj text-right ${row.balance_adj >= 0 ? 'sp-positive' : 'sp-negative'}`}>
                     {row.balance_adj >= 0 ? '+' : ''}{fmt(row.balance_adj)}
                   </td>
                   <td class="col-bal text-right sp-mono">{fmt(row.running_balance)}</td>
+                  <td class="col-details">
+                    <button class="sp-details-btn" data-id={row.id}>
+                      {row.payment_member_name
+                        ? row.payment_member_name
+                        : row.payment_description
+                          ? (row.payment_description.length > 28 ? row.payment_description.slice(0, 28) + '…' : row.payment_description)
+                          : row.balance_adj >= 0
+                            ? <span class="sp-details-default">Purse Top Up</span>
+                            : <span class="sp-details-empty">Add description</span>
+                      }
+                    </button>
+                  </td>
                   <td class="col-receipt">
-                    {row.receipt_text ? (
+                    {row.is_manual ? (
+                      <button class="sp-delete-btn" data-id={row.id}>Delete</button>
+                    ) : row.receipt_text ? (
                       <button class="sp-receipt-btn" data-id={row.id}>View</button>
                     ) : (
                       <span class="sp-no-receipt">—</span>
                     )}
                   </td>
                 </tr>
-                <tr class="receipt-row" id={`receipt-${row.id}`} style="display:none;">
+                <!-- Payment details panel -->
+                <tr class="details-row" id={`details-${row.id}`} style="display:none;">
                   <td colspan="5">
-                    <pre class="sp-receipt-pre">{row.receipt_text}</pre>
+                    <div class="sp-details-panel">
+                      {row.balance_adj >= 0 ? (
+                        <!-- Credit: member attribution + description -->
+                        <div class="sp-details-form">
+                          <div>
+                            <label class="sp-details-label">Member payment from</label>
+                            <select class="sp-member-select" data-entry-id={row.id}>
+                              <option value="">— None / non-member —</option>
+                              {seniorMembers.map((m: any) => (
+                                <option value={m.id} selected={m.id === row.payment_member_id}>
+                                  {m.surname}, {m.first_name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div class="sp-desc-wrap">
+                            <label class="sp-details-label">Description</label>
+                            <input
+                              type="text"
+                              class="sp-desc-input"
+                              data-entry-id={row.id}
+                              placeholder="Purse Top Up"
+                              value={row.payment_description || 'Purse Top Up'}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <!-- Debit: expense description -->
+                        <div class="sp-details-form">
+                          <div style="flex:1;">
+                            <label class="sp-details-label">Expense description</label>
+                            <input
+                              type="text"
+                              class="sp-desc-input"
+                              data-entry-id={row.id}
+                              placeholder="e.g. Trophy engraving"
+                              value={row.payment_description || ''}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <div class="sp-details-actions">
+                        <button class="sp-save-btn sp-btn sp-btn-primary" data-id={row.id}>Save</button>
+                        {row.balance_adj > 0 && !row.is_manual && (
+                          <button class="sp-split-btn sp-btn sp-btn-outline" data-id={row.id} data-adj={row.balance_adj}>
+                            Split
+                          </button>
+                        )}
+                        <span class="sp-save-feedback" id={`save-feedback-${row.id}`}></span>
+                      </div>
+                    </div>
                   </td>
                 </tr>
+                <!-- Receipt panel -->
+                {!row.is_manual && (
+                  <tr class="receipt-row" id={`receipt-${row.id}`} style="display:none;">
+                    <td colspan="5">
+                      <pre class="sp-receipt-pre">{row.receipt_text}</pre>
+                    </td>
+                  </tr>
+                )}
               </>
             ))}
             {rows.length === 0 && (
@@ -141,12 +284,41 @@ function fmtDate(iso: string) {
           </tbody>
         </table>
       </div>
+
+      <div id="pagination" class="sp-pagination" style="display:none;">
+        <button id="prevPage" class="sp-btn sp-btn-ghost sp-pag-btn">&#8592; Previous</button>
+        <span id="pageInfo" class="sp-pag-info"></span>
+        <button id="nextPage" class="sp-btn sp-btn-ghost sp-pag-btn">Next &#8594;</button>
+      </div>
     </div>
 
   </div>
+
+  <!-- Split entry modal -->
+  <div id="splitModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;padding:1.5rem;width:min(540px,94vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.18);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;">
+        <h3 style="margin:0;font-size:1rem;font-weight:700;">Split Entry</h3>
+        <span id="splitOrigAmt" style="font-size:0.875rem;color:#666;font-weight:500;"></span>
+      </div>
+      <p style="margin:0 0 1rem;font-size:0.8125rem;color:#555;">Divide this payment between multiple members. The amounts must add up to the original total.</p>
+      <div id="splitRows" style="display:flex;flex-direction:column;gap:0.625rem;margin-bottom:1rem;"></div>
+      <button id="splitAddRow" class="sp-btn sp-btn-ghost" style="font-size:0.8125rem;padding:0.35rem 0.75rem;margin-bottom:1rem;">+ Add row</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;">
+        <span id="splitRemaining" style="font-size:0.8125rem;font-weight:600;"></span>
+        <div style="display:flex;gap:0.5rem;">
+          <button id="splitCancel" class="sp-btn sp-btn-ghost">Cancel</button>
+          <button id="splitConfirm" class="sp-btn sp-btn-primary">Confirm Split</button>
+        </div>
+      </div>
+      <div id="splitFeedback" style="margin-top:0.75rem;font-size:0.8125rem;display:none;"></div>
+    </div>
+  </div>
+
 </AdminLayout>
 
-<style>
+<!-- is:global prevents Astro scoping the selectors, which would break JS-rendered rows -->
+<style is:global>
   .sp-page { max-width: 1000px; }
 
   /* Header */
@@ -171,9 +343,9 @@ function fmtDate(iso: string) {
   }
   .sp-spinner {
     width: 14px; height: 14px; border: 2px solid #ddd; border-top-color: #1e5631;
-    border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;
+    border-radius: 50%; animation: sp-spin 0.8s linear infinite; flex-shrink: 0;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes sp-spin { to { transform: rotate(360deg); } }
   .sp-sync-result {
     font-size: 0.8125rem; padding: 0.5rem 0.75rem; border-radius: 8px;
     margin-bottom: 0.75rem;
@@ -190,6 +362,14 @@ function fmtDate(iso: string) {
   .sp-btn-primary { background: #1e5631; color: #fff; }
   .sp-btn-primary:hover { background: #164424; }
   .sp-btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+  .sp-btn-outline {
+    background: #fff; color: #1e5631; border: 1.5px solid #1e5631;
+  }
+  .sp-btn-outline:hover { background: #f0fdf4; }
+  .sp-btn-ghost {
+    background: none; color: #6b7280; border: 1px solid #d1d5db;
+  }
+  .sp-btn-ghost:hover { background: #f9fafb; }
 
   /* Summary bar */
   .sp-summary-bar {
@@ -219,10 +399,29 @@ function fmtDate(iso: string) {
     padding: 0.875rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa;
   }
   .sp-card-header h3 { font-size: 0.9375rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+  .sp-card-header-actions { display: flex; align-items: center; gap: 0.625rem; }
   .sp-badge {
     font-size: 0.75rem; padding: 0.2rem 0.625rem;
     background: #e8f5e9; color: #1e5631; border-radius: 20px; font-weight: 500;
   }
+
+  /* Add manual debit panel */
+  .sp-add-debit-panel {
+    padding: 1rem 1.25rem; border-bottom: 1px solid #e8e8e8; background: #f8fafc;
+  }
+  .sp-add-debit-form {
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem;
+  }
+  .sp-field { display: flex; flex-direction: column; }
+  .sp-field-desc { flex: 1; min-width: 200px; }
+  .sp-field-label { font-size: 0.75rem; color: #6b7280; font-weight: 500; margin-bottom: 0.25rem; }
+  .sp-field-input {
+    padding: 0.4rem 0.625rem; border: 1px solid #d1d5db; border-radius: 7px;
+    font-size: 0.8125rem; color: #1a1a1a; background: #fff;
+  }
+  .sp-field-amount { width: 110px; }
+  .sp-field-input:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .sp-add-debit-actions { display: flex; align-items: center; gap: 0.5rem; padding-bottom: 0.05rem; }
 
   /* Table */
   .sp-table-wrap { overflow-x: auto; }
@@ -244,20 +443,59 @@ function fmtDate(iso: string) {
   .sp-table td.text-right { text-align: right; }
   .trans-row:hover td { background: #fafafa; }
 
-  .col-date { white-space: nowrap; }
-  .col-sale { font-size: 0.8125rem; }
-  .col-adj  { white-space: nowrap; font-weight: 500; }
-  .col-bal  { white-space: nowrap; color: #555; }
-  .sp-mono  { font-family: ui-monospace, monospace; letter-spacing: -0.02em; }
+  .col-date    { white-space: nowrap; }
+  .col-adj     { white-space: nowrap; font-weight: 500; }
+  .col-bal     { white-space: nowrap; color: #555; }
+  .col-details { min-width: 160px; }
+  .sp-mono     { font-family: ui-monospace, monospace; letter-spacing: -0.02em; }
 
-  /* Receipt */
-  .sp-receipt-btn {
+  /* Details button */
+  .sp-details-btn {
+    background: none; border: 1px solid #d1d5db; border-radius: 6px;
+    padding: 0.25rem 0.625rem; font-size: 0.8125rem; color: #374151;
+    cursor: pointer; transition: all 0.12s; text-align: left; max-width: 220px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;
+  }
+  .sp-details-btn:hover { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .sp-details-btn.open  { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .sp-details-empty { color: #9ca3af; font-style: italic; }
+  .sp-details-default { color: #6b7280; font-style: italic; }
+
+  /* Details panel */
+  .details-row td { padding: 0 0.875rem 0.875rem; }
+  .sp-details-panel {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 0.875rem 1rem; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem;
+  }
+  .sp-details-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.625rem; flex: 1; min-width: 0; }
+  .sp-details-label { font-size: 0.75rem; color: #6b7280; font-weight: 500; display: block; margin-bottom: 0.25rem; }
+  .sp-member-select, .sp-desc-input {
+    padding: 0.4rem 0.625rem; border: 1px solid #d1d5db; border-radius: 7px;
+    font-size: 0.8125rem; color: #1a1a1a; background: #fff;
+    transition: border-color 0.12s;
+  }
+  .sp-member-select { min-width: 200px; }
+  .sp-desc-input { min-width: 220px; flex: 1; }
+  .sp-member-select:focus, .sp-desc-input:focus {
+    outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1);
+  }
+  .sp-desc-wrap { display: flex; flex-direction: column; flex: 1; min-width: 180px; }
+  .sp-details-actions { display: flex; align-items: center; gap: 0.625rem; flex-shrink: 0; }
+  .sp-save-btn { padding: 0.4rem 0.875rem; font-size: 0.8125rem; }
+  .sp-save-feedback { font-size: 0.75rem; }
+  .sp-save-feedback.ok  { color: #166534; }
+  .sp-save-feedback.err { color: #b91c1c; }
+
+  /* Receipt + Delete */
+  .sp-receipt-btn, .sp-delete-btn {
     background: none; border: 1px solid #d1d5db; border-radius: 6px;
     padding: 0.25rem 0.625rem; font-size: 0.75rem; color: #555;
     cursor: pointer; transition: all 0.12s;
   }
   .sp-receipt-btn:hover { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
   .sp-receipt-btn.open  { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .sp-delete-btn { color: #b91c1c; border-color: #fecaca; }
+  .sp-delete-btn:hover { background: #fef2f2; border-color: #b91c1c; }
   .sp-no-receipt { color: #bbb; font-size: 0.75rem; }
   .receipt-row td { padding: 0 0.875rem 0.875rem; }
   .sp-receipt-pre {
@@ -268,28 +506,71 @@ function fmtDate(iso: string) {
   }
 
   .sp-empty { text-align: center; color: #888; padding: 2rem; font-size: 0.875rem; }
+
+  /* Split button */
+  .sp-split-btn { padding: 0.4rem 0.75rem; font-size: 0.8125rem; }
+
+  /* Pagination */
+  .sp-pagination {
+    display: flex; align-items: center; justify-content: center;
+    gap: 1rem; padding: 0.75rem 1.25rem; border-top: 1px solid #f0f0f0;
+  }
+  .sp-pag-btn { border-radius: 8px; padding: 0.4rem 0.875rem; font-size: 0.8125rem; }
+  .sp-pag-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .sp-pag-info { font-size: 0.8125rem; color: #555; min-width: 130px; text-align: center; }
+
+  /* Split modal row */
+  .split-row {
+    display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.625rem 0.75rem;
+  }
+  .split-row-num {
+    font-size: 0.75rem; color: #6b7280; font-weight: 600; min-width: 1.25rem; padding-bottom: 0.5rem;
+  }
+  .split-row input[type="number"] {
+    width: 90px; padding: 0.4rem 0.5rem; border: 1px solid #d1d5db;
+    border-radius: 7px; font-size: 0.8125rem;
+  }
+  .split-row select {
+    flex: 1; min-width: 160px; padding: 0.4rem 0.5rem; border: 1px solid #d1d5db;
+    border-radius: 7px; font-size: 0.8125rem;
+  }
+  .split-row .split-remove {
+    background: none; border: none; color: #b91c1c; font-size: 1.1rem; cursor: pointer;
+    padding: 0 0.25rem; line-height: 1;
+  }
 </style>
 
-<script is:inline>
-  const syncBtn = document.getElementById('syncBtn');
-  const syncLabel = document.getElementById('syncLabel');
-  const syncStatus = document.getElementById('syncStatus');
-  const syncMessage = document.getElementById('syncMessage');
-  const syncResult = document.getElementById('syncResult');
-  const yearSelect = document.getElementById('yearSelect');
-  const transBody = document.getElementById('transBody');
-  const transCount = document.getElementById('transCount');
+<script is:inline define:vars={{ seniorMembersJson: seniorMembers, rowsJson: rows, currentYearJson: currentYear }}>
+  const SENIOR_MEMBERS = seniorMembersJson;
+  const PAGE_SIZE = 30;
+  let currentPage = 1;
+  let allEntries = [];
+  let displayYear = currentYearJson;
 
-  // Receipt toggle
-  document.querySelectorAll('.sp-receipt-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.id;
-      const row = document.getElementById('receipt-' + id);
-      const open = row.style.display !== 'none';
-      row.style.display = open ? 'none' : 'table-row';
-      btn.classList.toggle('open', !open);
-      btn.textContent = open ? 'View' : 'Hide';
-    });
+  const syncBtn       = document.getElementById('syncBtn');
+  const syncLabel     = document.getElementById('syncLabel');
+  const syncStatus    = document.getElementById('syncStatus');
+  const syncMessage   = document.getElementById('syncMessage');
+  const syncResult    = document.getElementById('syncResult');
+  const yearSelect    = document.getElementById('yearSelect');
+  const transBody     = document.getElementById('transBody');
+  const transCount    = document.getElementById('transCount');
+
+  // Set today's date as default for the add-debit form
+  const newDebitDate = document.getElementById('newDebitDate');
+  newDebitDate.value = new Date().toISOString().slice(0, 10);
+
+  // Initialise pagination from SSR data
+  allEntries = rowsJson;
+  displayYear = currentYearJson;
+  renderPage();
+
+  document.getElementById('prevPage').addEventListener('click', () => {
+    if (currentPage > 1) { currentPage--; renderPage(); }
+  });
+  document.getElementById('nextPage').addEventListener('click', () => {
+    if (currentPage < Math.ceil(allEntries.length / PAGE_SIZE)) { currentPage++; renderPage(); }
   });
 
   // Year change → reload entries
@@ -319,14 +600,141 @@ function fmtDate(iso: string) {
           ? `Added ${data.added} new transaction${data.added !== 1 ? 's' : ''}${data.skipped ? `, ${data.skipped} already stored` : ''}.`
           : (data.message || `No new transactions (${data.skipped || 0} already stored).`);
         showResult('success', msg);
-        if (data.added > 0) await loadEntries(year);
+        await loadEntries(year);
       }
-    } catch (err) {
+    } catch {
       syncStatus.style.display = 'none';
       showResult('error', 'Network error — could not reach TouchOffice.');
     } finally {
       syncBtn.disabled = false;
       syncLabel.textContent = 'Sync from TouchOffice';
+    }
+  });
+
+  // Debug button
+  document.getElementById('debugBtn').addEventListener('click', async () => {
+    const year = parseInt(yearSelect.value);
+    const btn = document.getElementById('debugBtn');
+    btn.disabled = true;
+    btn.textContent = 'Fetching…';
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'debug', year }),
+      });
+      const data = await res.json();
+      const out = {
+        totalDivsInSection: data.totalDivsInSection,
+        parsedCount: data.parsedCount,
+        headerDivs: data.headerDivs,
+        dataSample: data.dataSample,
+        parsedEntries: data.parsedEntries,
+        parseError: data.parseError,
+      };
+      document.getElementById('debugOutput').textContent = JSON.stringify(out, null, 2);
+      document.getElementById('debugPanel').style.display = 'block';
+      document.getElementById('debugPanel').scrollIntoView({ behavior: 'smooth' });
+    } catch (e) {
+      alert('Debug fetch failed: ' + e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Debug';
+    }
+  });
+  document.getElementById('debugClose').addEventListener('click', () => {
+    document.getElementById('debugPanel').style.display = 'none';
+  });
+
+  // Backfill button — fetch full year, insert any missing entries
+  document.getElementById('forceSyncBtn').addEventListener('click', async () => {
+    const year = parseInt(yearSelect.value);
+    const btn = document.getElementById('forceSyncBtn');
+    const label = document.getElementById('forceSyncLabel');
+    btn.disabled = true;
+    label.textContent = 'Backfilling…';
+    syncStatus.style.display = 'flex';
+    syncResult.style.display = 'none';
+    syncMessage.textContent = 'Fetching full year statement from TouchOffice…';
+
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'force-sync', year }),
+      });
+      const data = await res.json();
+      syncStatus.style.display = 'none';
+      if (data.error) {
+        showResult('error', 'Error: ' + data.error);
+      } else {
+        const msg = data.added > 0
+          ? `Backfill: added ${data.added} missing transaction${data.added !== 1 ? 's' : ''} (${data.skipped} already stored, ${data.total} total in statement).`
+          : `Backfill complete — no missing transactions found (${data.skipped} already stored).`;
+        showResult('success', msg);
+        await loadEntries(year);
+      }
+    } catch {
+      syncStatus.style.display = 'none';
+      showResult('error', 'Network error — could not reach TouchOffice.');
+    } finally {
+      btn.disabled = false;
+      label.textContent = 'Backfill';
+    }
+  });
+
+  // Add debit panel toggle
+  document.getElementById('addDebitToggle').addEventListener('click', () => {
+    const panel = document.getElementById('addDebitPanel');
+    const open = panel.style.display !== 'none';
+    panel.style.display = open ? 'none' : 'block';
+  });
+  document.getElementById('addDebitCancel').addEventListener('click', () => {
+    document.getElementById('addDebitPanel').style.display = 'none';
+  });
+
+  // Submit add debit
+  document.getElementById('addDebitSubmit').addEventListener('click', async () => {
+    const year = parseInt(yearSelect.value);
+    const date = document.getElementById('newDebitDate').value;
+    const amount = parseFloat(document.getElementById('newDebitAmount').value);
+    const description = document.getElementById('newDebitDesc').value.trim();
+    const feedback = document.getElementById('addDebitFeedback');
+
+    if (!date) { feedback.className = 'sp-save-feedback err'; feedback.textContent = 'Date is required'; return; }
+    if (!amount || amount <= 0) { feedback.className = 'sp-save-feedback err'; feedback.textContent = 'Enter a positive amount'; return; }
+
+    const btn = document.getElementById('addDebitSubmit');
+    btn.disabled = true;
+    feedback.className = 'sp-save-feedback';
+    feedback.textContent = 'Saving…';
+
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add-entry', entryType: 'debit', year, date, amount, description }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        feedback.className = 'sp-save-feedback ok';
+        feedback.textContent = 'Added';
+        document.getElementById('newDebitAmount').value = '';
+        document.getElementById('newDebitDesc').value = '';
+        await loadEntries(year);
+        setTimeout(() => {
+          feedback.textContent = '';
+          document.getElementById('addDebitPanel').style.display = 'none';
+        }, 2000);
+      } else {
+        feedback.className = 'sp-save-feedback err';
+        feedback.textContent = data.error || 'Error saving';
+      }
+    } catch {
+      feedback.className = 'sp-save-feedback err';
+      feedback.textContent = 'Network error';
+    } finally {
+      btn.disabled = false;
     }
   });
 
@@ -346,8 +754,7 @@ function fmtDate(iso: string) {
       });
       const data = await res.json();
       if (data.error) return;
-
-      renderTable(data.entries || []);
+      renderTable(data.entries || [], year);
       updateSummary(data.summary || {});
     } catch {}
   }
@@ -362,60 +769,6 @@ function fmtDate(iso: string) {
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
-  function renderTable(entries) {
-    if (!entries.length) {
-      transBody.innerHTML = `<tr><td colspan="5" class="sp-empty">No entries for ${yearSelect.value}. Use "Sync from TouchOffice" to fetch.</td></tr>`;
-      transCount.textContent = '0 entries';
-      return;
-    }
-
-    transCount.textContent = entries.length + ' entr' + (entries.length === 1 ? 'y' : 'ies');
-    transBody.innerHTML = entries.map(row => {
-      const adjClass = row.balance_adj >= 0 ? 'sp-positive' : 'sp-negative';
-      const adjSign  = row.balance_adj >= 0 ? '+' : '';
-      const hasReceipt = !!row.receipt_text;
-      return `
-        <tr class="trans-row" data-id="${row.id}">
-          <td class="col-date">${fmtDate(row.sale_date)}</td>
-          <td class="col-sale sp-mono">${escHtml(row.sale_id)}</td>
-          <td class="col-adj text-right ${adjClass}">${adjSign}${fmt(row.balance_adj)}</td>
-          <td class="col-bal text-right sp-mono">${fmt(row.running_balance)}</td>
-          <td class="col-receipt">${
-            hasReceipt
-              ? `<button class="sp-receipt-btn" data-id="${row.id}">View</button>`
-              : `<span class="sp-no-receipt">—</span>`
-          }</td>
-        </tr>
-        <tr class="receipt-row" id="receipt-${row.id}" style="display:none;">
-          <td colspan="5">
-            <pre class="sp-receipt-pre">${escHtml(row.receipt_text || '')}</pre>
-          </td>
-        </tr>
-      `;
-    }).join('');
-
-    // Re-wire receipt toggles
-    transBody.querySelectorAll('.sp-receipt-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = btn.dataset.id;
-        const receiptRow = document.getElementById('receipt-' + id);
-        const open = receiptRow.style.display !== 'none';
-        receiptRow.style.display = open ? 'none' : 'table-row';
-        btn.classList.toggle('open', !open);
-        btn.textContent = open ? 'View' : 'Hide';
-      });
-    });
-  }
-
-  function updateSummary(s) {
-    const balEl = document.getElementById('statBalance');
-    const credEl = document.getElementById('statCredits');
-    const countEl = document.getElementById('statCount');
-    if (balEl) balEl.textContent = s.currentBalance !== null && s.currentBalance !== undefined ? fmt(s.currentBalance) : '—';
-    if (credEl) credEl.textContent = fmt(s.totalCredits || 0);
-    if (countEl) countEl.textContent = s.count || 0;
-  }
-
   function escHtml(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -423,4 +776,438 @@ function fmtDate(iso: string) {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  function renderDetailPanel(row) {
+    const isCredit = row.balance_adj >= 0;
+    const defaultDesc = escHtml(row.payment_description || (isCredit ? 'Purse Top Up' : ''));
+
+    if (isCredit) {
+      let opts = `<option value="">— None / non-member —</option>`;
+      for (const m of SENIOR_MEMBERS) {
+        const sel = m.id === row.payment_member_id ? ' selected' : '';
+        opts += `<option value="${m.id}"${sel}>${escHtml(m.surname)}, ${escHtml(m.first_name)}</option>`;
+      }
+      return `
+        <div class="sp-details-form">
+          <div>
+            <label class="sp-details-label">Member payment from</label>
+            <select class="sp-member-select" data-entry-id="${row.id}">${opts}</select>
+          </div>
+          <div class="sp-desc-wrap">
+            <label class="sp-details-label">Description</label>
+            <input type="text" class="sp-desc-input" data-entry-id="${row.id}"
+              placeholder="Purse Top Up" value="${defaultDesc}">
+          </div>
+        </div>`;
+    } else {
+      return `
+        <div class="sp-details-form">
+          <div style="flex:1;">
+            <label class="sp-details-label">Expense description</label>
+            <input type="text" class="sp-desc-input" data-entry-id="${row.id}"
+              placeholder="e.g. Trophy engraving" value="${defaultDesc}">
+          </div>
+        </div>`;
+    }
+  }
+
+  function detailsBtnLabel(row) {
+    if (row.payment_member_name) return escHtml(row.payment_member_name);
+    if (row.payment_description) {
+      const s = row.payment_description;
+      return escHtml(s.length > 28 ? s.slice(0, 28) + '…' : s);
+    }
+    if (row.balance_adj >= 0) return '<span class="sp-details-default">Purse Top Up</span>';
+    return '<span class="sp-details-empty">Add description</span>';
+  }
+
+  function renderTable(entries, year) {
+    allEntries = entries;
+    displayYear = year;
+    currentPage = 1;
+    renderPage();
+  }
+
+  function renderPage() {
+    const total = allEntries.length;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    const pagEl   = document.getElementById('pagination');
+    const pageInfo = document.getElementById('pageInfo');
+    const prevBtn  = document.getElementById('prevPage');
+    const nextBtn  = document.getElementById('nextPage');
+
+    if (!total) {
+      transBody.innerHTML = `<tr><td colspan="5" class="sp-empty">No entries for ${displayYear}. Use "Sync from TouchOffice" to fetch.</td></tr>`;
+      transCount.textContent = '0 entries';
+      pagEl.style.display = 'none';
+      return;
+    }
+
+    transCount.textContent = total + ' entr' + (total === 1 ? 'y' : 'ies');
+
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const end   = Math.min(start + PAGE_SIZE, total);
+    const pageEntries = allEntries.slice(start, end);
+    const year = displayYear;
+
+    transBody.innerHTML = pageEntries.map(row => {
+      const adjClass  = row.balance_adj >= 0 ? 'sp-positive' : 'sp-negative';
+      const adjSign   = row.balance_adj >= 0 ? '+' : '';
+      const hasReceipt = !!row.receipt_text;
+      const isManual   = !!row.is_manual;
+
+      const receiptCell = isManual
+        ? `<button class="sp-delete-btn" data-id="${row.id}" data-year="${year}">Delete</button>`
+        : hasReceipt
+          ? `<button class="sp-receipt-btn" data-id="${row.id}">View</button>`
+          : `<span class="sp-no-receipt">—</span>`;
+
+      const receiptRow = !isManual
+        ? `<tr class="receipt-row" id="receipt-${row.id}" style="display:none;">
+             <td colspan="5"><pre class="sp-receipt-pre">${escHtml(row.receipt_text || '')}</pre></td>
+           </tr>`
+        : '';
+
+      return `
+        <tr class="trans-row" data-id="${row.id}" data-adj="${row.balance_adj}" data-manual="${isManual ? 1 : 0}">
+          <td class="col-date">${fmtDate(row.sale_date)}</td>
+          <td class="col-adj text-right ${adjClass}">${adjSign}${fmt(row.balance_adj)}</td>
+          <td class="col-bal text-right sp-mono">${fmt(row.running_balance)}</td>
+          <td class="col-details">
+            <button class="sp-details-btn" data-id="${row.id}">${detailsBtnLabel(row)}</button>
+          </td>
+          <td class="col-receipt">${receiptCell}</td>
+        </tr>
+        <tr class="details-row" id="details-${row.id}" style="display:none;">
+          <td colspan="5">
+            <div class="sp-details-panel">
+              ${renderDetailPanel(row)}
+              <div class="sp-details-actions">
+                <button class="sp-save-btn sp-btn sp-btn-primary" data-id="${row.id}">Save</button>
+                ${(!isManual && row.balance_adj > 0) ? `<button class="sp-split-btn sp-btn sp-btn-outline" data-id="${row.id}" data-adj="${row.balance_adj}">Split</button>` : ''}
+                <span class="sp-save-feedback" id="save-feedback-${row.id}"></span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        ${receiptRow}
+      `;
+    }).join('');
+
+    wireToggles(transBody);
+
+    if (totalPages > 1) {
+      pagEl.style.display = 'flex';
+      pageInfo.textContent = `${start + 1}–${end} of ${total}`;
+      prevBtn.disabled = currentPage <= 1;
+      nextBtn.disabled = currentPage >= totalPages;
+    } else {
+      pagEl.style.display = 'none';
+    }
+  }
+
+  function wireToggles(root) {
+    // Receipt toggle
+    root.querySelectorAll('.sp-receipt-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const row = document.getElementById('receipt-' + id);
+        const open = row.style.display !== 'none';
+        row.style.display = open ? 'none' : 'table-row';
+        btn.classList.toggle('open', !open);
+        btn.textContent = open ? 'View' : 'Hide';
+      });
+    });
+
+    // Details toggle
+    root.querySelectorAll('.sp-details-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const row = document.getElementById('details-' + id);
+        const open = row.style.display !== 'none';
+        row.style.display = open ? 'none' : 'table-row';
+        btn.classList.toggle('open', !open);
+      });
+    });
+
+    // Delete manual entry
+    root.querySelectorAll('.sp-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this manual entry? This cannot be undone.')) return;
+        const id = btn.dataset.id;
+        const year = parseInt(yearSelect.value);
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/seniors-purse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'delete-entry', id: parseInt(id), year }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            await loadEntries(year);
+          } else {
+            alert(data.error || 'Could not delete entry');
+            btn.disabled = false;
+          }
+        } catch {
+          alert('Network error');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Save button
+    root.querySelectorAll('.sp-save-btn').forEach(btn => {
+      btn.addEventListener('click', () => saveDetails(btn.dataset.id, btn));
+    });
+
+    // Split button (credit entries only)
+    root.querySelectorAll('.sp-split-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const adj = parseFloat(btn.dataset.adj);
+        // Read any currently-selected member from the details panel
+        const panel = document.getElementById('details-' + id)?.querySelector('.sp-member-select');
+        const currentMemberId = panel ? (parseInt(panel.value) || null) : null;
+        openSplitModal(id, adj, currentMemberId);
+      });
+    });
+  }
+
+  async function saveDetails(id, btn) {
+    const panel = btn.closest('.sp-details-panel');
+    const feedback = document.getElementById('save-feedback-' + id);
+
+    const memberSelect = panel.querySelector('.sp-member-select');
+    const descInput    = panel.querySelector('.sp-desc-input');
+
+    let payment_member_id  = null;
+    let payment_description = null;
+
+    if (memberSelect) {
+      // Credit entry — save both member attribution and description
+      if (memberSelect.value && memberSelect.value !== '') {
+        payment_member_id = parseInt(memberSelect.value);
+      }
+      payment_description = descInput ? descInput.value.trim() || null : null;
+    } else if (descInput) {
+      // Debit entry — description only
+      payment_description = descInput.value.trim() || null;
+    }
+
+    btn.disabled = true;
+    feedback.className = 'sp-save-feedback';
+    feedback.textContent = 'Saving…';
+
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save-details', id: parseInt(id), payment_member_id, payment_description }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        feedback.className = 'sp-save-feedback ok';
+        feedback.textContent = 'Saved';
+        // Update the details button label
+        const detailsBtn = document.querySelector(`.sp-details-btn[data-id="${id}"]`);
+        if (detailsBtn) {
+          if (payment_member_id) {
+            const m = SENIOR_MEMBERS.find(m => m.id === payment_member_id);
+            detailsBtn.innerHTML = m ? escHtml(m.surname + ', ' + m.first_name) : 'Member';
+          } else if (payment_description) {
+            const s = payment_description;
+            const isCredit = Number(detailsBtn.closest('.trans-row')?.dataset?.adj ?? -1) >= 0;
+            detailsBtn.innerHTML = escHtml(s.length > 28 ? s.slice(0, 28) + '…' : s);
+          } else {
+            // Check if credit or debit to set appropriate placeholder
+            const adj = Number(detailsBtn.closest('.trans-row')?.dataset?.adj ?? -1);
+            detailsBtn.innerHTML = adj >= 0
+              ? '<span class="sp-details-default">Purse Top Up</span>'
+              : '<span class="sp-details-empty">Add description</span>';
+          }
+        }
+        setTimeout(() => { feedback.textContent = ''; }, 3000);
+      } else {
+        feedback.className = 'sp-save-feedback err';
+        feedback.textContent = data.error || 'Error saving';
+      }
+    } catch {
+      feedback.className = 'sp-save-feedback err';
+      feedback.textContent = 'Network error';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function updateSummary(s) {
+    const balEl          = document.getElementById('statBalance');
+    const credEl         = document.getElementById('statCredits');
+    const debEl          = document.getElementById('statDebits');
+    const debItem        = document.getElementById('statDebitsItem');
+    const countEl        = document.getElementById('statCount');
+    const lastFetchedEl  = document.getElementById('statLastFetched');
+    const lastFetchItem  = document.getElementById('statLastFetchedItem');
+
+    if (balEl)  balEl.textContent  = s.currentBalance != null ? fmt(s.currentBalance) : '—';
+    if (credEl) credEl.textContent = fmt(s.totalCredits || 0);
+    if (countEl) countEl.textContent = s.count || 0;
+
+    if (debEl && debItem) {
+      if (s.totalDebits < 0) {
+        debEl.textContent = fmt(s.totalDebits);
+        debItem.style.display = '';
+      } else {
+        debItem.style.display = 'none';
+      }
+    }
+
+    if (lastFetchedEl && lastFetchItem) {
+      if (s.lastFetched) {
+        lastFetchedEl.textContent = fmtDate(s.lastFetched);
+        lastFetchItem.style.display = '';
+      } else {
+        lastFetchItem.style.display = 'none';
+      }
+    }
+  }
+
+  // ── Split entry modal ──────────────────────────────────────────────────────
+
+  let splitEntryId = null;
+  let splitOriginalAdj = 0;
+
+  function buildMemberOptions(selectedId) {
+    let opts = `<option value="">— None —</option>`;
+    for (const m of SENIOR_MEMBERS) {
+      const sel = m.id === selectedId ? ' selected' : '';
+      opts += `<option value="${m.id}"${sel}>${escHtml(m.surname)}, ${escHtml(m.first_name)}</option>`;
+    }
+    return opts;
+  }
+
+  function addSplitRow(amount, memberId) {
+    const container = document.getElementById('splitRows');
+    const idx = container.children.length + 1;
+    const div = document.createElement('div');
+    div.className = 'split-row';
+    div.innerHTML = `
+      <span class="split-row-num">${idx}.</span>
+      <input type="number" step="0.01" min="0.01" placeholder="0.00" value="${amount !== undefined ? amount : ''}">
+      <select>${buildMemberOptions(memberId || null)}</select>
+      ${idx > 2 ? `<button class="split-remove" title="Remove">✕</button>` : ''}
+    `;
+    if (idx > 2) {
+      div.querySelector('.split-remove').addEventListener('click', () => {
+        div.remove();
+        renumberSplitRows();
+        updateSplitRemaining();
+      });
+    }
+    div.querySelector('input[type="number"]').addEventListener('input', updateSplitRemaining);
+    container.appendChild(div);
+  }
+
+  function renumberSplitRows() {
+    const rows = document.querySelectorAll('#splitRows .split-row');
+    rows.forEach((row, i) => {
+      const num = row.querySelector('.split-row-num');
+      if (num) num.textContent = (i + 1) + '.';
+    });
+  }
+
+  function updateSplitRemaining() {
+    const inputs = document.querySelectorAll('#splitRows .split-row input[type="number"]');
+    let total = 0;
+    inputs.forEach(inp => { total += parseFloat(inp.value) || 0; });
+    const remaining = Math.round((splitOriginalAdj - total) * 100) / 100;
+    const el = document.getElementById('splitRemaining');
+    const confirmBtn = document.getElementById('splitConfirm');
+    if (Math.abs(remaining) < 0.005) {
+      el.textContent = 'Total matches ✓';
+      el.style.color = '#166534';
+      confirmBtn.disabled = false;
+    } else if (remaining > 0) {
+      el.textContent = `${fmt(remaining)} still to allocate`;
+      el.style.color = '#92400e';
+      confirmBtn.disabled = true;
+    } else {
+      el.textContent = `Over by ${fmt(-remaining)}`;
+      el.style.color = '#b91c1c';
+      confirmBtn.disabled = true;
+    }
+  }
+
+  function openSplitModal(entryId, adj, currentMemberId) {
+    splitEntryId = entryId;
+    splitOriginalAdj = parseFloat(adj);
+
+    document.getElementById('splitOrigAmt').textContent = `Original: ${fmt(splitOriginalAdj)}`;
+    document.getElementById('splitRows').innerHTML = '';
+    document.getElementById('splitFeedback').style.display = 'none';
+    document.getElementById('splitConfirm').disabled = true;
+
+    // Pre-fill first row with the existing member and suggest splitting evenly
+    addSplitRow('', currentMemberId);
+    addSplitRow('', null);
+
+    document.getElementById('splitModal').style.display = 'flex';
+    updateSplitRemaining();
+  }
+
+  document.getElementById('splitAddRow').addEventListener('click', () => {
+    addSplitRow('', null);
+    updateSplitRemaining();
+  });
+
+  document.getElementById('splitCancel').addEventListener('click', () => {
+    document.getElementById('splitModal').style.display = 'none';
+  });
+
+  document.getElementById('splitConfirm').addEventListener('click', async () => {
+    const rows = document.querySelectorAll('#splitRows .split-row');
+    const splits = [];
+    rows.forEach(row => {
+      const amount = parseFloat(row.querySelector('input[type="number"]').value) || 0;
+      const memberId = row.querySelector('select').value || null;
+      splits.push({ amount, memberId: memberId ? parseInt(memberId) : null });
+    });
+
+    const year = parseInt(yearSelect.value);
+    const confirmBtn = document.getElementById('splitConfirm');
+    const feedback = document.getElementById('splitFeedback');
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Splitting…';
+    feedback.style.display = 'none';
+
+    try {
+      const res = await fetch('/api/seniors-purse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'split-entry', id: parseInt(splitEntryId), year, splits }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('splitModal').style.display = 'none';
+        await loadEntries(year);
+      } else {
+        feedback.style.display = 'block';
+        feedback.style.color = '#b91c1c';
+        feedback.textContent = data.error || 'Split failed';
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Split';
+      }
+    } catch (e) {
+      feedback.style.display = 'block';
+      feedback.style.color = '#b91c1c';
+      feedback.textContent = 'Network error';
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm Split';
+    }
+  });
 </script>
