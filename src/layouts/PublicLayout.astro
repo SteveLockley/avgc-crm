@@ -35,9 +35,13 @@ const resolvedOgType = ogType || 'website';
 
 const navItems = [
   { href: '/', label: 'Home' },
-  { href: '/course', label: 'The Course' },
+  { href: '/course', label: 'The Course', children: [
+    { href: '/course', label: 'The Course' },
+    { href: '/course/handicapping', label: 'Handicapping' },
+  ]},
   { href: '/visitors', label: 'Visitors' },
   { href: '/membership', label: 'Membership' },
+  { href: '/pro', label: 'Pro' },
   { href: '/clubhouse', label: 'Clubhouse', children: [
     { href: '/clubhouse', label: 'The Clubhouse' },
     { href: '/clubhouse/menus', label: 'Menus' },

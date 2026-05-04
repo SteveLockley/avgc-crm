@@ -470,6 +470,13 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&#163;/g, '£');
 }
 
+function parseAmount(s: string): number {
+  const c = s.replace(/[£,\s]/g, '').trim();
+  if (!c) return 0;
+  if (c.startsWith('(') && c.endsWith(')')) return -(parseFloat(c.slice(1, -1)) || 0);
+  return parseFloat(c) || 0;
+}
+
 // --- Seniors' Purse: Customer Statement report ---
 
 export interface PurseStatementEntry {
@@ -586,16 +593,12 @@ export async function debugFetchPurseReport(
     catch (e: any) { parseError = e?.message ?? String(e); }
   }
 
-  // Count how many positioned divs the regex finds (to check regex works at all)
-  const divMatches = html.match(/style="[^"]*left:[\d.]+pt[^"]*top:[\d.]+pt/g) ?? [];
-
-  // Extract first 20 positioned divs from the report section, showing their text+position
+  // Extract ALL positioned divs from the report section
   const containerStart2 = html.search(/<div[^>]+id=["']reportcontainer["']/i);
   const section2 = containerStart2 >= 0 ? html.substring(containerStart2) : html;
-  const sampleDivs: {left:number,top:number,text:string}[] = [];
+  const allDivs: {left:number,top:number,text:string}[] = [];
   const parts2 = section2.split('<div ');
   for (const part of parts2) {
-    if (sampleDivs.length >= 30) break;
     const styleM = part.match(/style="([^"]*)"/);
     if (!styleM) continue;
     const style = styleM[1];
@@ -607,122 +610,140 @@ export async function debugFetchPurseReport(
     const endDiv = part.indexOf('</div>', closeTag);
     if (endDiv === -1) continue;
     const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
-    if (text) sampleDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
+    if (text) allDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
   }
+
+  // Find the header row (contains "Sale Id") and extract ALL header texts with positions
+  const saleIdDiv2 = allDivs.find(d => /^sale\s*id$/i.test(d.text));
+  const headerTop2 = saleIdDiv2?.top ?? -1;
+  const headerDivs = headerTop2 >= 0 ? allDivs.filter(d => Math.abs(d.top - headerTop2) < 3) : [];
+
+  // First 60 non-header divs (actual data rows) — enough to see 3–5 full rows
+  const dataSample = allDivs.filter(d => Math.abs(d.top - headerTop2) >= 3).slice(0, 60);
 
   return {
     status: res.status,
     isLogin,
     htmlLength: html.length,
-    containerFoundAt: containerStart2,
-    saleIdFoundAt: saleIdIdx,
-    positionedDivCount: divMatches.length,
-    sectionDivSample: sampleDivs,
+    totalDivsInSection: allDivs.length,
+    headerDivs,          // ← all column headers with left positions
+    dataSample,          // ← first ~60 data divs so we can see row structure
     parseError,
     parsedCount: parsedEntries.length,
-    parsedSample: parsedEntries.slice(0, 3),
+    parsedEntries,       // ← full list so we can cross-check against DB
   };
 }
 
 /**
  * Parse the Customer Statement HTML report.
  *
- * TouchOffice renders reports as absolutely-positioned <div> elements (PDF-style).
- * Each div has inline style: left:Xpt; top:Ypt; and contains text.
+ * TouchOffice renders this as a multi-page PDF-style document: every page uses
+ * top coordinates that restart from 0, so divs from different pages share the
+ * same absolute top values.  Any approach that sorts or groups by top therefore
+ * conflates entries from different pages.
  *
- * Strategy:
- * 1. Extract all positioned divs → { left, top, text }
- * 2. Find header divs (contain "Sale Id", "Balance Adj", "Balance", "Date")
- * 3. Use header left-positions to identify columns
- * 4. Group remaining divs by top coordinate (same row = same top ± 2pt)
- * 5. For each data row, read values at matching left positions
+ * The correct strategy is to process <div> elements in HTML source order.
+ * Because the HTML is emitted page-by-page, each column's data divs appear in
+ * the same sequential (chronological) order in the source.  We collect the
+ * values for each column into separate arrays (preserving source order) and
+ * then match them by position index.
+ *
+ * Additional observation from debug data: the column structure is
+ *   Date (left≈0) | Sale Id (left≈204) | Discount | Sale Total |
+ *   Balance Adj (left≈419) | Site (left≈96) | Balance (left≈487)
+ * with every transaction preceded by a repeated column-header row.
  */
 function parseCustomerStatementHtml(html: string): PurseStatementEntry[] {
-  // Work on just the report container section to avoid scanning the full 2MB page
   const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
   const section = containerStart >= 0 ? html.substring(containerStart) : html;
 
-  // Extract all absolutely-positioned divs
-  // Format: <div style="left:Xpt;top:Ypt;...">text</div>
-  interface Div { left: number; top: number; text: string; }
-  const divs: Div[] = [];
+  const COL_TOL = 12;
 
-  // Split on <div to avoid large [\s\S]*? backtracking
-  const parts = section.split('<div ');
-  for (const part of parts) {
+  // ── Helper: extract (left, top, text) from one split part ──────────────────
+  interface DivInfo { left: number; top: number; text: string; }
+  const extractDiv = (part: string): DivInfo | null => {
     const styleM = part.match(/style="([^"]*)"/);
-    if (!styleM) continue;
+    if (!styleM) return null;
     const style = styleM[1];
     const leftM = style.match(/left:([\d.]+)pt/);
     const topM  = style.match(/top:([\d.]+)pt/);
-    if (!leftM || !topM) continue;
+    if (!leftM || !topM) return null;
     const closeTag = part.indexOf('>');
-    if (closeTag === -1) continue;
+    if (closeTag === -1) return null;
     const endDiv = part.indexOf('</div>', closeTag);
-    if (endDiv === -1) continue;
+    if (endDiv === -1) return null;
     const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
-    if (text) divs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
+    return text ? { left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text } : null;
+  };
+
+  const parts = section.split('<div ');
+
+  // ── Phase 1: detect column left-positions from the first header row ─────────
+  const allDivs: DivInfo[] = [];
+  for (const part of parts) {
+    const d = extractDiv(part);
+    if (d) allDivs.push(d);
   }
 
-  if (!divs.length) return [];
+  const saleIdHeaderDiv = allDivs.find(d => /^sale\s*id$/i.test(d.text));
+  if (!saleIdHeaderDiv) return [];
 
-  // Find header row: the row containing "Sale Id"
-  const saleIdDiv = divs.find(d => /^sale\s*id$/i.test(d.text));
-  if (!saleIdDiv) return [];
-
-  const headerTop = saleIdDiv.top;
-  const headerDivs = divs.filter(d => Math.abs(d.top - headerTop) < 3);
-
-  // Map column names to their left positions
+  const headerTop = saleIdHeaderDiv.top;
   const colLeft: Record<string, number> = {};
-  for (const d of headerDivs) {
+  for (const d of allDivs.filter(d => Math.abs(d.top - headerTop) < 3)) {
     const t = d.text.trim();
-    if (/^date$/i.test(t))                     colLeft.date = d.left;
-    else if (/^sale\s*id$/i.test(t))           colLeft.saleId = d.left;
-    else if (/balance\s*adj/i.test(t))         colLeft.balAdj = d.left;
-    else if (/^\(?£\)?\s*balance$/i.test(t))   colLeft.balance = d.left;
-    else if (/^site$/i.test(t))                colLeft.site = d.left;
+    if (/^date$/i.test(t))                colLeft.date    = d.left;
+    else if (/^sale\s*id$/i.test(t))      colLeft.saleId  = d.left;
+    else if (/balance\s*adj/i.test(t))    colLeft.balAdj  = d.left;
+    else if (/balance/i.test(t))          colLeft.balance = d.left;
   }
 
-  if (colLeft.saleId === undefined || colLeft.date === undefined || colLeft.balAdj === undefined) return [];
+  if (colLeft.saleId == null || colLeft.date == null || colLeft.balAdj == null) return [];
 
-  // Tolerance for matching left positions (columns may vary ±4pt across rows)
-  const COL_TOL = 8;
-  const HEADER_TOL = 3;
+  // ── Phase 2: collect column values in HTML SOURCE ORDER ─────────────────────
+  // Sorting by top would mix divs from different pages (each page restarts at
+  // top=0).  Source order is always page-sequential, so index N in the saleId
+  // array corresponds to index N in the date / balAdj / balance arrays.
 
-  // Group divs into rows by top coordinate (exclude header row)
-  const rowMap = new Map<number, Div[]>();
-  for (const d of divs) {
-    if (Math.abs(d.top - headerTop) < HEADER_TOL) continue;
-    // Round top to nearest 0.5pt bucket
-    const bucket = Math.round(d.top * 2) / 2;
-    if (!rowMap.has(bucket)) rowMap.set(bucket, []);
-    rowMap.get(bucket)!.push(d);
+  const isDateText   = (t: string) => /^\d{2}\/\d{2}\/\d{4}/.test(t) && !t.includes(' To ');
+  const isAmountText = (t: string) => /\d/.test(t) && /^[\d,.()\-£\s]+$/.test(t);
+
+  const saleIds:  string[] = [];
+  const dates:    string[] = [];
+  const balAdjs:  string[] = [];
+  const balances: string[] = [];
+
+  for (const part of parts) {
+    const d = extractDiv(part);
+    if (!d) continue;
+
+    if (Math.abs(d.left - colLeft.saleId) < COL_TOL) {
+      const clean = d.text.replace(/\s/g, '');
+      if (/^\d{8,}$/.test(clean)) saleIds.push(clean);   // numeric ID ≥8 digits
+    } else if (Math.abs(d.left - colLeft.date) < COL_TOL && isDateText(d.text)) {
+      dates.push(d.text);
+    } else if (Math.abs(d.left - colLeft.balAdj) < COL_TOL && isAmountText(d.text)) {
+      balAdjs.push(d.text);
+    } else if (colLeft.balance != null && Math.abs(d.left - colLeft.balance) < COL_TOL && isAmountText(d.text)) {
+      balances.push(d.text);
+    }
   }
 
+  // ── Phase 3: parse amount strings ───────────────────────────────────────────
+
+  // ── Phase 4: index-match across columns ─────────────────────────────────────
   const entries: PurseStatementEntry[] = [];
-
-  for (const [, row] of rowMap) {
-    const get = (colX: number) =>
-      row.find(d => Math.abs(d.left - colX) < COL_TOL)?.text ?? '';
-
-    const rawDate = get(colLeft.date);
-    const saleId  = get(colLeft.saleId);
-    const balAdj  = get(colLeft.balAdj);
-    const balance = colLeft.balance ? get(colLeft.balance) : '';
-
-    if (!saleId || !rawDate) continue;
-    // saleId should look numeric
-    if (!/^\d+$/.test(saleId.replace(/\s/g, ''))) continue;
-
-    const saleDate     = parseTouchOfficeDate(rawDate);
-    const balanceAdj   = parseFloat(balAdj.replace(/[£,]/g, '')) || 0;
-    const runningBalance = parseFloat(balance.replace(/[£,]/g, '')) || 0;
-
-    entries.push({ saleId, saleDate, balanceAdj, runningBalance });
+  for (let i = 0; i < saleIds.length; i++) {
+    const rawDate = dates[i] ?? '';
+    if (!rawDate) continue;
+    entries.push({
+      saleId:         saleIds[i],
+      saleDate:       parseTouchOfficeDate(rawDate),
+      balanceAdj:     parseAmount(balAdjs[i]  ?? ''),
+      runningBalance: parseAmount(balances[i] ?? ''),
+    });
   }
 
-  // Sort by date ascending
   entries.sort((a, b) => a.saleDate.localeCompare(b.saleDate));
   return entries;
 }
@@ -945,6 +966,283 @@ export function parseHomepageTables(html: string): {
   }
 
   return { departments, fixedTotals, transactionKeys };
+}
+
+// --- Customer Balance report ---
+
+export interface CustomerBalanceEntry {
+  customerNumber: number;
+  firstName: string;
+  lastName: string;
+  accountNumber: string;
+  accountBalance: number;
+}
+
+export const CUSTOMER_GROUPS: { id: string; name: string }[] = [
+  { id: '1', name: 'MEMBERS' },
+  { id: '2', name: 'SOCIAL MEMBER' },
+  { id: '3', name: 'Dead Cards' },
+  { id: '4', name: 'STAFF DISCOUNT' },
+];
+
+const CUSTOMER_BALANCE_PATH = 'NRE/standard/Centralised Customers/Customer_Balance';
+
+/**
+ * Fetch the Customer Balance report for one customer group from TouchOffice.
+ * No date range needed — report shows current balances.
+ */
+export async function fetchCustomerBalanceReport(
+  sessionCookie: string,
+  groupId: string
+): Promise<CustomerBalanceEntry[]> {
+  const cookie = `icrtouch_connect_login_id=${sessionCookie}`;
+
+  const body = new URLSearchParams({
+    report: CUSTOMER_BALANCE_PATH,
+    'filter-terminals': '0',
+    'filter-location': '0',
+    'custnum_filter_dropdown': '',
+    'filter-customers': '',
+    'filter-customergroups': groupId,
+    'filter-customernotes': '',
+    'format': 'html',
+    'submit-filter': '',
+  });
+
+  const res = await fetch(REPORT_VIEW_URL, {
+    method: 'POST',
+    headers: {
+      'Cookie': cookie,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  const html = await res.text();
+
+  if (html.includes('name="submit-login"')) {
+    throw new Error('Session expired during customer balance fetch.');
+  }
+
+  return parseCustomerBalanceHtml(html);
+}
+
+/**
+ * Debug helper: returns raw div sample + parse attempt for one customer group.
+ */
+export async function debugFetchCustomerBalance(
+  sessionCookie: string,
+  groupId: string
+): Promise<any> {
+  const cookie = `icrtouch_connect_login_id=${sessionCookie}`;
+
+  const body = new URLSearchParams({
+    report: CUSTOMER_BALANCE_PATH,
+    'filter-terminals': '0',
+    'filter-location': '0',
+    'custnum_filter_dropdown': '',
+    'filter-customers': '',
+    'filter-customergroups': groupId,
+    'filter-customernotes': '',
+    'format': 'html',
+    'submit-filter': '',
+  });
+
+  const res = await fetch(REPORT_VIEW_URL, {
+    method: 'POST',
+    headers: {
+      'Cookie': cookie,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  const html = await res.text();
+  const isLogin = html.includes('name="submit-login"');
+
+  const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
+  const section = containerStart >= 0 ? html.substring(containerStart) : html;
+
+  interface DivInfo { left: number; top: number; text: string; }
+  const allDivs: DivInfo[] = [];
+  const parts = section.split('<div ');
+  for (const part of parts) {
+    const styleM = part.match(/style="([^"]*)"/);
+    if (!styleM) continue;
+    const style = styleM[1];
+    const leftM = style.match(/left:([\d.]+)pt/);
+    const topM  = style.match(/top:([\d.]+)pt/);
+    if (!leftM || !topM) continue;
+    const closeTag = part.indexOf('>');
+    if (closeTag === -1) continue;
+    const endDiv = part.indexOf('</div>', closeTag);
+    if (endDiv === -1) continue;
+    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
+    if (text) allDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
+  }
+
+  const numberHeader = allDivs.find(d => /^number$/i.test(d.text));
+  const headerTop = numberHeader?.top ?? -1;
+  const headerDivs = headerTop >= 0 ? allDivs.filter(d => Math.abs(d.top - headerTop) < 3) : [];
+  const dataSample = allDivs.filter(d => Math.abs(d.top - (headerTop >= 0 ? headerTop : -999)) >= 3).slice(0, 80);
+
+  let parsedEntries: CustomerBalanceEntry[] = [];
+  let parseError = '';
+  if (!isLogin) {
+    try { parsedEntries = parseCustomerBalanceHtml(html); }
+    catch (e: any) { parseError = e?.message ?? String(e); }
+  }
+
+  return {
+    status: res.status,
+    isLogin,
+    htmlLength: html.length,
+    totalDivs: allDivs.length,
+    headerDivs,
+    dataSample,
+    parsedCount: parsedEntries.length,
+    parsedEntries: parsedEntries.slice(0, 20),
+    parseError,
+  };
+}
+
+/**
+ * Parse the Customer Balance HTML report (PDF-style positioned divs).
+ * Columns: Number | First Name | Last Name | Account Number |
+ *          (£) Account Balance | (£) Available Balance
+ * Processes divs in HTML source order to handle multi-page reports correctly.
+ */
+/**
+ * Parse the Customer Balance HTML report.
+ *
+ * TouchOffice renders each page with top coordinates that reset to 0, so
+ * parallel-array / source-order indexing breaks as soon as any field is blank
+ * (no div emitted) for any customer — all subsequent rows shift.
+ *
+ * Instead we use row-based grouping:
+ *   1. Assign every div an "effective top" that accumulates a page offset each
+ *      time the top coordinate drops significantly (page break).
+ *   2. Bucket divs into rows by effective top (within ±ROW_TOL).
+ *   3. For each row that contains a Number-column div, extract the other
+ *      columns from the same row bucket.
+ *
+ * This tolerates blank fields, repeated page headers, and section headings
+ * without any array misalignment.
+ */
+function parseCustomerBalanceHtml(html: string): CustomerBalanceEntry[] {
+  const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
+  const section = containerStart >= 0 ? html.substring(containerStart) : html;
+
+  const COL_TOL = 15;
+  const ROW_TOL = 4;   // pt — same logical row
+  const PAGE_SEP = 9999; // effective-top offset per page (> any real page height)
+
+  interface RawDiv  { left: number; top: number; text: string; }
+  interface EDiv    { left: number; effTop: number; text: string; }
+
+  const extractRaw = (part: string): RawDiv | null => {
+    const styleM = part.match(/style="([^"]*)"/);
+    if (!styleM) return null;
+    const s = styleM[1];
+    const lM = s.match(/left:([\d.]+)pt/);
+    const tM = s.match(/top:([\d.]+)pt/);
+    if (!lM || !tM) return null;
+    const close = part.indexOf('>');
+    if (close === -1) return null;
+    const end = part.indexOf('</div>', close);
+    if (end === -1) return null;
+    const text = stripTags(part.substring(close + 1, end)).trim();
+    return text ? { left: parseFloat(lM[1]), top: parseFloat(tM[1]), text } : null;
+  };
+
+  // ── Phase 1: build effective-top coordinates ─────────────────────────────────
+  const parts = section.split('<div ');
+  const allDivs: EDiv[] = [];
+  let lastTop = -1;
+  let pageOffset = 0;
+
+  for (const part of parts) {
+    const raw = extractRaw(part);
+    if (!raw) continue;
+    if (lastTop > 50 && raw.top < lastTop - 50) pageOffset += PAGE_SEP;
+    lastTop = raw.top;
+    allDivs.push({ left: raw.left, effTop: pageOffset + raw.top, text: raw.text });
+  }
+
+  // ── Phase 2: detect column positions from first header row ────────────────────
+  const numHeader = allDivs.find(d => /^number$/i.test(d.text));
+  if (!numHeader) return [];
+
+  const hTop = numHeader.effTop;
+  const colLeft: Record<string, number> = {};
+
+  for (const d of allDivs.filter(d => Math.abs(d.effTop - hTop) < ROW_TOL)) {
+    const t = d.text.trim();
+    if (/^number$/i.test(t))                 colLeft.number         = d.left;
+    else if (/^first\s*name$/i.test(t))      colLeft.firstName      = d.left;
+    else if (/^last\s*name$/i.test(t))       colLeft.lastName       = d.left;
+    else if (/^account\s*number$/i.test(t))  colLeft.accountNumber  = d.left;
+    else if (/account\s*balance/i.test(t))   colLeft.accountBalance = d.left;
+  }
+
+  if (colLeft.number == null || colLeft.firstName == null || colLeft.lastName == null) return [];
+
+  // The header row repeats at the same within-page top on every page.
+  const headerTopWithinPage = hTop % PAGE_SEP;
+
+  // ── Phase 3: bucket non-header divs into rows by effective top ───────────────
+  // rowBuckets: effectiveTop (of first div placed) → array of divs
+  const rowBuckets: Array<{ effTop: number; divs: EDiv[] }> = [];
+
+  for (const d of allDivs) {
+    // Skip repeated column headers (same within-page top on any page)
+    if (Math.abs((d.effTop % PAGE_SEP) - headerTopWithinPage) < ROW_TOL) continue;
+
+    // Find existing bucket within ROW_TOL
+    let placed = false;
+    for (const bucket of rowBuckets) {
+      if (Math.abs(d.effTop - bucket.effTop) < ROW_TOL) {
+        bucket.divs.push(d);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) rowBuckets.push({ effTop: d.effTop, divs: [d] });
+  }
+
+  rowBuckets.sort((a, b) => a.effTop - b.effTop);
+
+  // ── Phase 4: extract entries from each row bucket ─────────────────────────────
+  const isNumericId  = (t: string) => /^\d+$/.test(t.trim());
+  const isAmountText = (t: string) => /\d/.test(t) && /^[\d,.()\-£\s]+$/.test(t);
+  const isNameText   = (t: string) => t.length > 0 && !isAmountText(t) && !isNumericId(t);
+
+  const entries: CustomerBalanceEntry[] = [];
+
+  for (const { divs } of rowBuckets) {
+    // A data row must contain a Number-column div with a positive integer
+    const numDiv = divs.find(d =>
+      Math.abs(d.left - colLeft.number) < COL_TOL && isNumericId(d.text) && parseInt(d.text) > 0
+    );
+    if (!numDiv) continue;
+
+    const custNum = parseInt(numDiv.text);
+
+    const fnDiv  = divs.find(d => colLeft.firstName     != null && Math.abs(d.left - colLeft.firstName)     < COL_TOL && isNameText(d.text));
+    const lnDiv  = divs.find(d => colLeft.lastName      != null && Math.abs(d.left - colLeft.lastName)      < COL_TOL && isNameText(d.text));
+    const accDiv = divs.find(d => colLeft.accountNumber != null && Math.abs(d.left - colLeft.accountNumber) < COL_TOL && isNumericId(d.text) && d !== numDiv);
+    const balDiv = divs.find(d => colLeft.accountBalance != null && Math.abs(d.left - colLeft.accountBalance) < COL_TOL && isAmountText(d.text));
+
+    entries.push({
+      customerNumber: custNum,
+      firstName:      fnDiv?.text  ?? '',
+      lastName:       lnDiv?.text  ?? '',
+      accountNumber:  accDiv?.text ?? String(custNum),
+      accountBalance: balDiv ? parseAmount(balDiv.text) : 0,
+    });
+  }
+
+  return entries;
 }
 
 // --- Week ranges ---

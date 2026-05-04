@@ -11,18 +11,20 @@ let stats = {
   gallery: 0,
   documents: 0,
   greenFees: 0,
+  proFees: 0,
   socialPosts: 0
 };
 
 try {
   if (db) {
-    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount, socialCount] = await Promise.all([
+    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount, proFeesCount, socialCount] = await Promise.all([
       db.prepare('SELECT COUNT(*) as count FROM website_pages').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_news').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_faq').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_gallery').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM member_documents').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM green_fees').first<{count: number}>(),
+      db.prepare('SELECT COUNT(*) as count FROM pro_lesson_fees').first<{count: number}>().catch(() => ({ count: 0 })),
       db.prepare('SELECT COUNT(*) as count FROM social_posts').first<{count: number}>().catch(() => ({ count: 0 }))
     ]);
     stats = {
@@ -32,6 +34,7 @@ try {
       gallery: galleryCount?.count || 0,
       documents: docsCount?.count || 0,
       greenFees: feesCount?.count || 0,
+      proFees: (proFeesCount as any)?.count || 0,
       socialPosts: socialCount?.count || 0
     };
   }
@@ -89,12 +92,28 @@ const contentSections = [
     countLabel: 'fee rates'
   },
   {
+    title: 'Pro Lesson Fees',
+    description: 'Manage coaching rates displayed on the Pro page',
+    href: '/admin/content/pro-fees',
+    icon: 'pound',
+    count: stats.proFees,
+    countLabel: 'lesson types'
+  },
+  {
     title: 'Social Media',
     description: 'Publish posts to Facebook and Instagram, and manage the social feed',
     href: '/admin/content/social',
     icon: 'share',
     count: stats.socialPosts,
     countLabel: 'posts'
+  },
+  {
+    title: 'Handicap Charts',
+    description: 'Upload updated WHS course handicap conversion tables for each tee marker',
+    href: '/admin/content/handicap-charts',
+    icon: 'flag',
+    count: null,
+    countLabel: ''
   },
   {
     title: 'Google Business Profile',
@@ -116,7 +135,8 @@ const icons: Record<string, string> = {
   'pound': '<line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
   'share': '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
   'map-pin': '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
-  'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'
+  'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+  'flag': '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'
 };
 ---
 

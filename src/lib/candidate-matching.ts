@@ -236,11 +236,14 @@ export interface CrmLineItem {
  * then re-run invoice matching on the combined payment.
  */
 export async function coalesceCandidates(db: any): Promise<number> {
-  // Find members with multiple unprocessed, non-coalesced candidates
+  // BACS records are individual bank transactions and must never be coalesced.
+  const NOT_BACS = `AND (payment_source IS NULL OR payment_source != 'bacs')`;
+
   const groups = await db.prepare(
     `SELECT matched_member_id, COUNT(*) as cnt
      FROM candidate_payments
      WHERE processed = 0 AND matched_member_id IS NOT NULL AND coalesced_into IS NULL
+       ${NOT_BACS}
      GROUP BY matched_member_id
      HAVING COUNT(*) > 1`
   ).all();
@@ -250,10 +253,10 @@ export async function coalesceCandidates(db: any): Promise<number> {
   for (const group of (groups.results || []) as any[]) {
     const memberId = group.matched_member_id;
 
-    // Get all unprocessed candidates for this member, largest amount first
     const candidatesResult = await db.prepare(
       `SELECT * FROM candidate_payments
        WHERE processed = 0 AND matched_member_id = ? AND coalesced_into IS NULL
+         ${NOT_BACS}
        ORDER BY amount DESC`
     ).bind(memberId).all();
 

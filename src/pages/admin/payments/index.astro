@@ -18,7 +18,7 @@ const perPage = 25;
 const offset = (page - 1) * perPage;
 
 // Build query
-let whereClause = '1=1';
+let whereClause = 'NOT EXISTS (SELECT 1 FROM seniors_purse_entries spe WHERE spe.payment_id = p.id)';
 const params: any[] = [];
 
 if (search) {

@@ -161,6 +161,13 @@ function normalizeName(name: string | null): string {
   return name.toLowerCase().trim().replace(/[^a-z]/g, '');
 }
 
+// "Junior (Members Family)" is a CRM billing variant of HM's "Junior"
+function normalizeCategory(cat: string | null): string {
+  if (!cat) return '';
+  if (cat === 'Junior (Members Family)') return 'Junior';
+  return cat;
+}
+
 // Parse date from DD/MM/YYYY format to YYYY-MM-DD
 function parseDate(dateStr: string): string | null {
   if (!dateStr) return null;
@@ -364,16 +371,14 @@ if (Astro.request.method === 'POST') {
         }
       }
 
+      const updateBatch: ReturnType<typeof db.prepare>[] = [];
       for (const m of matched) {
         const hm = m.hmRecord;
         const hmHandicap = hm.handicapIndex ? parseFloat(hm.handicapIndex) : null;
         const purseValue = hm.competitionPurse || hm.accountBalance;
         const hmPurse = purseValue ? parseCurrency(purseValue) : null;
-        const hmHomeClub = hm.homeClub || null;
-        const hmHomeAway = hm.homeAway ? hm.homeAway.charAt(0).toUpperCase() : null;
-        const hmAgeGroup = calculateAgeGroup(hm.dateOfBirth) || null;
 
-        // Build dynamic update
+        // Build dynamic update — Home Club, Home/Away, Age Group are CRM-managed, not synced from HM
         const sets: string[] = [];
         const values: any[] = [];
 
@@ -385,28 +390,15 @@ if (Astro.request.method === 'POST') {
           sets.push('competition_fee_purse = ?');
           values.push(hmPurse);
         }
-        if (hmHomeClub) {
-          sets.push('home_club = ?');
-          values.push(hmHomeClub);
-        }
-        if (hmHomeAway && ['H', 'A', 'V'].includes(hmHomeAway)) {
-          sets.push('home_away = ?');
-          values.push(hmHomeAway);
-        }
-        if (hmAgeGroup) {
-          sets.push('age_group = ?');
-          values.push(hmAgeGroup);
-        }
 
         if (sets.length > 0) {
-          await db.prepare(
-            `UPDATE members SET ${sets.join(', ')} WHERE id = ?`
-          ).bind(...values, m.crmId).run();
+          updateBatch.push(db.prepare(`UPDATE members SET ${sets.join(', ')} WHERE id = ?`).bind(...values, m.crmId));
           updated++;
         } else {
           skipped++;
         }
       }
+      if (updateBatch.length > 0) await db.batch(updateBatch);
 
       // Store undo snapshot
       await db.prepare(
@@ -434,7 +426,7 @@ if (Astro.request.method === 'POST') {
         if (!crm) continue;
         const diffs: string[] = [];
 
-        if (hm.pin && crm.pin && hm.pin !== crm.pin) {
+        if (hm.pin && crm.pin && parseInt(hm.pin, 10) !== parseInt(crm.pin, 10)) {
           diffs.push(`PIN: HM="${hm.pin}" vs CRM="${crm.pin}"`);
         }
         if (hm.handicapIndex && crm.handicap_index !== null) {
@@ -443,19 +435,8 @@ if (Astro.request.method === 'POST') {
             diffs.push(`Handicap: HM="${hm.handicapIndex}" vs CRM="${crm.handicap_index}"`);
           }
         }
-        if (hm.category && crm.category && hm.category !== crm.category) {
+        if (hm.category && crm.category && normalizeCategory(hm.category) !== normalizeCategory(crm.category)) {
           diffs.push(`Category: HM="${hm.category}" vs CRM="${crm.category}"`);
-        }
-        if (hm.homeAway && crm.home_away && hm.homeAway.charAt(0).toUpperCase() !== crm.home_away) {
-          diffs.push(`H/A: HM="${hm.homeAway}" vs CRM="${crm.home_away}"`);
-        }
-        if (hm.homeClub && crm.home_club && normalizeName(hm.homeClub) !== normalizeName(crm.home_club)) {
-          diffs.push(`Home Club: HM="${hm.homeClub}" vs CRM="${crm.home_club}"`);
-        }
-        const hmAge = calculateAgeGroup(hm.dateOfBirth);
-        const crmAge = crm.age_group === 'Playing Ladies' ? calculateAgeGroup(crm.date_of_birth) : crm.age_group;
-        if (hmAge && crmAge && hmAge !== crmAge) {
-          diffs.push(`Age Group: HM="${hmAge}" vs CRM="${crm.age_group}"`);
         }
         const purseVal = hm.competitionPurse || hm.accountBalance;
         if (purseVal) {
@@ -593,6 +574,79 @@ if (Astro.request.method === 'POST') {
       }
     } catch (e: any) {
       error = `Undo failed: ${e.message}`;
+    }
+  } else if (action === 'update-all-fields') {
+    // Update handicap_index and competition_fee_purse for all matched members, then recalc diffs
+    try {
+      const matchedJson = formData.get('matchedData') as string;
+      const matched: ConsolidationResult['matched'] = JSON.parse(matchedJson);
+      let updated = 0;
+
+      const updateBatch: ReturnType<typeof db.prepare>[] = [];
+      for (const m of matched) {
+        const hm = m.hmRecord;
+        const handicap = hm.handicapIndex ? parseFloat(hm.handicapIndex) : null;
+        const purseVal = hm.competitionPurse || hm.accountBalance;
+        const purse = purseVal ? parseCurrency(purseVal) : null;
+
+        const sets: string[] = [];
+        const vals: any[] = [];
+        if (handicap !== null && !isNaN(handicap)) { sets.push('handicap_index = ?'); vals.push(handicap); }
+        if (purse !== null) { sets.push('competition_fee_purse = ?'); vals.push(purse); }
+        if (sets.length > 0) {
+          updateBatch.push(db.prepare(`UPDATE members SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, m.crmId));
+          updated++;
+        }
+      }
+      if (updateBatch.length > 0) await db.batch(updateBatch);
+
+      // Re-read CRM values and recalculate differences
+      const memberIds = matched.map(m => m.crmId);
+      const updatedCrm = new Map<number, any>();
+      const batchSize = 80;
+      for (let i = 0; i < memberIds.length; i += batchSize) {
+        const batch = memberIds.slice(i, i + batchSize);
+        const ph = batch.map(() => '?').join(',');
+        const rows = await db.prepare(
+          `SELECT id, handicap_index, competition_fee_purse, pin, category, home_away, home_club, age_group, date_of_birth, email FROM members WHERE id IN (${ph})`
+        ).bind(...batch).all();
+        for (const r of (rows.results || []) as any[]) updatedCrm.set(r.id, r);
+      }
+
+      for (const m of matched) {
+        const hm = m.hmRecord;
+        const crm = updatedCrm.get(m.crmId);
+        if (!crm) continue;
+        const diffs: string[] = [];
+        if (hm.pin && crm.pin && parseInt(hm.pin, 10) !== parseInt(crm.pin, 10)) diffs.push(`PIN: HM="${hm.pin}" vs CRM="${crm.pin}"`);
+        if (hm.handicapIndex && crm.handicap_index !== null) {
+          const hmH = parseFloat(hm.handicapIndex);
+          if (!isNaN(hmH) && Math.abs(hmH - crm.handicap_index) > 0.1) diffs.push(`Handicap: HM="${hm.handicapIndex}" vs CRM="${crm.handicap_index}"`);
+        }
+        if (hm.category && crm.category && normalizeCategory(hm.category) !== normalizeCategory(crm.category)) diffs.push(`Category: HM="${hm.category}" vs CRM="${crm.category}"`);
+        const pv = hm.competitionPurse || hm.accountBalance;
+        if (pv) {
+          const hmP = parseCurrency(pv);
+          const crmP = crm.competition_fee_purse || 0;
+          if (Math.abs(hmP - crmP) > 0.01) diffs.push(`Comp Purse: HM="£${hmP.toFixed(2)}" vs CRM="£${crmP.toFixed(2)}"`);
+        }
+        m.differences = diffs;
+      }
+
+      // Save updated differences
+      const savedConsolidation = await db.prepare(
+        `SELECT id FROM handicapmaster_consolidation ORDER BY imported_at DESC LIMIT 1`
+      ).first<{ id: number }>();
+      if (savedConsolidation) {
+        await db.prepare(`UPDATE handicapmaster_consolidation SET matched_json = ? WHERE id = ?`)
+          .bind(JSON.stringify(matched), savedConsolidation.id).run();
+      }
+
+      result = result || { matched: [], hmNotInCrm: [], crmNotInHm: [], errors: [] };
+      result.matched = matched;
+      successMessage = `Updated Handicap Index and Competition Purse for ${updated} member${updated !== 1 ? 's' : ''}`;
+    } catch (e: any) {
+      error = `Update failed: ${e.message}`;
     }
   } else {
     // Process uploaded file
@@ -783,7 +837,7 @@ if (Astro.request.method === 'POST') {
                 // Check for differences
                 const differences: string[] = [];
 
-                if (hm.pin && crm.pin && hm.pin !== crm.pin) {
+                if (hm.pin && crm.pin && parseInt(hm.pin, 10) !== parseInt(crm.pin, 10)) {
                   differences.push(`PIN: HM="${hm.pin}" vs CRM="${crm.pin}"`);
                 }
                 if (hm.email && crm.email && hm.email.toLowerCase() !== crm.email.toLowerCase()) {
@@ -795,22 +849,8 @@ if (Astro.request.method === 'POST') {
                     differences.push(`Handicap: HM="${hm.handicapIndex}" vs CRM="${crm.handicap_index}"`);
                   }
                 }
-                if (hm.category && crm.category && hm.category !== crm.category) {
+                if (hm.category && crm.category && normalizeCategory(hm.category) !== normalizeCategory(crm.category)) {
                   differences.push(`Category: HM="${hm.category}" vs CRM="${crm.category}"`);
-                }
-                if (hm.homeAway && crm.home_away && hm.homeAway.charAt(0).toUpperCase() !== crm.home_away) {
-                  differences.push(`H/A: HM="${hm.homeAway}" vs CRM="${crm.home_away}"`);
-                }
-                if (hm.homeClub && crm.home_club && normalizeName(hm.homeClub) !== normalizeName(crm.home_club)) {
-                  differences.push(`Home Club: HM="${hm.homeClub}" vs CRM="${crm.home_club}"`);
-                }
-                const hmAgeGroup = calculateAgeGroup(hm.dateOfBirth);
-                // Normalize CRM age group: "Playing Ladies" → calculated from DOB
-                const crmAgeGroup = crm.age_group === 'Playing Ladies'
-                  ? calculateAgeGroup(crm.date_of_birth)
-                  : crm.age_group;
-                if (hmAgeGroup && crmAgeGroup && hmAgeGroup !== crmAgeGroup) {
-                  differences.push(`Age Group: HM="${hmAgeGroup}" vs CRM="${crm.age_group}"`);
                 }
                 // Use competition purse field if available, fall back to account balance
                 const purseValue = hm.competitionPurse || hm.accountBalance;
@@ -1057,12 +1097,12 @@ const hasDiscrepancies = result ? (
           </div>
           <div class="card-content" style="padding: 1.25rem;">
             <p style="margin-bottom: 1rem; color: #666; font-size: 0.9rem;">
-              Update all matched CRM members with <strong>Handicap Index</strong>, <strong>Competition Purse</strong>,
-              <strong>Home Club</strong>, <strong>Home/Away</strong>, and <strong>Age Group</strong> from the HandicapMaster data.
+              Update <strong>Handicap Index</strong> and <strong>Competition Purse</strong> from HandicapMaster for all matched members.
+              Home Club, Home/Away, and Age Group are managed in the CRM and are not changed.
             </p>
             <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
               <form method="POST">
-                <input type="hidden" name="action" value="sync" />
+                <input type="hidden" name="action" value="update-all-fields" />
                 <input type="hidden" name="matchedData" value={JSON.stringify(result.matched)} />
                 <button type="submit" class="btn btn-primary">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
@@ -1070,7 +1110,7 @@ const hasDiscrepancies = result ? (
                     <polyline points="1 20 1 14 7 14"/>
                     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                   </svg>
-                  Sync All ({result.matched.length} members)
+                  Update Handicap &amp; Purse ({result.matched.length} members)
                 </button>
               </form>
               {undoAvailable && (
@@ -1643,7 +1683,15 @@ const hasDiscrepancies = result ? (
         const actionVal = action ? action.value : '';
         const fileInput = this.querySelector('input[type="file"]');
 
-        if (actionVal === 'sync') {
+        if (actionVal === 'update-all-fields') {
+          showLoading('Updating Handicap & Purse', 'Updating handicap index and competition purse for all members...', true);
+          let progress = 0;
+          const interval = setInterval(() => {
+            progress += Math.random() * 8;
+            if (progress > 90) progress = 90;
+            updateProgress(progress);
+          }, 300);
+        } else if (actionVal === 'sync') {
           showLoading('Syncing from HandicapMaster', 'Updating member records and recalculating differences...', true);
           // Simulate progress (we can't track real progress on a form POST)
           let progress = 0;

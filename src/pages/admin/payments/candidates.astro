@@ -18,7 +18,7 @@ const badgeCount = unprocessedCount?.count || 0;
 const candidates = await db.prepare(
   `SELECT cp.*,
           m.first_name as m_first_name, m.surname as m_surname,
-          i.invoice_number
+          i.invoice_number, i.total as primary_invoice_total
    FROM candidate_payments cp
    LEFT JOIN members m ON cp.matched_member_id = m.id
    LEFT JOIN invoices i ON cp.matched_invoice_id = i.id
@@ -358,37 +358,40 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
                     {formatCurrency(row.amount)}
                   </td>
                   <td class="invoice-cell">
-                    {row.amount_matches_invoice && row.invoice_number ? (
-                      <div class="invoice-detail">
-                        <span class="invoice-match">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <polyline points="20 6 9 17 4 12"/>
-                          </svg>
-                          {row.invoice_number}
-                        </span>
-                        {familyInvoices.length > 0 && (
-                          <span class="family-badge" title={`Family: ${familySummary}`}>
-                            + {familyInvoices.length} family
-                          </span>
-                        )}
-                      </div>
-                    ) : row.matched_invoice_id && row.invoice_number ? (
-                      <div class="invoice-detail">
-                        <span class="invoice-partial">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                            <line x1="12" y1="9" x2="12" y2="13"/>
-                            <line x1="12" y1="17" x2="12.01" y2="17"/>
-                          </svg>
-                          {row.invoice_number}
-                        </span>
-                        {hasOutstanding && (
-                          <span class="outstanding-badge" title={`Outstanding: ${outstandingSummary}`}>
-                            Outstanding: {outstandingSummary}
-                            <span class="outstanding-amount">
-                              £{outstandingTotal.toFixed(2)}
-                            </span>
-                          </span>
+                    {row.matched_invoice_id && row.invoice_number ? (
+                      /* Split payment UI — primary invoice linked, may have co-payers */
+                      <div class="bacs-split" data-candidate-id={row.id} data-amount={row.amount}>
+                        <div class="split-row split-primary">
+                          <span class="split-inv">{row.invoice_number}</span>
+                          <span class="split-amt">£{(row.primary_invoice_total || 0).toFixed(2)}</span>
+                        </div>
+                        {familyInvoices.map((fi: any) => (
+                          <div class="split-row">
+                            <span class="split-name">{fi.memberName}</span>
+                            <span class="split-inv">{fi.invoiceNumber || `#${fi.invoiceId}`}</span>
+                            <span class="split-amt">£{fi.total.toFixed(2)}</span>
+                            <button class="remove-copayer-btn"
+                                    data-candidate-id={row.id} data-invoice-id={fi.invoiceId}
+                                    title="Remove co-payer">×</button>
+                          </div>
+                        ))}
+                        {row.amount_matches_invoice ? (
+                          <div class="split-total split-total-match">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+                            £{row.amount.toFixed(2)} matched
+                          </div>
+                        ) : (
+                          <>
+                            <div class="split-total split-total-short">
+                              Remaining: £{(row.amount - (row.invoice_total || row.primary_invoice_total || 0)).toFixed(2)}
+                            </div>
+                            <div class="add-copayer-wrap" data-candidate-id={row.id}>
+                              <input type="text" class="invoice-search add-copayer-search"
+                                     placeholder="Add member invoice…"
+                                     data-candidate-id={row.id} autocomplete="off" />
+                              <div class="invoice-dropdown" style="display:none;"></div>
+                            </div>
+                          </>
                         )}
                       </div>
                     ) : (
@@ -965,6 +968,95 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
     margin-top: 2px;
   }
 
+  /* Split / co-payer payment UI */
+  .bacs-split {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 200px;
+  }
+
+  .split-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.8rem;
+  }
+
+  .split-primary .split-inv {
+    font-weight: 600;
+    color: #166534;
+  }
+
+  .split-name {
+    color: #555;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100px;
+    flex: 1;
+  }
+
+  .split-inv {
+    color: #555;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .split-amt {
+    color: #333;
+    font-weight: 500;
+    white-space: nowrap;
+    margin-left: auto;
+  }
+
+  .remove-copayer-btn {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .remove-copayer-btn:hover {
+    color: #dc2626;
+    background: #fee2e2;
+  }
+
+  .split-total {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-top: 2px;
+    padding-top: 3px;
+    border-top: 1px dashed #e0e0e0;
+  }
+
+  .split-total-match {
+    color: #166534;
+  }
+
+  .split-total-short {
+    color: #b45309;
+  }
+
+  .add-copayer-wrap {
+    position: relative;
+    margin-top: 3px;
+  }
+
+  .add-copayer-search {
+    width: 160px !important;
+    font-size: 0.78rem !important;
+    padding: 0.25rem 0.4rem !important;
+  }
+
   /* Empty State */
   .empty-row {
     padding: 3rem !important;
@@ -1412,6 +1504,97 @@ const validCount = rows.filter((r: any) => r.match_status === 'matched' && r.amo
         }
       } catch (err) {
         await m3Alert('Failed to dismiss payment', { title: 'Error', type: 'error' });
+      }
+    });
+  });
+
+  // Add co-payer search — same dropdown logic as invoice-search but calls add-co-payer
+  let coPayerSearchTimeout = null;
+  document.querySelectorAll('.add-copayer-search').forEach(input => {
+    const wrap = input.closest('.add-copayer-wrap');
+    const dropdown = wrap.querySelector('.invoice-dropdown');
+    const candidateId = input.dataset.candidateId;
+
+    input.addEventListener('input', () => {
+      clearTimeout(coPayerSearchTimeout);
+      const q = input.value.trim();
+      if (q.length < 1) { dropdown.style.display = 'none'; return; }
+      coPayerSearchTimeout = setTimeout(async () => {
+        try {
+          const res = await fetch('/api/candidate-payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'search-invoices', query: q }),
+          });
+          const data = await res.json();
+          if (data.success && data.invoices.length > 0) {
+            dropdown.innerHTML = data.invoices.map(inv =>
+              `<div class="invoice-option copayer-option" data-invoice-number="${inv.invoice_number}" data-candidate-id="${candidateId}">
+                <span class="invoice-option-number">${inv.invoice_number}</span>
+                <span class="invoice-option-member">${inv.member_name}</span>
+                <span class="invoice-option-amount">£${inv.total.toFixed(2)}</span>
+              </div>`
+            ).join('');
+            dropdown.style.display = 'block';
+          } else {
+            dropdown.innerHTML = '<div class="invoice-no-results">No invoices found</div>';
+            dropdown.style.display = 'block';
+          }
+        } catch { dropdown.style.display = 'none'; }
+      }, 300);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!wrap.contains(e.target)) dropdown.style.display = 'none';
+    });
+  });
+
+  // Co-payer option click — add invoice to split
+  document.addEventListener('click', async (e) => {
+    const option = e.target.closest('.copayer-option');
+    if (!option) return;
+
+    const invoiceNumber = option.dataset.invoiceNumber;
+    const candidateId = option.dataset.candidateId;
+    const wrap = option.closest('.add-copayer-wrap');
+    if (wrap) wrap.querySelector('.invoice-dropdown').style.display = 'none';
+
+    try {
+      const res = await fetch('/api/candidate-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add-co-payer', candidateId: parseInt(candidateId), invoiceNumber }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        window.location.reload();
+      } else {
+        await m3Alert(data.error || 'Failed to add co-payer', { title: 'Error', type: 'error' });
+      }
+    } catch (err) {
+      await m3Alert('Failed to add co-payer', { title: 'Error', type: 'error' });
+    }
+  });
+
+  // Remove co-payer button
+  document.querySelectorAll('.remove-copayer-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const candidateId = btn.dataset.candidateId;
+      const invoiceId = btn.dataset.invoiceId;
+      try {
+        const res = await fetch('/api/candidate-payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'remove-co-payer', candidateId: parseInt(candidateId), invoiceId: parseInt(invoiceId) }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          window.location.reload();
+        } else {
+          await m3Alert(data.error || 'Failed to remove', { title: 'Error', type: 'error' });
+        }
+      } catch (err) {
+        await m3Alert('Failed to remove co-payer', { title: 'Error', type: 'error' });
       }
     });
   });

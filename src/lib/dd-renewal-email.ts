@@ -506,7 +506,7 @@ export function generateDDRenewalEmail(
                   If any of the details shown above are incorrect, or if you wish to discuss your membership,
                   please contact us at
                   <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>
-                  or telephone 01665 830231.
+                  or telephone 01665 830370.
                 </p>
               </div>
             </td>
@@ -587,7 +587,7 @@ export function generateDDRenewalEmail(
                   <td style="font-size: 13px; color: #666; line-height: 1.6;">
                     <p style="margin: 0;"><strong>Alnmouth Village Golf Club</strong></p>
                     <p style="margin: 5px 0 0 0;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
-                    <p style="margin: 5px 0 0 0;">Tel: 01665 830231 | Email: <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
+                    <p style="margin: 5px 0 0 0;">Tel: 01665 830370 | Email: <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
                     <p style="margin: 10px 0 0 0;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
                   </td>
                 </tr>
@@ -902,7 +902,7 @@ export function generateConsolidatedDDRenewalEmail(
                   If any of the details shown above are incorrect, or if you wish to discuss your membership,
                   please contact us at
                   <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631; font-weight: 600;">subscriptions@AlnmouthVillage.Golf</a>
-                  or telephone 01665 830231.
+                  or telephone 01665 830370.
                 </p>
               </div>
             </td>
@@ -964,7 +964,7 @@ export function generateConsolidatedDDRenewalEmail(
                   <td style="font-size: 13px; color: #666; line-height: 1.6;">
                     <p style="margin: 0;"><strong>Alnmouth Village Golf Club</strong></p>
                     <p style="margin: 5px 0 0 0;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
-                    <p style="margin: 5px 0 0 0;">Tel: 01665 830231 | Email: <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
+                    <p style="margin: 5px 0 0 0;">Tel: 01665 830370 | Email: <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
                     <p style="margin: 10px 0 0 0;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
                   </td>
                 </tr>

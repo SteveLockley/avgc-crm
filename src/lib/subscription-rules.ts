@@ -155,6 +155,7 @@ export function isAutoManagedSubscription(category: string | null): boolean {
     'pga professional',
     'international',
     'life',
+    'concessionary',
   ];
 
   return !excludedTypes.some(excluded => lower.includes(excluded));

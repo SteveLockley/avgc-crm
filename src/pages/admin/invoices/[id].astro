@@ -53,7 +53,7 @@ if (Astro.request.method === 'POST') {
   const action = formData.get('action');
 
   if (action === 'mark_paid') {
-    const paymentMethod = formData.get('payment_method') as string || 'BACS';
+    const paymentMethod = formData.get('payment_method') as string || member.default_payment_method || 'BACS';
 
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
@@ -267,10 +267,17 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
             <form method="POST" class="action-form">
               <input type="hidden" name="action" value="mark_paid" />
               <select name="payment_method" class="method-select">
-                <option value="BACS" selected={member.default_payment_method === 'BACS'}>BACS</option>
-                <option value="Over the Till" selected={member.default_payment_method === 'Over the Till'}>Over the Till</option>
-                <option value="Standing Order" selected={member.default_payment_method === 'Standing Order'}>Standing Order</option>
-                <option value="Cheque" selected={member.default_payment_method === 'Cheque'}>Cheque</option>
+                {[
+                  'BACS',
+                  'Clubwise Direct Debit',
+                  'Standing Order',
+                  'Cheque',
+                  'Cash',
+                  'Card',
+                  'Over the Till',
+                ].map(m => (
+                  <option value={m} selected={member.default_payment_method === m}>{m}</option>
+                ))}
               </select>
               <button type="submit" class="btn btn-filled">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>

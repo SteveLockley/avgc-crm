@@ -66,6 +66,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
         return await handleSendOutstandingReminder(db, body, locals);
       case 'import-bacs':
         return await handleImportBacs(db, body);
+      case 'add-co-payer':
+        return await handleAddCoPayer(db, body);
+      case 'remove-co-payer':
+        return await handleRemoveCoPayer(db, body);
       default:
         return json({ error: 'Unknown action' }, 400);
     }
@@ -203,6 +207,12 @@ async function handleSync(db: any, env: any, body: any) {
       `SELECT id FROM payments WHERE reference = ?`
     ).bind(`TouchOffice Sale ${sale.saleId}`).first();
     if (alreadyPaid) continue;
+
+    // Skip seniors' purse entries — they are tracked separately
+    const isSeniorsPurse = await db.prepare(
+      `SELECT id FROM seniors_purse_entries WHERE sale_id = ?`
+    ).bind(sale.saleId).first();
+    if (isSeniorsPurse) { skipped++; continue; }
 
     // Fetch the receipt for this sale
     let receipt;
@@ -970,6 +980,87 @@ async function handleSendOutstandingReminder(db: any, body: any, locals: any) {
 }
 
 /**
+ * Add a co-payer invoice to a BACS candidate.
+ * Allows one BACS payment to cover multiple members' invoices (e.g. a spouse paying for both).
+ * Recalculates whether the combined invoice total matches the BACS amount.
+ */
+async function handleAddCoPayer(db: any, body: any) {
+  const { candidateId, invoiceNumber } = body;
+  if (!candidateId || !invoiceNumber) return json({ error: 'Missing candidateId or invoiceNumber' }, 400);
+
+  const candidate = await db.prepare(
+    `SELECT * FROM candidate_payments WHERE id = ? AND processed = 0`
+  ).bind(candidateId).first<any>();
+  if (!candidate) return json({ error: 'Candidate not found or already processed' }, 404);
+  if (!candidate.matched_invoice_id) return json({ error: 'Link the primary invoice first' }, 400);
+
+  const invoice = await db.prepare(
+    `SELECT i.id, i.total, i.invoice_number, i.member_id, m.first_name, m.surname
+     FROM invoices i JOIN members m ON m.id = i.member_id
+     WHERE i.invoice_number = ?`
+  ).bind(invoiceNumber.trim()).first<any>();
+  if (!invoice) return json({ error: `Invoice ${invoiceNumber} not found` }, 404);
+
+  if (invoice.id === candidate.matched_invoice_id) {
+    return json({ error: 'That is the primary invoice — already included' }, 400);
+  }
+
+  const existing: any[] = candidate.family_invoices ? JSON.parse(candidate.family_invoices) : [];
+  if (existing.some((fi: any) => fi.invoiceId === invoice.id)) {
+    return json({ error: 'That invoice is already included' }, 400);
+  }
+
+  const newEntry = {
+    invoiceId: invoice.id,
+    memberId: invoice.member_id,
+    memberName: `${invoice.first_name} ${invoice.surname}`,
+    total: invoice.total,
+    invoiceNumber: invoice.invoice_number,
+  };
+  const updated = [...existing, newEntry];
+
+  const primaryInv = await db.prepare(`SELECT total FROM invoices WHERE id = ?`)
+    .bind(candidate.matched_invoice_id).first<any>();
+  const primaryTotal = primaryInv?.total || 0;
+  const combinedTotal = primaryTotal + updated.reduce((s: number, fi: any) => s + fi.total, 0);
+  const matches = Math.abs(candidate.amount - combinedTotal) < 0.01;
+
+  await db.prepare(
+    `UPDATE candidate_payments SET family_invoices = ?, invoice_total = ?, amount_matches_invoice = ? WHERE id = ?`
+  ).bind(JSON.stringify(updated), combinedTotal, matches ? 1 : 0, candidateId).run();
+
+  return json({ ok: true, matches, combinedTotal, entry: newEntry });
+}
+
+/**
+ * Remove a co-payer invoice from a BACS candidate.
+ */
+async function handleRemoveCoPayer(db: any, body: any) {
+  const { candidateId, invoiceId } = body;
+  if (!candidateId || invoiceId == null) return json({ error: 'Missing candidateId or invoiceId' }, 400);
+
+  const candidate = await db.prepare(
+    `SELECT * FROM candidate_payments WHERE id = ? AND processed = 0`
+  ).bind(candidateId).first<any>();
+  if (!candidate) return json({ error: 'Candidate not found or already processed' }, 404);
+
+  const existing: any[] = candidate.family_invoices ? JSON.parse(candidate.family_invoices) : [];
+  const updated = existing.filter((fi: any) => fi.invoiceId !== parseInt(invoiceId));
+
+  const primaryInv = await db.prepare(`SELECT total FROM invoices WHERE id = ?`)
+    .bind(candidate.matched_invoice_id).first<any>();
+  const primaryTotal = primaryInv?.total || 0;
+  const combinedTotal = primaryTotal + updated.reduce((s: number, fi: any) => s + fi.total, 0);
+  const matches = Math.abs(candidate.amount - combinedTotal) < 0.01;
+
+  await db.prepare(
+    `UPDATE candidate_payments SET family_invoices = ?, invoice_total = ?, amount_matches_invoice = ? WHERE id = ?`
+  ).bind(updated.length > 0 ? JSON.stringify(updated) : null, combinedTotal, matches ? 1 : 0, candidateId).run();
+
+  return json({ ok: true, matches, combinedTotal });
+}
+
+/**
  * Import BACS payments from pasted/uploaded text file.
  * Parses, filters non-membership, matches members & invoices, inserts as candidates.
  */
@@ -978,7 +1069,10 @@ async function handleImportBacs(db: any, body: any) {
   if (!text) return json({ error: 'No BACS data provided' }, 400);
 
   const records = parseBacsFile(text);
-  if (records.length === 0) return json({ error: 'No valid BACS records found' }, 400);
+  if (records.length === 0) {
+    const lineCount = text.split(/\r\n|\r|\n/).length;
+    return json({ error: `No valid BACS records found — file had ${lineCount} lines. Expected CSV with "Trx,Transaction Date" header row.` }, 400);
+  }
 
   let newCount = 0;
   let matched = 0;

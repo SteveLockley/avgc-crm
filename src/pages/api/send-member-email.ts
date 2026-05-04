@@ -50,7 +50,7 @@ function generateEmailHtml(body: string): string {
             <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
               <p style="margin: 0; font-size: 13px; color: #666;"><strong>Alnmouth Village Golf Club</strong></p>
               <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Marine Road, Alnmouth, Northumberland, NE66 2RZ</p>
-              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Tel: 01665 830231 | <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
+              <p style="margin: 4px 0 0 0; font-size: 13px; color: #666;">Tel: 01665 830370 | <a href="mailto:subscriptions@AlnmouthVillage.Golf" style="color: #1e5631;">subscriptions@AlnmouthVillage.Golf</a></p>
               <p style="margin: 8px 0 0 0; font-size: 13px;"><a href="https://alnmouthvillage.golf" style="color: #1e5631;">www.AlnmouthVillage.Golf</a></p>
             </td>
           </tr>

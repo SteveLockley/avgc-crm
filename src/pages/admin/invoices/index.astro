@@ -394,6 +394,14 @@ function buildQueryString(pageNum: number): string {
           Remind Selected
         </button>
         <span id="selected-count" class="selected-count">0 selected</span>
+        <button type="button" class="btn btn-warning btn-sm" onclick="remindAllUnpaid()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+          Remind All Unpaid
+        </button>
         <div class="bulk-actions-right" style="margin-left: auto; display: flex; gap: 0.5rem;">
           <a href="/admin/invoices/unpaid-print" target="_blank" class="btn btn-sm btn-secondary">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
@@ -1421,6 +1429,25 @@ function buildQueryString(pageNum: number): string {
     }
   </style>
 
+  <!-- Reminder Preview Modal -->
+  <div id="reminder-preview-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.6);display:none;flex-direction:column;">
+    <div style="background:#fff;display:flex;flex-direction:column;height:100%;max-width:860px;margin:0 auto;width:100%;box-shadow:0 0 40px rgba(0,0,0,0.3);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem 1.25rem;border-bottom:1px solid #e0e0e0;background:#f8f9fa;flex-shrink:0;">
+        <div>
+          <h2 style="margin:0;font-size:1.1rem;font-weight:600;">Reminder Email Preview</h2>
+          <p style="margin:0.25rem 0 0;font-size:0.8rem;color:#666;">Sample based on first unpaid invoice — each recipient gets a personalised email</p>
+        </div>
+        <div style="display:flex;gap:0.75rem;align-items:center;">
+          <button id="preview-cancel-btn" style="padding:0.5rem 1rem;border:1px solid #ccc;background:#fff;border-radius:8px;cursor:pointer;font-size:0.9rem;">Cancel</button>
+          <button id="preview-send-btn" style="padding:0.5rem 1.25rem;background:#1e5631;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:0.9rem;font-weight:600;">Send to All Unpaid</button>
+        </div>
+      </div>
+      <div style="flex:1;overflow:hidden;">
+        <iframe id="reminder-preview-frame" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin"></iframe>
+      </div>
+    </div>
+  </div>
+
   <script>
     const selectAll = document.getElementById('select-all') as HTMLInputElement;
     const checkboxes = document.querySelectorAll('.invoice-checkbox') as NodeListOf<HTMLInputElement>;
@@ -1593,6 +1620,83 @@ function buildQueryString(pageNum: number): string {
     }
     (window as any).remindSelected = remindSelected;
 
+    // Send reminder emails to ALL unpaid invoices — shows preview first
+    async function remindAllUnpaid() {
+      const modal = document.getElementById('reminder-preview-modal')!;
+      const frame = document.getElementById('reminder-preview-frame') as HTMLIFrameElement;
+      const sendBtn = document.getElementById('preview-send-btn')!;
+      const cancelBtn = document.getElementById('preview-cancel-btn')!;
+
+      // Show modal and load preview
+      modal.style.display = 'flex';
+      frame.src = '/api/preview-reminder-email';
+
+      // Wire up Cancel
+      const onCancel = () => {
+        modal.style.display = 'none';
+        frame.src = '';
+        sendBtn.removeEventListener('click', onSend);
+        cancelBtn.removeEventListener('click', onCancel);
+      };
+
+      // Wire up Send — batches of 20 with live progress
+      const onSend = async () => {
+        modal.style.display = 'none';
+        frame.src = '';
+        sendBtn.removeEventListener('click', onSend);
+        cancelBtn.removeEventListener('click', onCancel);
+
+        let totalSent = 0;
+        let totalFailed = 0;
+        let offset = 0;
+        let grandTotal = 0;
+
+        try {
+          do {
+            const response = await fetch('/api/send-invoice-reminder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ allUnpaid: true, offset }),
+            });
+            const data = await response.json();
+
+            if (data.error && totalSent === 0) {
+              await (window as any).m3Alert(
+                data.error,
+                { title: 'Nothing to Send', type: 'warning' }
+              );
+              return;
+            }
+
+            totalSent += data.sent || 0;
+            totalFailed += data.failed || 0;
+            grandTotal = data.total || grandTotal;
+            offset = data.nextOffset || offset;
+
+            // Show progress if more batches remain
+            if (data.remaining > 0) {
+              (window as any).m3Toast?.(`Sending… ${totalSent} of ${grandTotal} sent`);
+            }
+
+          } while (offset < grandTotal && grandTotal > 0);
+
+          await (window as any).m3Alert(
+            `${totalSent} of ${grandTotal} reminder${grandTotal !== 1 ? 's' : ''} sent successfully${totalFailed > 0 ? `, ${totalFailed} failed` : ''}.`,
+            { title: 'Reminders Sent', type: totalFailed > 0 ? 'warning' : 'success' }
+          );
+        } catch (error: any) {
+          await (window as any).m3Alert(
+            `Send failed after ${totalSent} sent: ${error.message}`,
+            { title: 'Error', type: 'error' }
+          );
+        }
+      };
+
+      sendBtn.addEventListener('click', onSend);
+      cancelBtn.addEventListener('click', onCancel);
+    }
+    (window as any).remindAllUnpaid = remindAllUnpaid;
+
     async function deleteInvoice(invoiceId: number, invoiceNumber: string) {
       const confirmed = await (window as any).m3Confirm(
         `Delete invoice ${invoiceNumber} and all associated payments? This will also clear the member's renewal date. This cannot be undone.`,
@@ -1619,7 +1723,7 @@ function buildQueryString(pageNum: number): string {
     (window as any).deleteInvoice = deleteInvoice;
 
     async function markPaid(invoiceId: number, invoiceNumber: string, defaultMethod: string) {
-      const methods = ['BACS', 'Over the Till', 'Standing Order', 'Cheque'];
+      const methods = ['BACS', 'Clubwise Direct Debit', 'Standing Order', 'Cheque', 'Cash', 'Card', 'Over the Till'];
       const paymentMethod = await (window as any).m3Select(
         `Mark invoice ${invoiceNumber} as paid. Select the payment method:`,
         methods,

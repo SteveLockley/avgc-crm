@@ -12,14 +12,16 @@ const SHAREPOINT_SITE = 'alnmouthvillagegolf.sharepoint.com';
 const SHAREPOINT_SITE_PATH = '/sites/IT';
 const BACKUP_FOLDER = '/Backups';
 
-export async function POST({ locals }: APIContext) {
+export async function POST({ locals, request }: APIContext) {
   const env = locals.runtime.env;
   const db = env.DB;
 
-  // Restrict to specific admin users only
+  // Allow automated cron via secret key, or specific admin users via Cloudflare Access
+  const secretKey = request.headers.get('X-Backup-Secret');
   const BACKUP_ADMINS = ['admin@alnmouthvillage.golf', 'steve.lockley@alnmouthvillage.golf'];
   const userEmail = locals.user?.email?.toLowerCase() || '';
-  const isAuthorized = BACKUP_ADMINS.includes(userEmail);
+  const isAuthorized = (env.BACKUP_SECRET && secretKey === env.BACKUP_SECRET)
+    || BACKUP_ADMINS.includes(userEmail);
 
   if (!isAuthorized) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {

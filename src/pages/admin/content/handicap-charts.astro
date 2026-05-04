@@ -1,0 +1,390 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+interface Marker {
+  id: number;
+  name: string;
+  color: string;
+  text_color: string;
+  display_order: number;
+  updated_at: string;
+}
+
+interface EntryCounts {
+  marker_id: number;
+  row_count: number;
+}
+
+let markers: Marker[] = [];
+let rowCounts: Record<number, number> = {};
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+if (db) {
+  try {
+    const [mResult, cResult] = await Promise.all([
+      db.prepare('SELECT * FROM handicap_markers ORDER BY display_order').all<Marker>(),
+      db.prepare('SELECT marker_id, COUNT(*) as row_count FROM handicap_chart_entries GROUP BY marker_id').all<EntryCounts>(),
+    ]);
+    markers = mResult.results ?? [];
+    for (const c of (cResult.results ?? [])) {
+      rowCounts[c.marker_id] = c.row_count;
+    }
+  } catch (e: any) {
+    message = e.message || 'Failed to load data';
+    messageType = 'error';
+  }
+}
+---
+
+<AdminLayout title="Handicap Charts">
+  <div class="page-header">
+    <h1>Handicap Charts</h1>
+    <p class="page-subtitle">Manage course handicap conversion tables for each tee marker.</p>
+    <a href="/course/handicapping" target="_blank" class="btn-preview">View public page ↗</a>
+  </div>
+
+  {message && (
+    <div class={`alert alert-${messageType}`}>{message}</div>
+  )}
+
+  <div class="markers-grid">
+    {markers.map(marker => (
+      <div class="marker-card">
+        <div class="marker-header" style={`background:${marker.color};color:${marker.text_color}`}>
+          <span class="marker-name">{marker.name}</span>
+          <span class="marker-rows">{rowCounts[marker.id] ?? 0} rows</span>
+        </div>
+        <div class="marker-body">
+          <p class="marker-updated">Updated: {marker.updated_at?.slice(0, 16).replace('T', ' ') || '—'}</p>
+
+          <form
+            method="POST"
+            action="/api/handicap-charts"
+            enctype="multipart/form-data"
+            class="upload-form"
+            data-marker-name={marker.name}
+          >
+            <input type="hidden" name="action" value="upload-csv" />
+            <input type="hidden" name="marker_id" value={marker.id} />
+            <label class="file-label">
+              <input
+                type="file"
+                name="csv_file"
+                accept=".csv"
+                class="file-input"
+                required
+              />
+              <span class="file-btn">Choose CSV</span>
+              <span class="file-name-display">No file chosen</span>
+            </label>
+            <button type="submit" class="upload-btn">Upload</button>
+          </form>
+
+          <details class="colour-details">
+            <summary>Adjust colours</summary>
+            <form method="POST" action="/api/handicap-charts" class="colour-form">
+              <input type="hidden" name="action" value="update-marker" />
+              <input type="hidden" name="marker_id" value={marker.id} />
+              <div class="colour-row">
+                <label>Background
+                  <input type="color" name="color" value={marker.color} />
+                </label>
+                <label>Text
+                  <input type="color" name="text_color" value={marker.text_color} />
+                </label>
+                <button type="submit" class="colour-save-btn">Save</button>
+              </div>
+            </form>
+          </details>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div class="instructions">
+    <h2>How to update a chart</h2>
+    <ol>
+      <li>Log in to the WHS/CONGU handicap system and navigate to the Course Handicap Report for the relevant tee marker.</li>
+      <li>Export the report as a CSV file.</li>
+      <li>Click <strong>Choose CSV</strong> on the card above for that marker, select the downloaded file, then click <strong>Upload</strong>.</li>
+      <li>The old chart is replaced immediately and the public page reflects the new data.</li>
+    </ol>
+    <p><strong>Note:</strong> The CSV must be in the standard WHS export format (two columns: <em>Handicap Index®</em> and <em>Course Handicap™</em>).</p>
+  </div>
+</AdminLayout>
+
+<script>
+  // Show selected file name and handle upload feedback
+  document.querySelectorAll('.upload-form').forEach(form => {
+    const fileInput = form.querySelector('.file-input') as HTMLInputElement;
+    const fileNameEl = form.querySelector('.file-name-display') as HTMLElement;
+    const markerName = (form as HTMLElement).dataset.markerName || 'marker';
+
+    fileInput?.addEventListener('change', () => {
+      fileNameEl.textContent = fileInput.files?.[0]?.name || 'No file chosen';
+    });
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const fd = new FormData(form as HTMLFormElement);
+      const btn = form.querySelector('.upload-btn') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = 'Uploading…';
+
+      try {
+        const res = await fetch('/api/handicap-charts', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.ok) {
+          btn.textContent = `✓ ${data.rows} rows loaded`;
+          btn.style.background = '#2d7a3a';
+          fileNameEl.textContent = 'No file chosen';
+          fileInput.value = '';
+          // Update row count display
+          const countEl = form.closest('.marker-card')?.querySelector('.marker-rows');
+          if (countEl) countEl.textContent = `${data.rows} rows`;
+          const updatedEl = form.closest('.marker-card')?.querySelector('.marker-updated');
+          if (updatedEl) updatedEl.textContent = 'Updated: just now';
+        } else {
+          btn.textContent = 'Upload failed';
+          btn.style.background = '#cc2200';
+          alert(data.error || 'Upload failed');
+        }
+      } catch {
+        btn.textContent = 'Error';
+        btn.style.background = '#cc2200';
+      } finally {
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = 'Upload';
+          btn.style.background = '';
+        }, 4000);
+      }
+    });
+  });
+
+  // Colour form AJAX
+  document.querySelectorAll('.colour-form').forEach(form => {
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const fd = new FormData(form as HTMLFormElement);
+      const res = await fetch('/api/handicap-charts', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert(data.error || 'Failed to update colours');
+      }
+    });
+  });
+</script>
+
+<style>
+  .page-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .page-header h1 { margin: 0; flex: 1; }
+
+  .page-subtitle {
+    width: 100%;
+    color: #666;
+    margin: -0.75rem 0 0;
+  }
+
+  .btn-preview {
+    padding: 0.4rem 0.9rem;
+    background: #f0f4f0;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    color: #333;
+    text-decoration: none;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+
+  .alert {
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+    font-weight: 500;
+  }
+  .alert-error { background: #fee; border: 1px solid #faa; color: #900; }
+  .alert-success { background: #efe; border: 1px solid #afa; color: #060; }
+
+  .markers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .marker-card {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  }
+
+  .marker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    font-weight: 700;
+  }
+
+  .marker-name { font-size: 1rem; }
+  .marker-rows { font-size: 0.8rem; opacity: 0.85; }
+
+  .marker-body {
+    padding: 1rem;
+    background: white;
+  }
+
+  .marker-updated {
+    font-size: 0.8rem;
+    color: #888;
+    margin: 0 0 0.75rem;
+  }
+
+  .upload-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .file-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .file-input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .file-btn {
+    padding: 0.4rem 0.75rem;
+    background: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .file-btn:hover { background: #e4e4e4; }
+
+  .file-name-display {
+    font-size: 0.82rem;
+    color: #888;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .upload-btn {
+    padding: 0.5rem 1rem;
+    background: #4a7c59;
+    color: white;
+    border: none;
+    border-radius: 7px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s;
+    align-self: flex-start;
+  }
+
+  .upload-btn:hover:not(:disabled) { background: #3a6347; }
+  .upload-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+  .colour-details {
+    margin-top: 0.25rem;
+    font-size: 0.85rem;
+  }
+
+  .colour-details summary {
+    cursor: pointer;
+    color: #555;
+    user-select: none;
+  }
+
+  .colour-form { margin-top: 0.5rem; }
+
+  .colour-row {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .colour-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.8rem;
+    color: #555;
+  }
+
+  .colour-row input[type="color"] {
+    width: 3rem;
+    height: 2rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 2px;
+  }
+
+  .colour-save-btn {
+    padding: 0.4rem 0.8rem;
+    background: #555;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    align-self: flex-end;
+  }
+
+  .colour-save-btn:hover { background: #333; }
+
+  .instructions {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1.5rem;
+    max-width: 640px;
+  }
+
+  .instructions h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+    color: #333;
+  }
+
+  .instructions ol {
+    margin: 0 0 0.75rem;
+    padding-left: 1.5rem;
+    line-height: 1.7;
+    color: #444;
+  }
+
+  .instructions p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #666;
+  }
+</style>

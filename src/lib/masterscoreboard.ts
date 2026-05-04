@@ -221,6 +221,36 @@ export async function getEclecticResult(
   });
 }
 
+// --- MyGolf page scraper ---
+
+/**
+ * Fetch the MyGolf page for a specific player and return the raw HTML.
+ * Tries both with and without Bearer auth so we can see what the server accepts.
+ */
+export async function fetchMyGolfPage(
+  env: MsbEnv,
+  playerId?: number
+): Promise<{ status: number; html: string; url: string }> {
+  const token = await generateMsbToken(env);
+
+  const url = new URL('https://www.masterscoreboard.co.uk/results/MyGolf.php');
+  url.searchParams.set('CWID', env.MSB_CWID);
+  if (playerId !== undefined) {
+    url.searchParams.set('PlayerID', String(playerId));
+  }
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'text/html,application/xhtml+xml',
+      'User-Agent': 'AVGC-CRM/1.0',
+    },
+  });
+
+  const html = await response.text();
+  return { status: response.status, html, url: url.toString() };
+}
+
 // --- Helpers ---
 
 export function findPlayerByNationalId(

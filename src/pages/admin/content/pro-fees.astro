@@ -1,0 +1,261 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+interface LessonFee {
+  id: number;
+  label: string;
+  description: string | null;
+  price: number;
+  is_featured: number;
+  is_active: number;
+  sort_order: number;
+}
+
+let fees: LessonFee[] = [];
+let message = '';
+let messageType: 'success' | 'error' | '' = '';
+
+// Handle form submissions
+if (Astro.request.method === 'POST' && db) {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  try {
+    if (action === 'update_fees') {
+      const feeIds = formData.getAll('fee_id');
+
+      for (const id of feeIds) {
+        const label = formData.get(`label_${id}`)?.toString() || '';
+        const description = formData.get(`description_${id}`)?.toString() || '';
+        const price = Math.round(parseFloat(formData.get(`price_${id}`)?.toString() || '0') * 100);
+        const isFeatured = formData.get(`featured_${id}`) === 'on' ? 1 : 0;
+        const isActive = formData.get(`active_${id}`) === 'on' ? 1 : 0;
+
+        await db.prepare(
+          `UPDATE pro_lesson_fees SET label = ?, description = ?, price = ?, is_featured = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?`
+        ).bind(label, description || null, price, isFeatured, isActive, id).run();
+      }
+      message = 'Lesson fees updated successfully';
+      messageType = 'success';
+    }
+
+    if (action === 'add_fee') {
+      const label = formData.get('new_label')?.toString() || '';
+      const description = formData.get('new_description')?.toString() || '';
+      const price = Math.round(parseFloat(formData.get('new_price')?.toString() || '0') * 100);
+
+      if (label && price > 0) {
+        const maxOrder = await db.prepare(
+          `SELECT MAX(sort_order) as max_order FROM pro_lesson_fees`
+        ).first<{ max_order: number }>();
+
+        await db.prepare(
+          `INSERT INTO pro_lesson_fees (label, description, price, sort_order) VALUES (?, ?, ?, ?)`
+        ).bind(label, description || null, price, (maxOrder?.max_order || 0) + 1).run();
+
+        message = 'Lesson fee added';
+        messageType = 'success';
+      }
+    }
+
+    if (action === 'delete_fee') {
+      const id = formData.get('delete_id');
+      if (id) {
+        await db.prepare(`DELETE FROM pro_lesson_fees WHERE id = ?`).bind(id).run();
+        message = 'Lesson fee deleted';
+        messageType = 'success';
+      }
+    }
+
+  } catch (e: any) {
+    message = e.message || 'An error occurred';
+    messageType = 'error';
+  }
+}
+
+// Fetch current fees
+if (db) {
+  try {
+    const result = await db.prepare(
+      `SELECT * FROM pro_lesson_fees ORDER BY sort_order`
+    ).all<LessonFee>();
+    fees = result.results || [];
+  } catch (e) {
+    console.error('Error fetching pro lesson fees:', e);
+  }
+}
+
+function toPounds(pence: number): string {
+  return (pence / 100).toFixed(2);
+}
+---
+
+<AdminLayout title="Pro Lesson Fees">
+  <div class="page-header">
+    <h1>Pro Lesson Fees</h1>
+    <p class="subtitle">Manage coaching rates displayed on the Pro page of the public website</p>
+  </div>
+
+  {message && (
+    <div class={`alert alert-${messageType}`}>
+      {message}
+    </div>
+  )}
+
+  <!-- Edit Existing Fees -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Lesson Rates</h3>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="update_fees" />
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Description</th>
+            <th>Price (£)</th>
+            <th>Featured</th>
+            <th>Active</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {fees.map(fee => (
+            <tr>
+              <input type="hidden" name="fee_id" value={fee.id} />
+              <td>
+                <input type="text" name={`label_${fee.id}`} value={fee.label} class="form-input form-input-sm" placeholder="e.g., 30 min" />
+              </td>
+              <td>
+                <input type="text" name={`description_${fee.id}`} value={fee.description || ''} class="form-input form-input-sm" placeholder="e.g., Individual Lesson" />
+              </td>
+              <td>
+                <div class="price-input-wrapper">
+                  <span class="currency">£</span>
+                  <input type="number" name={`price_${fee.id}`} value={toPounds(fee.price)} class="form-input form-input-sm price-input" min="0" step="0.50" />
+                </div>
+              </td>
+              <td class="text-center">
+                <input type="checkbox" name={`featured_${fee.id}`} checked={fee.is_featured === 1} />
+              </td>
+              <td class="text-center">
+                <input type="checkbox" name={`active_${fee.id}`} checked={fee.is_active === 1} />
+              </td>
+              <td>
+                <form method="POST" style="display:inline">
+                  <input type="hidden" name="action" value="delete_fee" />
+                  <input type="hidden" name="delete_id" value={fee.id} />
+                  <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Delete this fee?')">Delete</button>
+                </form>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Add New Fee -->
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Add Lesson Type</h3>
+    </div>
+
+    <form method="POST">
+      <input type="hidden" name="action" value="add_fee" />
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Label</label>
+          <input type="text" name="new_label" class="form-input" placeholder="e.g., 45 min" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" name="new_description" class="form-input" placeholder="e.g., Individual Lesson" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Price (£)</label>
+          <div class="price-input-wrapper">
+            <span class="currency">£</span>
+            <input type="number" name="new_price" class="form-input price-input" min="0" step="0.50" placeholder="0.00" />
+          </div>
+        </div>
+        <div class="form-group form-group-action">
+          <button type="submit" class="btn btn-secondary">Add Fee</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <style>
+    .form-input-sm {
+      padding: 0.4rem 0.6rem;
+      font-size: 0.9rem;
+    }
+
+    .price-input-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .currency {
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .price-input {
+      width: 80px;
+    }
+
+    .text-center {
+      text-align: center;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 120px auto;
+      gap: 1rem;
+      align-items: end;
+      padding: 0 1.5rem 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .form-group-action {
+      padding-bottom: 0;
+    }
+
+    .form-actions {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+      border-color: #dc3545;
+    }
+
+    .btn-danger:hover {
+      background: #c82333;
+    }
+
+    .btn-sm {
+      padding: 0.3rem 0.75rem;
+      font-size: 0.8rem;
+    }
+  </style>
+</AdminLayout>

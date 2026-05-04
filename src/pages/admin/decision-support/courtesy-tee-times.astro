@@ -1,0 +1,475 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime.env.DB;
+
+// Load slots only — NO member data in the HTML, loaded client-side via API
+const slotsResult = await db.prepare(`
+  SELECT t.*,
+    m1.first_name || ' ' || m1.surname AS player1_name,
+    m2.first_name || ' ' || m2.surname AS player2_name,
+    m3.first_name || ' ' || m3.surname AS player3_name,
+    m4.first_name || ' ' || m4.surname AS player4_name
+  FROM courtesy_tee_times t
+  LEFT JOIN members m1 ON m1.id = t.player1_id
+  LEFT JOIN members m2 ON m2.id = t.player2_id
+  LEFT JOIN members m3 ON m3.id = t.player3_id
+  LEFT JOIN members m4 ON m4.id = t.player4_id
+  ORDER BY
+    CASE WHEN t.tee_time = 'TBC' THEN 1 ELSE 0 END,
+    t.tee_time,
+    t.course
+`).all();
+const slots = (slotsResult.results || []) as any[];
+
+const totalSlots = slots.length;
+const reserved = slots.filter((s: any) =>
+  s.player1_id || s.player2_id || s.player3_id || s.player4_id).length;
+
+// Pass slot data as JSON to client script
+const slotsJson = JSON.stringify(slots);
+---
+
+<AdminLayout title="NGU Courtesy Tee Times – 14 April">
+  <div class="page">
+
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">NGU Courtesy Tee Times</h1>
+        <p class="page-sub">Tuesday 14 April 2025 — Northumberland Golf Union Junior Spring Open</p>
+      </div>
+    </div>
+
+    <div class="summary-bar">
+      <div class="summary-item">
+        <span class="summary-num" id="stat-slots">{totalSlots}</span>
+        <span class="summary-label">tee times</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-num" id="stat-reserved">{reserved}</span>
+        <span class="summary-label">reserved</span>
+      </div>
+      <div class="summary-item">
+        <span class="summary-num" id="stat-avail">{totalSlots - reserved}</span>
+        <span class="summary-label">still available</span>
+      </div>
+    </div>
+
+    <div id="slots-grid" class="slots-grid">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+</AdminLayout>
+
+<style>
+  /* M3 mobile-first */
+  .page { max-width: 1200px; }
+
+  .page-header {
+    margin-bottom: 1rem;
+  }
+  .page-title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.2rem; color: #1a1a1a; }
+  .page-sub { font-size: 0.8125rem; color: #666; margin: 0; }
+
+  /* Summary bar — wraps on mobile */
+  .summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    background: white;
+    border-radius: 16px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .summary-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 60px;
+    flex: 1;
+  }
+  .summary-num { font-size: 1.375rem; font-weight: 700; color: #1e5631; line-height: 1.2; }
+  .summary-label { font-size: 0.6875rem; color: #888; text-align: center; }
+
+  .loading { color: #888; padding: 2rem; text-align: center; }
+
+  /* Mobile: single column */
+  .slots-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  /* Tablet+: multi-column */
+  @media (min-width: 600px) {
+    .slots-grid {
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+    }
+    .page-title { font-size: 1.5rem; }
+    .page-sub { font-size: 0.875rem; }
+  }
+
+  /* M3 card */
+  .slot-card {
+    background: white;
+    border-radius: 16px;
+    padding: 1rem 1.125rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    border-left: 4px solid #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+  .slot-reserved { border-left-color: #16a34a; }
+
+  .slot-header { display: flex; align-items: center; gap: 0.5rem; }
+  .slot-course { font-weight: 600; font-size: 0.9375rem; color: #1a1a1a; flex: 1; }
+  .slot-time { font-size: 0.875rem; color: #555; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .slot-badge {
+    font-size: 0.75rem; font-weight: 600;
+    padding: 0.2rem 0.6rem; border-radius: 100px;
+    white-space: nowrap;
+  }
+  .badge-reserved { background: #dcfce7; color: #166534; }
+  .badge-open { background: #f3f4f6; color: #6b7280; }
+
+  /* Player rows — larger touch targets */
+  .player-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .extra-players { display: flex; flex-direction: column; gap: 0.5rem; }
+  .player-row { display: flex; align-items: center; gap: 0.5rem; position: relative; }
+  .player-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #f0f4f0; color: #5a7a5a;
+    font-size: 0.7rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .captain-icon { background: #1e5631; color: #fff; font-size: 0.65rem; }
+
+  .btn-expand {
+    display: flex; align-items: center; gap: 0.4rem;
+    background: none; border: 1.5px dashed #d1d5db;
+    border-radius: 10px; padding: 0.4rem 0.75rem;
+    font-size: 0.8125rem; color: #6b7280;
+    cursor: pointer; width: 100%; text-align: left;
+    min-height: 40px;
+  }
+  .btn-expand:hover { border-color: #1e5631; color: #1e5631; background: #f0fdf4; }
+  .btn-expand.has-extras { border-style: solid; border-color: #86efac; color: #166534; background: #f0fdf4; }
+  .expand-label { flex: 1; }
+  .expand-icon { font-size: 0.75rem; }
+  .player-input {
+    flex: 1;
+    font-size: 0.875rem;
+    min-height: 44px;
+    padding: 0 0.625rem;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    background: white;
+    color: #1a1a1a;
+    -webkit-appearance: none;
+  }
+  .player-input:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.12); }
+  .player-input.has-value { background: #f0fdf4; border-color: #86efac; }
+  .player-clear {
+    background: none; border: none; cursor: pointer;
+    color: #bbb; font-size: 1.125rem;
+    min-width: 36px; min-height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+  .player-clear:hover { color: #ef4444; background: #fef2f2; }
+
+  /* Autocomplete dropdown */
+  .autocomplete-list {
+    position: absolute; top: calc(100% + 2px); left: 28px; right: 0; z-index: 100;
+    background: white;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    max-height: 200px; overflow-y: auto;
+    display: none;
+  }
+  .autocomplete-list.open { display: block; }
+  .autocomplete-item {
+    padding: 0.6rem 0.875rem;
+    font-size: 0.875rem;
+    min-height: 44px;
+    display: flex; align-items: center;
+    cursor: pointer; color: #1a1a1a;
+  }
+  .autocomplete-item:hover, .autocomplete-item.active { background: #f0fdf4; color: #1e5631; }
+
+  /* Footer row */
+  .slot-footer { display: flex; gap: 0.5rem; align-items: center; }
+  .notes-input {
+    flex: 1;
+    font-size: 0.875rem;
+    min-height: 44px;
+    padding: 0 0.625rem;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    color: #555;
+    -webkit-appearance: none;
+  }
+  .notes-input::placeholder { color: #bbb; }
+
+  /* M3 filled button — pill shape */
+  .btn-save {
+    padding: 0 1.25rem;
+    min-height: 44px;
+    background: #1e5631; color: white;
+    border: none; border-radius: 100px;
+    font-size: 0.875rem; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+  .btn-save:hover { background: #164424; }
+  .btn-save:active { transform: scale(0.97); }
+  .btn-save.saved { background: #16a34a; }
+</style>
+
+<script is:inline define:vars={{ slotsJson }}>
+  const slots = JSON.parse(slotsJson);
+  let allMembers = [];
+
+  // Fetch member list once
+  async function loadMembers() {
+    const res = await fetch('/api/members-list');
+    const data = await res.json();
+    allMembers = data.members || [];
+  }
+
+  function filterMembers(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) return [];
+    return allMembers
+      .filter(m => `${m.surname} ${m.first_name}`.toLowerCase().includes(q) ||
+                   `${m.first_name} ${m.surname}`.toLowerCase().includes(q))
+      .slice(0, 10);
+  }
+
+  function buildCard(slot) {
+    const players = [
+      { id: slot.player1_id, name: slot.player1_name, field: 'player1_id' },
+      { id: slot.player2_id, name: slot.player2_name, field: 'player2_id' },
+      { id: slot.player3_id, name: slot.player3_name, field: 'player3_id' },
+      { id: slot.player4_id, name: slot.player4_name, field: 'player4_id' },
+    ];
+    const filled = players.filter(p => p.id).length;
+    const fullCls = filled > 0 ? 'slot-reserved' : '';
+    const badgeCls = filled > 0 ? 'badge-reserved' : 'badge-open';
+
+    const card = document.createElement('div');
+    card.className = `slot-card ${fullCls}`;
+    card.dataset.id = slot.id;
+
+    const extraFilled = players.slice(1).filter(p => p.id).length;
+    const extraLabel = extraFilled > 0 ? `${extraFilled} more player${extraFilled > 1 ? 's' : ''}` : 'Add players 2–4';
+
+    card.innerHTML = `
+      <div class="slot-header">
+        <div class="slot-course">${slot.course}</div>
+        <div class="slot-time">${slot.tee_time}</div>
+        <div class="slot-badge ${badgeCls}">${filled > 0 ? 'Reserved' : 'Open'}</div>
+      </div>
+      <div class="player-list">
+        <div class="player-row">
+          <span class="player-num captain-icon">★</span>
+          <input type="text" class="player-input ${players[0].id ? 'has-value' : ''}"
+            placeholder="Captain…"
+            value="${players[0].name || ''}"
+            data-member-id="${players[0].id || ''}"
+            data-field="${players[0].field}"
+            autocomplete="off" />
+          ${players[0].id ? `<button class="player-clear" title="Remove">×</button>` : ''}
+          <div class="autocomplete-list"></div>
+        </div>
+        <button class="btn-expand ${extraFilled > 0 ? 'has-extras' : ''}" type="button">
+          <span class="expand-label">${extraLabel}</span>
+          <span class="expand-icon">▾</span>
+        </button>
+        <div class="extra-players" style="display:none">
+          ${players.slice(1).map((p, i) => `
+            <div class="player-row">
+              <span class="player-num">${i + 2}</span>
+              <input type="text" class="player-input ${p.id ? 'has-value' : ''}"
+                placeholder="Search member…"
+                value="${p.name || ''}"
+                data-member-id="${p.id || ''}"
+                data-field="${p.field}"
+                autocomplete="off" />
+              ${p.id ? `<button class="player-clear" title="Remove">×</button>` : ''}
+              <div class="autocomplete-list"></div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="slot-footer">
+        <input type="text" class="notes-input" placeholder="Notes…" value="${slot.notes || ''}" />
+        <button class="btn-save">Save</button>
+      </div>
+    `;
+
+    // Expand/collapse extra players
+    const expandBtn = card.querySelector('.btn-expand');
+    const extraSection = card.querySelector('.extra-players');
+    expandBtn.addEventListener('click', () => {
+      const open = extraSection.style.display !== 'none';
+      extraSection.style.display = open ? 'none' : 'flex';
+      expandBtn.querySelector('.expand-icon').textContent = open ? '▾' : '▴';
+    });
+
+    // Wire up autocomplete for each player input
+    card.querySelectorAll('.player-row').forEach(row => {
+      const input = row.querySelector('.player-input');
+      const dropdown = row.querySelector('.autocomplete-list');
+      let activeIdx = -1;
+
+      input.addEventListener('input', () => {
+        if (input.dataset.memberId) {
+          input.dataset.memberId = '';
+          input.classList.remove('has-value');
+          const clrBtn = row.querySelector('.player-clear');
+          if (clrBtn) clrBtn.remove();
+        }
+        const results = filterMembers(input.value);
+        renderDropdown(results);
+      });
+
+      input.addEventListener('keydown', (e) => {
+        const items = dropdown.querySelectorAll('.autocomplete-item');
+        if (e.key === 'ArrowDown') { activeIdx = Math.min(activeIdx + 1, items.length - 1); highlight(items); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { activeIdx = Math.max(activeIdx - 1, 0); highlight(items); e.preventDefault(); }
+        else if (e.key === 'Enter' && activeIdx >= 0) { items[activeIdx].click(); e.preventDefault(); }
+        else if (e.key === 'Escape') { closeDropdown(); }
+      });
+
+      input.addEventListener('blur', () => setTimeout(closeDropdown, 150));
+
+      function highlight(items) {
+        items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+      }
+
+      function renderDropdown(results) {
+        activeIdx = -1;
+        if (!results.length) { closeDropdown(); return; }
+        dropdown.innerHTML = results.map(m =>
+          `<div class="autocomplete-item" data-id="${m.id}" data-name="${m.surname}, ${m.first_name}">${m.surname}, ${m.first_name}</div>`
+        ).join('');
+        dropdown.classList.add('open');
+        dropdown.querySelectorAll('.autocomplete-item').forEach(item => {
+          item.addEventListener('mousedown', () => selectMember(item.dataset.id, item.dataset.name));
+        });
+      }
+
+      function selectMember(id, name) {
+        input.value = name;
+        input.dataset.memberId = id;
+        input.classList.add('has-value');
+        let clrBtn = row.querySelector('.player-clear');
+        if (!clrBtn) {
+          clrBtn = document.createElement('button');
+          clrBtn.className = 'player-clear';
+          clrBtn.title = 'Remove';
+          clrBtn.textContent = '×';
+          input.after(clrBtn);
+        }
+        clrBtn.onclick = () => {
+          input.value = '';
+          input.dataset.memberId = '';
+          input.classList.remove('has-value');
+          clrBtn.remove();
+        };
+        closeDropdown();
+      }
+
+      function closeDropdown() {
+        dropdown.classList.remove('open');
+        dropdown.innerHTML = '';
+      }
+
+      // Wire existing clear button
+      const existingClear = row.querySelector('.player-clear');
+      if (existingClear) {
+        existingClear.onclick = () => {
+          input.value = '';
+          input.dataset.memberId = '';
+          input.classList.remove('has-value');
+          existingClear.remove();
+        };
+      }
+    });
+
+    // Save button
+    card.querySelector('.btn-save').addEventListener('click', async () => {
+      const btn = card.querySelector('.btn-save');
+      const notes = card.querySelector('.notes-input').value;
+      const inputs = card.querySelectorAll('.player-input');
+      const payload = { id: slot.id, notes };
+      ['player1_id','player2_id','player3_id','player4_id'].forEach((f, i) => {
+        payload[f] = inputs[i].dataset.memberId || null;
+      });
+
+      btn.textContent = 'Saving…';
+      try {
+        const res = await fetch('/api/courtesy-tee-times', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.success) {
+          btn.textContent = 'Saved'; btn.classList.add('saved');
+          setTimeout(() => { btn.textContent = 'Save'; btn.classList.remove('saved'); }, 2000);
+          // Update badge & card colour
+          const filled = ['player1_id','player2_id','player3_id','player4_id']
+            .filter(f => payload[f]).length;
+          const badge = card.querySelector('.slot-badge');
+          badge.textContent = filled > 0 ? 'Reserved' : 'Open';
+          badge.className = `slot-badge ${filled>0?'badge-reserved':'badge-open'}`;
+          card.className = `slot-card ${filled>0?'slot-reserved':''}`;
+          // Refresh expand button label
+          const exFilled = ['player2_id','player3_id','player4_id'].filter(f => payload[f]).length;
+          const expandBtnEl = card.querySelector('.btn-expand');
+          expandBtnEl.querySelector('.expand-label').textContent =
+            exFilled > 0 ? `${exFilled} more player${exFilled > 1 ? 's' : ''}` : 'Add players 2–4';
+          expandBtnEl.classList.toggle('has-extras', exFilled > 0);
+          updateSummary();
+        } else {
+          btn.textContent = 'Error'; setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+        }
+      } catch {
+        btn.textContent = 'Error'; setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+      }
+    });
+
+    return card;
+  }
+
+  function updateSummary() {
+    const cards = document.querySelectorAll('.slot-card');
+    let reserved = 0;
+    cards.forEach(card => {
+      const inputs = card.querySelectorAll('.player-input');
+      const filled = Array.from(inputs).filter(i => i.dataset.memberId).length;
+      if (filled > 0) reserved++;
+    });
+    document.getElementById('stat-reserved').textContent = reserved;
+    document.getElementById('stat-avail').textContent = slots.length - reserved;
+  }
+
+  async function init() {
+    await loadMembers();
+    const grid = document.getElementById('slots-grid');
+    grid.innerHTML = '';
+    slots.forEach(slot => grid.appendChild(buildCard(slot)));
+    updateSummary();
+  }
+
+  init();
+</script>

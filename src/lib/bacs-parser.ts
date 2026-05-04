@@ -31,9 +31,105 @@ const SKIP_REFERENCE_PATTERNS = [
 ];
 
 /**
- * Parse raw BACS text file (tab-separated) into structured records.
+ * Parse a single CSV line handling quoted fields.
+ */
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+  return values;
+}
+
+/**
+ * Parse cashbook CSV export into structured records.
+ * Format: 3-line preamble (From, To, Bank Account) + column-header row, then data:
+ *   Trx, Transaction Date, Date Entered, Contact, Type, Method, Currency,
+ *   Reference, Money In (GBP £), Money Out (GBP £), Balance
+ * Falls back to legacy tab-separated format if no CSV header is detected.
  */
 export function parseBacsFile(text: string): BacsRecord[] {
+  // Handle all line-ending styles: CRLF, CR-only, LF-only
+  const lines = text.trim().split(/\r\n|\r|\n/);
+
+  // Detect new CSV format by looking for the column-header row in the first 10 lines
+  let dataStartLine = -1;
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    if (/Transaction Date/i.test(lines[i]) || /^Trx,/i.test(lines[i])) {
+      dataStartLine = i + 1;
+      break;
+    }
+  }
+
+  if (dataStartLine === -1) {
+    // Fall back to legacy tab-separated format
+    return parseBacsFileLegacy(text);
+  }
+
+  const records: BacsRecord[] = [];
+
+  for (let lineIdx = dataStartLine; lineIdx < lines.length; lineIdx++) {
+    const trimmed = lines[lineIdx].trim();
+    if (!trimmed) continue;
+
+    const parts = parseCSVLine(trimmed);
+    if (parts.length < 9) continue;
+
+    const trx              = parts[0].trim();
+    const transactionDate  = parts[1].trim();
+    const contact          = parts[3].trim();   // Contact — sometimes a cleaner name
+    const type             = parts[4].trim();
+    const reference        = parts[7].trim();   // Reference — carries name / description
+    const moneyInStr       = parts[8].trim();
+
+    // Skip rows without a numeric transaction ID (e.g. opening balance row)
+    if (!trx || !/^\d+$/.test(trx)) continue;
+
+    // Only "Money in" entries (excludes Bank Transfer, Money out, etc.)
+    if (!/^money in$/i.test(type)) continue;
+
+    // Parse amount (strip commas)
+    const amount = parseFloat(moneyInStr.replace(/,/g, ''));
+    if (isNaN(amount) || amount <= 0) continue;
+
+    // Parse date DD/MM/YYYY → YYYY-MM-DD
+    const dateParts = transactionDate.split('/');
+    const isoDate = dateParts.length === 3
+      ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
+      : transactionDate;
+
+    const invoiceNumber = extractInvoiceNumber(reference);
+
+    records.push({
+      date: isoDate,
+      description: reference,   // Reference column carries name info (e.g. "P McCusker Peter McCusker")
+      reference: contact,        // Contact column sometimes has a cleaner name
+      amount,
+      rawLine: trimmed,
+      invoiceNumber,
+    });
+  }
+
+  return records;
+}
+
+/**
+ * Legacy parser for old tab-separated bank export format:
+ *   date \t description \t reference \t type \t amount
+ */
+function parseBacsFileLegacy(text: string): BacsRecord[] {
   const lines = text.trim().split(/\r?\n/);
   const records: BacsRecord[] = [];
 
@@ -46,20 +142,16 @@ export function parseBacsFile(text: string): BacsRecord[] {
 
     const [dateStr, description, reference, type, amountStr] = parts;
 
-    // Only "Money in" entries
     if (type?.trim() !== 'Money in') continue;
 
-    // Parse amount (remove commas)
     const amount = parseFloat(amountStr.replace(/,/g, ''));
     if (isNaN(amount) || amount <= 0) continue;
 
-    // Parse date DD/MM/YYYY → YYYY-MM-DD
     const dateParts = dateStr.trim().split('/');
     const isoDate = dateParts.length === 3
       ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
       : dateStr.trim();
 
-    // Try to extract invoice number from description
     const invoiceNumber = extractInvoiceNumber(description || '');
 
     records.push({

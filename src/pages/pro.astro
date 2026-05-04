@@ -1,0 +1,486 @@
+---
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const heroImage = '/images/hero-course.jpg';
+const proImage = '/images/pro-linzi-hardy.jpg';
+
+interface LessonFee {
+  id: number;
+  label: string;
+  description: string | null;
+  price: number;
+  is_featured: number;
+  is_active: number;
+  sort_order: number;
+}
+
+const db = Astro.locals.runtime?.env?.DB;
+let fees: LessonFee[] = [];
+
+if (db) {
+  try {
+    const result = await db.prepare(
+      `SELECT * FROM pro_lesson_fees WHERE is_active = 1 ORDER BY sort_order`
+    ).all<LessonFee>();
+    fees = result.results || [];
+  } catch (e) {
+    console.error('Error fetching pro lesson fees:', e);
+  }
+}
+
+// Fallback fees if DB not available
+if (fees.length === 0) {
+  fees = [
+    { id: 1, label: '30 min', description: 'Individual Lesson', price: 3000, is_featured: 0, is_active: 1, sort_order: 1 },
+    { id: 2, label: '60 min', description: 'Individual Lesson', price: 5000, is_featured: 1, is_active: 1, sort_order: 2 },
+    { id: 3, label: 'Junior', description: 'Lesson', price: 2500, is_featured: 0, is_active: 1, sort_order: 3 },
+    { id: 4, label: 'Group', description: 'Lesson', price: 6000, is_featured: 0, is_active: 1, sort_order: 4 },
+  ];
+}
+
+function formatPrice(pence: number): string {
+  return `£${(pence / 100).toFixed(0)}`;
+}
+---
+
+<PublicLayout
+  title="Golf Professional"
+  description="Linzi Hardy, Golf Professional at Alnmouth Village Golf Club. Lessons for all abilities from beginners to county level. Former European Tour player and England representative."
+  heroImage={heroImage}
+  heroTitle="Golf Professional"
+  heroSubtitle="Expert coaching for all abilities — from beginners to county level"
+  heroSize="large"
+  heroOverlay="medium"
+>
+  <div class="content">
+
+    <!-- Bio Section -->
+    <section class="section bio-section">
+      <div class="bio-grid">
+        <div class="bio-photo">
+          <img src={proImage} alt="Linzi Hardy, Golf Professional at Alnmouth Village Golf Club" />
+        </div>
+        <div class="bio-content">
+          <span class="intro-label">Your Club Professional</span>
+          <h2 class="section-title">Linzi Hardy</h2>
+          <p class="bio-text">
+            I started my golf at AVGC as a junior then went on to represent my County aged 15 and
+            subsequently played for England and Great Britain, playing on the Curtis Cup and
+            Commonwealth teams. I then turned professional and played on the European Tour.
+          </p>
+          <p class="bio-text">
+            I have now been coaching for 26 years and teach all ranges of abilities from
+            beginners to County level.
+          </p>
+          <p class="bio-text">
+            The club has recently signed up to the R&amp;A's Women in Golf Charter and I am
+            delighted to be able to work with the club to encourage more females into golf.
+            <a href="/members/documents/women-in-golf-charter" class="charter-link">
+              You can read the club's Women in Golf Charter here.
+            </a>
+          </p>
+
+          <div class="credentials">
+            <div class="credential-item">
+              <div class="credential-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                  <path d="M2 17l10 5 10-5"/>
+                  <path d="M2 12l10 5 10-5"/>
+                </svg>
+              </div>
+              <div>
+                <h4>Curtis Cup &amp; Commonwealth</h4>
+                <p>Represented Great Britain at the highest amateur level</p>
+              </div>
+            </div>
+            <div class="credential-item">
+              <div class="credential-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="8" r="6"/>
+                  <path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>
+                </svg>
+              </div>
+              <div>
+                <h4>European Tour Professional</h4>
+                <p>Former Ladies European Tour player</p>
+              </div>
+            </div>
+            <div class="credential-item">
+              <div class="credential-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+              </div>
+              <div>
+                <h4>26 Years Coaching</h4>
+                <p>Beginners through to county-level players</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bio-aside">
+          <div class="contact-card">
+            <h3>Book a Lesson</h3>
+            <p>Contact Linzi directly to arrange your lesson</p>
+            <a href="tel:07720648949" class="phone-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6.13 6.13l.96-.95a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              07720 648 949
+            </a>
+          </div>
+
+          <div class="charter-card">
+            <a href="https://www.randa.org/en/key-projects/women-in-golf-charter" target="_blank" rel="noopener noreferrer" class="charter-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </a>
+            <h4>Women in Golf Charter</h4>
+            <p>Alnmouth Village Golf Club is proud to be a signatory of the R&amp;A's Women in Golf Charter, committed to creating a welcoming environment for female golfers.</p>
+            <a href="/members/documents/women-in-golf-charter" class="btn btn-outline btn-sm">Read the Charter</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Lesson Fees -->
+    <section class="section fees-section">
+      <div class="section-header">
+        <span class="intro-label">Lesson Fees</span>
+        <h2 class="section-title">Coaching Rates</h2>
+      </div>
+
+      <div class="fees-grid">
+        {fees.map(fee => (
+          <div class={`fee-card${fee.is_featured ? ' fee-card--featured' : ''}`}>
+            <div class="fee-duration">{fee.label}</div>
+            <div class="fee-type">{fee.description || ''}</div>
+            <div class="fee-price">{formatPrice(fee.price)}</div>
+          </div>
+        ))}
+      </div>
+
+      <div class="fees-cta">
+        <p>To book a lesson or discuss your coaching requirements, contact Linzi directly:</p>
+        <a href="tel:07720648949" class="btn btn-primary btn-large">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6.13 6.13l.96-.95a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+          Call 07720 648 949
+        </a>
+      </div>
+    </section>
+
+  </div>
+
+  <style>
+    /* Bio Section */
+    .bio-section {
+      padding-top: 4rem;
+    }
+
+    .bio-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: start;
+    }
+
+    @media (min-width: 700px) {
+      .bio-grid {
+        grid-template-columns: 260px 1fr;
+        gap: 2.5rem;
+      }
+    }
+
+    @media (min-width: 1100px) {
+      .bio-grid {
+        grid-template-columns: 280px 1fr 340px;
+        gap: 3rem;
+      }
+    }
+
+    .bio-photo {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+      aspect-ratio: 3/4;
+    }
+
+    .bio-photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .intro-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--primary);
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .bio-content .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .bio-text {
+      color: var(--text-light);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      margin-bottom: 1.25rem;
+    }
+
+    .charter-link {
+      color: var(--primary);
+      text-decoration: underline;
+    }
+
+    .charter-link:hover {
+      color: var(--primary-dark);
+    }
+
+    /* Credentials */
+    .credentials {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      margin-top: 2.5rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .credential-item {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .credential-icon {
+      width: 44px;
+      height: 44px;
+      background: var(--surface);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--primary);
+    }
+
+    .credential-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .credential-item h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.2rem;
+    }
+
+    .credential-item p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    /* Bio Aside */
+    .bio-aside {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .contact-card {
+      background: var(--primary);
+      color: var(--white);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .contact-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .contact-card p {
+      opacity: 0.85;
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .phone-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: var(--white);
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 1.2rem;
+      font-weight: 700;
+      padding: 0.875rem 1.75rem;
+      border-radius: 50px;
+      transition: all 0.3s;
+    }
+
+    .phone-link:hover {
+      background: var(--secondary);
+      transform: translateY(-2px);
+    }
+
+    .charter-card {
+      background: var(--surface);
+      border-radius: 16px;
+      padding: 2rem;
+      text-align: center;
+      border: 1px solid var(--border-light);
+    }
+
+    .charter-badge {
+      width: 56px;
+      height: 56px;
+      background: var(--primary);
+      color: var(--white);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1rem;
+      transition: opacity 0.2s;
+    }
+
+    .charter-badge:hover {
+      opacity: 0.85;
+    }
+
+    .charter-card h4 {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      color: var(--primary);
+      margin-bottom: 0.75rem;
+    }
+
+    .charter-card p {
+      font-size: 0.9rem;
+      color: var(--text-light);
+      line-height: 1.6;
+      margin-bottom: 1.25rem;
+    }
+
+    .btn-sm {
+      padding: 0.5rem 1.25rem;
+      font-size: 0.875rem;
+    }
+
+    /* Fees Section */
+    .fees-section {
+      padding: 5rem 0;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .section-header .section-title {
+      margin-bottom: 0;
+    }
+
+    .fees-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 640px) {
+      .fees-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    .fee-card {
+      background: var(--white);
+      border: 2px solid var(--border-light);
+      border-radius: 16px;
+      padding: 2rem 1rem;
+      text-align: center;
+      transition: all 0.3s;
+    }
+
+    .fee-card:hover {
+      border-color: var(--primary);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0,0,0,0.1);
+    }
+
+    .fee-card--featured {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--white);
+    }
+
+    .fee-card--featured:hover {
+      border-color: var(--primary-dark);
+    }
+
+    .fee-duration {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .fee-type {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.65;
+      margin-bottom: 1rem;
+    }
+
+    .fee-price {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .fee-card--featured .fee-price {
+      color: var(--white);
+    }
+
+    .fees-cta {
+      text-align: center;
+      margin-top: 3rem;
+    }
+
+    .fees-cta p {
+      color: var(--text-light);
+      font-size: 1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .fees-cta .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+  </style>
+</PublicLayout>

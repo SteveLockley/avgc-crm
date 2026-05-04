@@ -4,10 +4,14 @@ const db = Astro.locals.runtime.env.DB;
 
 const days = parseInt(Astro.url.searchParams.get('days') || '30');
 
+// Find members who have not yet renewed for the current membership year:
+// - date_expires is in the past OR within the next `days` days (about to expire)
+// - but not so old that they're clearly lapsed (limit to 18 months back)
+// - exclude members who have already renewed (date_expires > today + days means they've paid)
 const members = await db.prepare(`
   SELECT surname, first_name, email, category, subscription_template, date_expires
   FROM members
-  WHERE date_expires BETWEEN date('now') AND date('now', '+' || ? || ' days')
+  WHERE date_expires BETWEEN date('now', '-548 days') AND date('now', '+' || ? || ' days')
     AND email IS NOT NULL
     AND email != ''
     AND electronic_communication_consent = 'Yes'
@@ -15,7 +19,7 @@ const members = await db.prepare(`
 `).bind(days).all();
 
 if (!members.results || members.results.length === 0) {
-  return new Response(`No members with email consent expiring in the next ${days} days`, { status: 404 });
+  return new Response(`No members with email consent found needing renewal reminder (expiring within ${days} days or already expired within 18 months)`, { status: 404 });
 }
 
 const columns = ['Surname', 'First Name', 'Email', 'Category', 'Subscription', 'Expires'];

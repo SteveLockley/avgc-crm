@@ -11,16 +11,9 @@ import { generateDDRenewalEmail, generateDDRenewalSubject, calculateDDSchedule }
 const DD_PAYMENT_METHODS = ['Clubwise Direct Debit'];
 const SOCIAL_CATEGORIES = ['social'];
 
-const REMINDER_PARAGRAPH = `
-<tr>
-  <td style="padding: 0 30px 20px;">
-    <div style="background-color: #fff3e0; border-left: 4px solid #f57c00; padding: 16px 20px; border-radius: 0 8px 8px 0; margin-bottom: 10px;">
-      <p style="margin: 0; font-size: 14px; color: #e65100; font-weight: 600;">
-        This is a reminder that your subscription needs to be paid by 30th April to ensure continued access to the course and member privileges.
-      </p>
-    </div>
-  </td>
-</tr>`;
+function getReminderMessage(year: number): string {
+  return `Your annual membership at Alnmouth Village Golf Club expired on the 31st March ${year}. Our records indicate that you have not renewed for ${year + 1}. If this is not correct please contact us so that we can correct our records. If you wish to renew please do so before the 30th April ${year}, after which your membership will be cancelled.`;
+}
 
 async function getBankDetails(db: any) {
   const settings = await db.prepare(
@@ -40,23 +33,12 @@ async function getBankDetails(db: any) {
   };
 }
 
-function insertReminderAfterGreeting(html: string): string {
-  // Insert reminder paragraph after the greeting (Dear X, / Hello X,)
-  // Look for the first closing </td> after "Dear " or "Hello " pattern
-  const greetingMatch = html.match(/(Dear\s[^<]+<\/p>\s*<\/td>\s*<\/tr>)/i);
-  if (greetingMatch && greetingMatch.index !== undefined) {
-    const insertPos = greetingMatch.index + greetingMatch[0].length;
-    return html.slice(0, insertPos) + REMINDER_PARAGRAPH + html.slice(insertPos);
-  }
-  // Fallback: insert after header section
-  const headerEnd = html.indexOf('</tr>', html.indexOf('border-radius: 8px 8px 0 0'));
-  if (headerEnd > -1) {
-    const nextTr = html.indexOf('<tr>', headerEnd);
-    if (nextTr > -1) {
-      return html.slice(0, nextTr) + REMINDER_PARAGRAPH.replace('<tr>', '').replace('</tr>', '') + html.slice(nextTr);
-    }
-  }
-  return html;
+function applyReminderTitle(html: string, year: number): string {
+  // Change header subtitle to "Membership Renewal Reminder YYYY/YYYY"
+  return html.replace(
+    /Membership Renewal (\d{4}\/\d{4})/,
+    'Membership Renewal Reminder $1'
+  );
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -65,17 +47,38 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return new Response(JSON.stringify({ error: 'Database not available' }), { status: 500 });
   }
 
-  let body: { invoiceIds?: number[] };
+  const BATCH_SIZE = 20;
+
+  let body: { invoiceIds?: number[]; allUnpaid?: boolean; offset?: number };
   try {
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400 });
   }
 
-  const invoiceIds = body.invoiceIds;
-  if (!invoiceIds || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
-    return new Response(JSON.stringify({ error: 'No invoice IDs provided' }), { status: 400 });
+  let allIds: number[];
+
+  if (body.allUnpaid) {
+    const result = await env.DB.prepare(
+      `SELECT i.id FROM invoices i
+       JOIN members m ON i.member_id = m.id
+       WHERE i.status = 'draft' AND i.total > 0
+         AND m.email IS NOT NULL AND m.email != ''
+       ORDER BY i.id`
+    ).all();
+    allIds = (result.results || []).map((r: any) => r.id as number);
+  } else {
+    allIds = body.invoiceIds || [];
   }
+
+  if (allIds.length === 0) {
+    return new Response(JSON.stringify({ error: 'No unpaid invoices found' }), { status: 400 });
+  }
+
+  const offset = body.offset || 0;
+  const invoiceIds = allIds.slice(offset, offset + BATCH_SIZE);
+  const remaining = Math.max(0, allIds.length - offset - invoiceIds.length);
+  const total = allIds.length;
 
   const emailEnv = {
     AZURE_TENANT_ID: env.AZURE_TENANT_ID,
@@ -138,23 +141,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
         direct_debit_member_id: invoice.direct_debit_member_id as string | undefined,
       };
 
+      const reminderMessage = getReminderMessage(year);
+
       if (isSocial) {
-        subject = generateSocialRenewalSubject(year);
-        html = generateSocialRenewalEmail(member, invoice.subscription_fee as number || 0, year, bankDetails);
+        subject = `REMINDER: ${generateSocialRenewalSubject(year)}`;
+        html = generateSocialRenewalEmail(member, invoice.subscription_fee as number || 0, year, bankDetails, reminderMessage);
       } else if (isDD) {
-        subject = generateDDRenewalSubject(year);
+        subject = `REMINDER: ${generateDDRenewalSubject(year)}`;
         const schedule = calculateDDSchedule(member, invoice.subscription_fee as number || 0, year);
-        html = generateDDRenewalEmail(member, schedule);
+        html = generateDDRenewalEmail(member, schedule, reminderMessage);
       } else {
-        subject = generateBACSRenewalSubject(year);
-        html = generateBACSRenewalEmail(member, invoice.subscription_fee as number || 0, year, bankDetails);
+        subject = `REMINDER: ${generateBACSRenewalSubject(year)}`;
+        html = generateBACSRenewalEmail(member, invoice.subscription_fee as number || 0, year, bankDetails, reminderMessage);
       }
 
-      // Prepend REMINDER to subject
-      subject = `REMINDER: ${subject}`;
-
-      // Insert reminder paragraph after greeting
-      html = insertReminderAfterGreeting(html);
+      // Update header subtitle to say "Reminder"
+      html = applyReminderTitle(html, year);
 
       const result = await sendEmail({ to: invoice.email as string, subject, html }, emailEnv);
 
@@ -188,7 +190,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   return new Response(JSON.stringify({
     sent,
     failed,
-    total: invoiceIds.length,
+    total,
+    remaining,
+    nextOffset: offset + invoiceIds.length,
     errors: errors.length > 0 ? errors : undefined,
   }), {
     status: 200,
