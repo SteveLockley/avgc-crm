@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { formatCurrency, EGU_CATEGORIES, getRenewalPeriod, generateInvoiceNumber, calculateEguCategory, type Member, type PaymentItem } from '../../../lib/db';
+import { formatCurrency, EGU_CATEGORIES, getCurrentMembershipPeriod, generateInvoiceNumber, calculateEguCategory, type Member, type PaymentItem } from '../../../lib/db';
 import { calculateInvoiceForMember, isMemberEligibleForInvoice, getFeeSummary } from '../../../lib/invoice';
 import { generateInvoiceForMember as generateInvoice, loadFeeItems } from '../../../lib/generate-invoice';
 
@@ -26,7 +26,7 @@ function getWinterRenewalPeriod(): { start: string; end: string; year: number } 
   };
 }
 
-const period = isWinterMode ? getWinterRenewalPeriod() : getRenewalPeriod();
+const period = isWinterMode ? getWinterRenewalPeriod() : getCurrentMembershipPeriod();
 
 let error = '';
 let success = '';

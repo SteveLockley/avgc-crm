@@ -230,6 +230,20 @@ export function expiresSoon(dateExpires: string | null): boolean {
 
 // Get renewal period based on current date
 // Period runs from 1st April to 31st March
+// Returns the current membership year period (Apr this year – Mar next, or Apr last year – Mar this year if before April).
+// Use this when generating invoices for new/current members.
+export function getCurrentMembershipPeriod(): { start: string; end: string; year: number } {
+  const date = new Date();
+  const month = date.getMonth();
+  const year = date.getFullYear();
+  const startYear = month >= 3 ? year : year - 1;
+  return {
+    start: `${startYear}-04-01`,
+    end: `${startYear + 1}-03-31`,
+    year: startYear,
+  };
+}
+
 export function getRenewalPeriod(referenceDate?: Date): { start: string; end: string; year: number } {
   const date = referenceDate || new Date();
   const month = date.getMonth(); // 0-indexed (0=Jan, 3=April)
