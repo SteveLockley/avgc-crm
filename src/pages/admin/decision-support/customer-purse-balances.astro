@@ -70,6 +70,12 @@ function fmtDate(iso: string) {
         <p class="cpb-sub">TouchOffice card balances across all customer groups</p>
       </div>
       <div class="cpb-controls">
+        <button id="pushBtn" class="cpb-btn cpb-btn-ghost">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>
+          </svg>
+          <span id="pushLabel">Push to TouchOffice</span>
+        </button>
         <button id="syncBtn" class="cpb-btn cpb-btn-primary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <polyline points="23 4 23 10 17 10"/>
@@ -189,6 +195,7 @@ function fmtDate(iso: string) {
               <th class="col-group">Group</th>
               <th class="col-bal text-right">Balance</th>
               <th class="col-member">Member Match</th>
+              <th class="col-action"></th>
             </tr>
           </thead>
           <tbody id="mainBody">
@@ -220,10 +227,11 @@ function fmtDate(iso: string) {
               <th class="col-name">Name</th>
               <th class="col-group">Group</th>
               <th class="col-member">Member Match</th>
+              <th class="col-action"></th>
             </tr>
           </thead>
           <tbody id="unmatchedBody">
-            <tr><td colspan="4" class="cpb-empty">Loading…</td></tr>
+            <tr><td colspan="5" class="cpb-empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -250,6 +258,7 @@ function fmtDate(iso: string) {
               <th class="col-num">#</th>
               <th class="col-name">Name</th>
               <th class="col-bal text-right">Balance</th>
+              <th class="col-action"></th>
             </tr>
           </thead>
           <tbody id="deadBody">
@@ -448,6 +457,14 @@ function fmtDate(iso: string) {
 
   /* Seniors row highlight */
   .cpb-seniors-row td { background: #f0fdf4 !important; }
+
+  /* Dead/live toggle buttons */
+  .col-action { width: 40px; text-align: center; }
+  .cpb-toggle-dead, .cpb-toggle-live {
+    background: none; border: none; cursor: pointer; font-size: 1rem; padding: 2px 4px;
+    opacity: 0.5; transition: opacity 0.15s;
+  }
+  .cpb-toggle-dead:hover, .cpb-toggle-live:hover { opacity: 1; }
   .cpb-seniors-row td:first-child::before {
     content: '★ '; color: #1e5631; font-size: 0.7rem;
   }
@@ -474,6 +491,8 @@ function fmtDate(iso: string) {
   // ── DOM refs ─────────────────────────────────────────────────────────────────
   const syncBtn      = document.getElementById('syncBtn');
   const syncLabel    = document.getElementById('syncLabel');
+  const pushBtn      = document.getElementById('pushBtn');
+  const pushLabel    = document.getElementById('pushLabel');
   const syncStatus   = document.getElementById('syncStatus');
   const syncMessage  = document.getElementById('syncMessage');
   const syncResult   = document.getElementById('syncResult');
@@ -603,6 +622,7 @@ function fmtDate(iso: string) {
       const isSeniors = row.customer_number === 1035;
       const rowCls = isSeniors ? ' class="cpb-seniors-row"' : '';
       const balCls = balClass(row.account_balance);
+      const name = `${escHtml(row.first_name)} ${escHtml(row.last_name)}`;
       return `
         <tr${rowCls} data-custnum="${row.customer_number}">
           <td class="col-num">${row.customer_number}</td>
@@ -616,6 +636,9 @@ function fmtDate(iso: string) {
               </select>
               <span class="cpb-match-saved" id="ms-${row.customer_number}"></span>
             </span>
+          </td>
+          <td class="col-action">
+            <button class="cpb-toggle-dead" data-custnum="${row.customer_number}" data-memberid="${row.member_id || ''}" data-name="${name}" title="Move to Dead Cards">☠️</button>
           </td>
         </tr>`;
     }).join('');
@@ -655,21 +678,26 @@ function fmtDate(iso: string) {
     const end   = Math.min(start + PAGE_SIZE, total);
     const page  = unmatchedRows.slice(start, end);
 
-    unmatchedBody.innerHTML = page.map(row => `
-      <tr data-custnum="${row.customer_number}">
-        <td class="col-num">${row.customer_number}</td>
-        <td class="col-name">${escHtml(row.last_name)}, ${escHtml(row.first_name)}</td>
-        <td class="col-group">${groupPill(row.customer_group)}</td>
-        <td class="col-member">
-          <span style="display:flex;align-items:center;gap:0.25rem;">
-            <select class="cpb-member-select" data-custnum="${row.customer_number}" data-auto="0">
-              ${buildMemberOptions(row.member_id)}
-            </select>
-            <span class="cpb-match-saved" id="ms-${row.customer_number}"></span>
-          </span>
-        </td>
-      </tr>`
-    ).join('');
+    unmatchedBody.innerHTML = page.map(row => {
+      const name = `${escHtml(row.first_name)} ${escHtml(row.last_name)}`;
+      return `
+        <tr data-custnum="${row.customer_number}">
+          <td class="col-num">${row.customer_number}</td>
+          <td class="col-name">${escHtml(row.last_name)}, ${escHtml(row.first_name)}</td>
+          <td class="col-group">${groupPill(row.customer_group)}</td>
+          <td class="col-member">
+            <span style="display:flex;align-items:center;gap:0.25rem;">
+              <select class="cpb-member-select" data-custnum="${row.customer_number}" data-auto="0">
+                ${buildMemberOptions(row.member_id)}
+              </select>
+              <span class="cpb-match-saved" id="ms-${row.customer_number}"></span>
+            </span>
+          </td>
+          <td class="col-action">
+            <button class="cpb-toggle-dead" data-custnum="${row.customer_number}" data-memberid="${row.member_id || ''}" data-name="${name}" title="Move to Dead Cards">☠️</button>
+          </td>
+        </tr>`;
+    }).join('');
 
     wireSelects(unmatchedBody);
 
@@ -694,11 +722,15 @@ function fmtDate(iso: string) {
 
     deadBody.innerHTML = deadRows.map(row => {
       const balCls = balClass(row.account_balance);
+      const name = `${escHtml(row.first_name)} ${escHtml(row.last_name)}`;
       return `
         <tr>
           <td class="col-num">${row.customer_number}</td>
           <td class="col-name">${escHtml(row.last_name)}, ${escHtml(row.first_name)}</td>
           <td class="col-bal text-right ${balCls}">${fmt(row.account_balance)}</td>
+          <td class="col-action">
+            <button class="cpb-toggle-live" data-custnum="${row.customer_number}" data-memberid="${row.member_id || ''}" data-name="${name}" title="Restore to live">💚</button>
+          </td>
         </tr>`;
     }).join('');
   }
@@ -945,6 +977,44 @@ function fmtDate(iso: string) {
     }
   });
 
+  // ── Push CRM → TouchOffice ───────────────────────────────────────────────────
+  pushBtn?.addEventListener('click', async () => {
+    if (!confirm('Push all mapped CRM members to TouchOffice? This will update names, account numbers and card groups.')) return;
+    pushBtn.disabled = true;
+    syncStatus.style.display = 'flex';
+    let offset = 0;
+    let totalOk = 0;
+    let totalErr = 0;
+    let grandTotal = 0;
+    try {
+      while (true) {
+        syncMessage.textContent = grandTotal
+          ? `Pushing to TouchOffice… ${totalOk + totalErr} of ${grandTotal}`
+          : 'Pushing to TouchOffice…';
+        const res = await fetch('/api/touchoffice-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'sync-all', offset }),
+        });
+        const data = await res.json();
+        grandTotal = data.total;
+        for (const r of (data.results || [])) {
+          if (r.ok) totalOk++; else totalErr++;
+        }
+        if (data.remaining <= 0) break;
+        offset = data.nextOffset;
+      }
+      showResult(totalErr === 0 ? 'success' : 'error',
+        `Push complete — ${totalOk} updated${totalErr > 0 ? `, ${totalErr} errors` : ''}.`);
+    } catch {
+      showResult('error', 'Network error — push failed.');
+    } finally {
+      syncStatus.style.display = 'none';
+      pushBtn.disabled = false;
+      pushLabel.textContent = 'Push to TouchOffice';
+    }
+  });
+
   // ── Utility ──────────────────────────────────────────────────────────────────
   function showResult(type, msg) {
     syncResult.className = 'cpb-sync-result ' + type;
@@ -952,6 +1022,37 @@ function fmtDate(iso: string) {
     syncResult.style.display = 'block';
     setTimeout(() => { syncResult.style.display = 'none'; }, 8000);
   }
+
+  // ── Dead / Live toggle ───────────────────────────────────────────────────────
+  async function toggleCardStatus(customerNumber, memberId, dead, name) {
+    const action = dead ? `Move ${name} to Dead Cards?` : `Restore ${name} to live?`;
+    if (!confirm(action)) return;
+
+    try {
+      const res = await fetch('/api/touchoffice-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle-card-status', customerNumber, memberId: memberId || null, dead }),
+      });
+      const data = await res.json();
+      if (!data.ok) { showResult('error', `Failed: ${data.error || 'Unknown error'}`); return; }
+
+      // Optimistic in-memory update
+      const groupNames = { 1: 'MEMBERS', 2: 'SOCIAL MEMBER', 3: 'Dead Cards' };
+      const row = allRows.find(r => r.customer_number === customerNumber);
+      if (row) row.customer_group = dead ? 'Dead Cards' : (groupNames[data.custgroup] || 'MEMBERS');
+      renderAll();
+    } catch {
+      showResult('error', 'Network error toggling card status.');
+    }
+  }
+
+  document.addEventListener('click', e => {
+    const deadBtn = e.target.closest('.cpb-toggle-dead');
+    const liveBtn = e.target.closest('.cpb-toggle-live');
+    if (deadBtn) toggleCardStatus(parseInt(deadBtn.dataset.custnum), deadBtn.dataset.memberid, true, deadBtn.dataset.name);
+    if (liveBtn) toggleCardStatus(parseInt(liveBtn.dataset.custnum), liveBtn.dataset.memberid, false, liveBtn.dataset.name);
+  });
 
   // ── Initial render from SSR data ─────────────────────────────────────────────
   renderAll();
