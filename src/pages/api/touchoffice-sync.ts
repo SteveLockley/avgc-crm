@@ -79,6 +79,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
       flag = 0;
     }
     const result = await updateCustomerCard(db, env, customerNumber, { custgroup, flag });
+
+    if (result.ok) {
+      const groupText = custgroup === TO_GROUP_DEAD_CARDS ? 'Dead Cards'
+        : custgroup === TO_GROUP_SOCIAL ? 'SOCIAL MEMBER'
+        : 'MEMBERS';
+      await db.prepare(
+        `UPDATE customer_purse_balances SET customer_group = ?, updated_at = datetime('now') WHERE customer_number = ?`
+      ).bind(groupText, customerNumber).run();
+    }
+
     return json({ ...result, custgroup });
   }
 
