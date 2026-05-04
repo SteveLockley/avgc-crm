@@ -17,6 +17,7 @@ const navItems = [
     { href: '/admin/foodbar', label: 'Food & Bar', icon: 'utensils' },
     { href: '/admin/decision-support/courtesy-tee-times', label: 'NGU Courtesy Tee Times', icon: 'clock' },
     { href: '/admin/decision-support/seniors-purse', label: "Seniors' Purse", icon: 'trophy' },
+    { href: '/admin/decision-support/customer-purse-balances', label: 'Customer Purse Balances', icon: 'wallet' },
     { href: '/admin/decision-support/architecture', label: 'System Architecture', icon: 'sitemap' },
   ]},
   { href: '/admin/statistics', label: 'Statistics', icon: 'bar-chart-2' },
@@ -936,6 +937,9 @@ const isItemActive = (item: any) => {
                   class={`nav-item ${currentPath === child.href || currentPath.startsWith(child.href + '/') ? 'active' : ''}`}
                 >
                   {child.icon === 'utensils' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/></svg>}
+                  {child.icon === 'clock' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
+                  {child.icon === 'trophy' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="14.5 17.5 3 6 3 3 21 3 21 6 9.5 17.5"/><line x1="12" y1="17.5" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/><path d="M21 6c0 3-2 5.5-9 5.5S3 9 3 6"/></svg>}
+                  {child.icon === 'wallet' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>}
                   {child.icon === 'sitemap' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="8.5" y="16" width="7" height="5" rx="1"/><line x1="6.5" y1="8" x2="6.5" y2="13"/><line x1="17.5" y1="8" x2="17.5" y2="13"/><line x1="6.5" y1="13" x2="17.5" y2="13"/><line x1="12" y1="13" x2="12" y2="16"/></svg>}
                   <span>{child.label}</span>
                 </a>
