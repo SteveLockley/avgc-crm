@@ -84,7 +84,6 @@ function fmtDate(iso: string) {
           </svg>
           <span id="syncLabel">Sync from TouchOffice</span>
         </button>
-        <button id="debugBtn" class="cpb-btn cpb-btn-ghost" title="Show raw report structure">Debug</button>
       </div>
     </div>
 
@@ -158,27 +157,6 @@ function fmtDate(iso: string) {
       </div>
     </div>
 
-    <!-- Debug panel -->
-    <div id="debugPanel" style="display:none;margin-bottom:1.25rem;">
-      <div class="cpb-card">
-        <div class="cpb-card-header">
-          <h3>Debug</h3>
-          <div style="display:flex;gap:0.5rem;align-items:center;">
-            <select id="debugGroupSelect" class="cpb-select-sm">
-              <option value="1">1 — MEMBERS</option>
-              <option value="2">2 — SOCIAL MEMBER</option>
-              <option value="3">3 — Dead Cards</option>
-              <option value="4">4 — STAFF DISCOUNT</option>
-            </select>
-            <button id="debugFetchBtn" class="cpb-btn cpb-btn-ghost" style="padding:0.3rem 0.625rem;font-size:0.75rem;">Fetch</button>
-            <button id="debugClose" class="cpb-btn cpb-btn-ghost" style="padding:0.3rem 0.625rem;font-size:0.75rem;">Close</button>
-          </div>
-        </div>
-        <div style="padding:1rem 1.25rem;">
-          <pre id="debugOutput" style="font-size:0.7rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;background:#f8f8f8;border:1px solid #e8e8e8;border-radius:8px;padding:0.75rem;margin:0;"></pre>
-        </div>
-      </div>
-    </div>
 
     <!-- Main active cards table -->
     <div class="cpb-card" id="mainCard">
@@ -951,31 +929,6 @@ function fmtDate(iso: string) {
   document.getElementById('unmatchedNext').addEventListener('click', () => { unmatchedPage++; renderUnmatched(); });
 
   // ── Debug panel ──────────────────────────────────────────────────────────────
-  document.getElementById('debugBtn').addEventListener('click', () => {
-    const panel = document.getElementById('debugPanel');
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  });
-  document.getElementById('debugClose').addEventListener('click', () => {
-    document.getElementById('debugPanel').style.display = 'none';
-  });
-  document.getElementById('debugFetchBtn').addEventListener('click', async () => {
-    const groupId = document.getElementById('debugGroupSelect').value;
-    const btn = document.getElementById('debugFetchBtn');
-    btn.disabled = true; btn.textContent = 'Fetching…';
-    try {
-      const res = await fetch('/api/customer-purse-balances', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'debug', groupId }),
-      });
-      const data = await res.json();
-      document.getElementById('debugOutput').textContent = JSON.stringify(data, null, 2);
-    } catch (e) {
-      document.getElementById('debugOutput').textContent = 'Fetch failed: ' + e;
-    } finally {
-      btn.disabled = false; btn.textContent = 'Fetch';
-    }
-  });
 
   // ── Push CRM → TouchOffice ───────────────────────────────────────────────────
   pushBtn?.addEventListener('click', async () => {
@@ -994,7 +947,7 @@ function fmtDate(iso: string) {
         const res = await fetch('/api/touchoffice-sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'sync-all', offset }),
+          body: JSON.stringify({ action: 'push-from-cpb', offset }),
         });
         const data = await res.json();
         grandTotal = data.total;

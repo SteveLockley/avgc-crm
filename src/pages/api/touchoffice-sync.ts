@@ -38,14 +38,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return json(result);
   }
 
-  // Sync all members that have a touchoffice_num set — batched to avoid timeouts and TO rate limits
-  if (action === 'sync-all') {
+  // Push all CPB-matched members to TouchOffice — uses customer_purse_balances as the source
+  // Also backfills members.touchoffice_num from CPB so both tables stay consistent
+  if (action === 'push-from-cpb' || action === 'sync-all') {
     const BATCH_SIZE = 20;
     const offset = Number(body.offset) || 0;
 
+    // Prefer CPB as source (has the customer_number↔member_id mapping the user built)
+    // Fall back to members.touchoffice_num for backwards compatibility
     const rows = await db.prepare(
-      `SELECT id, first_name, surname, category, date_expires, touchoffice_num
-       FROM members WHERE touchoffice_num IS NOT NULL ORDER BY surname, first_name`
+      `SELECT m.id, m.first_name, m.surname, m.category, m.date_expires,
+              cpb.customer_number AS touchoffice_num
+       FROM customer_purse_balances cpb
+       JOIN members m ON m.id = cpb.member_id
+       ORDER BY m.surname, m.first_name`
     ).all();
     const allMembers = (rows.results || []) as Member[];
     const total = allMembers.length;
@@ -55,6 +61,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
     for (const member of batch) {
       const result = await syncMember(db, env, member);
       results.push({ memberId: member.id, name: `${member.first_name} ${member.surname}`, ...result });
+      if (result.ok) {
+        // Keep members.touchoffice_num in sync with CPB mapping
+        await db.prepare(
+          `UPDATE members SET touchoffice_num = ? WHERE id = ? AND (touchoffice_num IS NULL OR touchoffice_num != ?)`
+        ).bind(member.touchoffice_num, member.id, member.touchoffice_num).run();
+      }
       await new Promise(resolve => setTimeout(resolve, 200));
     }
 
