@@ -22,15 +22,15 @@ const mapped = members.filter(m => m.touchoffice_num !== null);
 const unmapped = members.filter(m => m.touchoffice_num === null);
 ---
 
-<AdminLayout title="TouchOffice Card Sync">
+<AdminLayout title="TouchOffice Card Push">
   <div class="page-header">
-    <h1>TouchOffice Card Sync</h1>
-    <p class="subtitle">Map CRM members to their TouchOffice customer number, then sync name, account number, group and blacklist status.</p>
+    <h1>TouchOffice Card Push</h1>
+    <p class="subtitle">Map CRM members to their TouchOffice customer number, then push name, account number, group and blacklist status to TouchOffice.</p>
   </div>
 
   <div class="actions-bar">
     <button id="sync-all-btn" class="btn btn-primary" data-count={mapped.length}>
-      Sync All Mapped ({mapped.length})
+      Push All to TouchOffice ({mapped.length})
     </button>
     <span id="sync-status" class="sync-status"></span>
   </div>
@@ -65,7 +65,7 @@ const unmapped = members.filter(m => m.touchoffice_num === null);
             </td>
             <td><span class={`badge ${toGroupClass}`}>{toGroup}</span></td>
             <td>
-              <button class="btn btn-sm sync-one-btn" data-member-id={m.id}>Sync</button>
+              <button class="btn btn-sm sync-one-btn" data-member-id={m.id}>Push</button>
             </td>
           </tr>
         );
