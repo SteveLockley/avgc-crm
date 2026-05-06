@@ -1,0 +1,205 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+// The Sage Explorer - a generic API browser for understanding how Sage is being used
+---
+
+<AdminLayout title="Sage Explorer">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">API Explorer</span>
+      <button id="fetch-btn" class="btn btn-primary" onclick="fetchEndpoint()">Fetch</button>
+    </div>
+    <p class="text-muted mb-1" style="font-size: 0.875rem;">Browse raw Sage API endpoints to understand your data structure.</p>
+
+    <div style="display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap;">
+      <select id="endpoint-select" class="form-input" style="flex: 1; min-width: 300px;">
+        <optgroup label="Business & Settings">
+          <option value="/businesses">/businesses — Company info</option>
+          <option value="/financial_settings">/financial_settings — Financial year, VAT scheme</option>
+          <option value="/business_settings">/business_settings — Business details</option>
+        </optgroup>
+        <optgroup label="Chart of Accounts">
+          <option value="/ledger_accounts" selected>/ledger_accounts — All nominal codes</option>
+          <option value="/ledger_account_types">/ledger_account_types — Account type definitions</option>
+        </optgroup>
+        <optgroup label="Banking">
+          <option value="/bank_accounts">/bank_accounts — Bank accounts</option>
+          <option value="/bank_transactions">/bank_transactions — Bank transactions</option>
+        </optgroup>
+        <optgroup label="Sales">
+          <option value="/sales_invoices">/sales_invoices — Sales invoices</option>
+          <option value="/sales_credit_notes">/sales_credit_notes — Credit notes</option>
+          <option value="/sales_quick_entries">/sales_quick_entries — Quick entries</option>
+        </optgroup>
+        <optgroup label="Purchases">
+          <option value="/purchase_invoices">/purchase_invoices — Purchase invoices</option>
+          <option value="/purchase_credit_notes">/purchase_credit_notes — Purchase credits</option>
+          <option value="/purchase_quick_entries">/purchase_quick_entries — Quick entries</option>
+        </optgroup>
+        <optgroup label="Payments">
+          <option value="/contact_payments">/contact_payments — Customer/supplier payments</option>
+          <option value="/other_payments">/other_payments — Other payments</option>
+        </optgroup>
+        <optgroup label="Journals & Ledger">
+          <option value="/journals">/journals — Journal entries</option>
+          <option value="/ledger_entries">/ledger_entries — All ledger entries</option>
+        </optgroup>
+        <optgroup label="Taxes">
+          <option value="/tax_rates">/tax_rates — VAT rates</option>
+          <option value="/tax_types">/tax_types — Tax type definitions</option>
+          <option value="/tax_schemes">/tax_schemes — VAT schemes</option>
+        </optgroup>
+        <optgroup label="Contacts">
+          <option value="/contacts">/contacts — Customers & suppliers</option>
+        </optgroup>
+        <optgroup label="Products & Services">
+          <option value="/products">/products — Products</option>
+          <option value="/services">/services — Services</option>
+        </optgroup>
+        <optgroup label="Reporting">
+          <option value="/trial_balance">/trial_balance — Trial balance (set dates below)</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <div style="display: flex; gap: 1rem; margin-top: 0.75rem; flex-wrap: wrap; align-items: end;">
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">Page</label>
+        <input type="number" id="page-input" value="1" min="1" class="form-input" style="width: 80px;">
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">Per page</label>
+        <input type="number" id="perpage-input" value="20" min="1" max="200" class="form-input" style="width: 80px;">
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">From date</label>
+        <input type="date" id="from-date" class="form-input" style="width: 160px;">
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">To date</label>
+        <input type="date" id="to-date" class="form-input" style="width: 160px;">
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">Extra params (key=val&key=val)</label>
+        <input type="text" id="extra-params" class="form-input" style="width: 250px;" placeholder="e.g. contact_id=abc123">
+      </div>
+    </div>
+  </div>
+
+  <div id="result-meta" style="display: none;" class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+      <div>
+        <span id="result-total" class="badge badge-info"></span>
+        <span id="result-page" class="badge badge-success" style="margin-left: 0.5rem;"></span>
+      </div>
+      <div style="display: flex; gap: 0.5rem;">
+        <button id="prev-btn" class="btn btn-sm btn-secondary" onclick="changePage(-1)" disabled>Previous</button>
+        <button id="next-btn" class="btn btn-sm btn-secondary" onclick="changePage(1)" disabled>Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="result-container" class="card" style="display: none;">
+    <div class="card-header">
+      <span class="card-title">Response</span>
+      <button class="btn btn-sm btn-secondary" onclick="copyResult()">Copy JSON</button>
+    </div>
+    <pre id="result-json"></pre>
+  </div>
+
+  <div id="loading" style="display: none; text-align: center; padding: 2rem;">
+    <span class="loading" style="width: 40px; height: 40px; border-width: 3px;"></span>
+    <p class="text-muted" style="margin-top: 1rem;">Fetching from Sage...</p>
+  </div>
+
+  <div id="error-container" style="display: none;"></div>
+
+  <style>
+    .form-input {
+      padding: 0.5rem 0.625rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      background: var(--white);
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(26, 74, 110, 0.1);
+    }
+  </style>
+
+  <script is:inline>
+    let lastResponse = null;
+
+    async function fetchEndpoint() {
+      const endpoint = document.getElementById('endpoint-select').value;
+      const page = document.getElementById('page-input').value;
+      const perPage = document.getElementById('perpage-input').value;
+      const fromDate = document.getElementById('from-date').value;
+      const toDate = document.getElementById('to-date').value;
+      const extraParams = document.getElementById('extra-params').value;
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('result-container').style.display = 'none';
+      document.getElementById('result-meta').style.display = 'none';
+      document.getElementById('error-container').style.display = 'none';
+
+      let url = `/api/sage/explore?endpoint=${encodeURIComponent(endpoint)}&page=${page}&items_per_page=${perPage}`;
+      if (fromDate) url += `&from_date=${fromDate}`;
+      if (toDate) url += `&to_date=${toDate}`;
+      if (extraParams) url += `&${extraParams}`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        lastResponse = data;
+
+        document.getElementById('loading').style.display = 'none';
+
+        if (data.error) {
+          document.getElementById('error-container').innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+          document.getElementById('error-container').style.display = 'block';
+          return;
+        }
+
+        document.getElementById('result-json').textContent = JSON.stringify(data, null, 2);
+        document.getElementById('result-container').style.display = 'block';
+
+        // Show pagination meta if it's a paginated response
+        if (data.$total !== undefined) {
+          document.getElementById('result-meta').style.display = 'block';
+          document.getElementById('result-total').textContent = `Total: ${data.$total}`;
+          document.getElementById('result-page').textContent = `Page ${data.$page} of ${Math.ceil(data.$total / parseInt(perPage))}`;
+          document.getElementById('prev-btn').disabled = !data.$back;
+          document.getElementById('next-btn').disabled = !data.$next;
+        }
+      } catch (e) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-container').innerHTML = `<div class="alert alert-error">Failed: ${e.message}</div>`;
+        document.getElementById('error-container').style.display = 'block';
+      }
+    }
+
+    function changePage(delta) {
+      const input = document.getElementById('page-input');
+      input.value = Math.max(1, parseInt(input.value) + delta);
+      fetchEndpoint();
+    }
+
+    function copyResult() {
+      if (lastResponse) {
+        navigator.clipboard.writeText(JSON.stringify(lastResponse, null, 2));
+      }
+    }
+
+    // Allow Enter key to trigger fetch
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.target.closest('pre')) {
+        fetchEndpoint();
+      }
+    });
+  </script>
+</AdminLayout>

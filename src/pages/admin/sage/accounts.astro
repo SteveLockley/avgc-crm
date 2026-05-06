@@ -1,0 +1,106 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let accounts: any[] = [];
+let lastSynced = '';
+
+if (db) {
+  try {
+    const rows = await db.prepare(`
+      SELECT * FROM sage_ledger_accounts
+      ORDER BY nominal_code ASC
+    `).all();
+    accounts = rows.results || [];
+    if (accounts.length > 0) {
+      lastSynced = accounts[0].last_synced || '';
+    }
+  } catch (e) {
+    // Table may not exist
+  }
+}
+
+// Group accounts by type
+const grouped = accounts.reduce((acc: Record<string, any[]>, a: any) => {
+  const type = a.ledger_account_type || 'Other';
+  if (!acc[type]) acc[type] = [];
+  acc[type].push(a);
+  return acc;
+}, {});
+
+const typeOrder = ['SALES', 'OTHER_INCOME', 'DIRECT_COSTS', 'OVERHEADS', 'DEPRECIATION', 'CURRENT_ASSETS', 'FIXED_ASSETS', 'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'EQUITY'];
+const sortedTypes = Object.keys(grouped).sort((a, b) => {
+  const ai = typeOrder.indexOf(a);
+  const bi = typeOrder.indexOf(b);
+  return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+});
+---
+
+<AdminLayout title="Chart of Accounts">
+  {accounts.length === 0 ? (
+    <div class="alert alert-warning">
+      No cached accounts. <a href="/admin">Sync from Sage first</a>, or use the <a href="/admin/sage">Explorer</a> to fetch directly.
+    </div>
+  ) : (
+    <>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <p class="text-muted">{accounts.length} accounts, last synced: {lastSynced}</p>
+        <button class="btn btn-sm btn-primary" onclick="syncAccounts()">Re-sync</button>
+      </div>
+
+      {sortedTypes.map(type => (
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">{type.replace(/_/g, ' ')}</span>
+            <span class="badge badge-info">{grouped[type].length} accounts</span>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 80px;">Code</th>
+                  <th>Name</th>
+                  <th>Group</th>
+                  <th class="text-right">Balance</th>
+                  <th style="width: 60px;">Sales</th>
+                  <th style="width: 60px;">Bank</th>
+                  <th style="width: 60px;">Report</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped[type].map((a: any) => (
+                  <tr>
+                    <td class="mono">{a.nominal_code}</td>
+                    <td>{a.displayed_as || a.name}</td>
+                    <td class="text-muted">{a.ledger_account_group || '-'}</td>
+                    <td class="text-right mono">{a.balance || '-'}</td>
+                    <td>{a.is_visible_in_sales ? 'Y' : ''}</td>
+                    <td>{a.is_visible_in_banking ? 'Y' : ''}</td>
+                    <td>{a.is_visible_in_reporting ? 'Y' : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </>
+  )}
+
+  <style>
+    .table-container { overflow-x: auto; }
+  </style>
+
+  <script is:inline>
+    async function syncAccounts() {
+      const res = await fetch('/api/sage/sync?type=ledger_accounts', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        window.location.reload();
+      } else {
+        alert('Sync failed: ' + data.error);
+      }
+    }
+  </script>
+</AdminLayout>

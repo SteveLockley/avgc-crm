@@ -1,0 +1,268 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+// Trial balance is fetched live from Sage
+// This is the only "report" endpoint Sage provides
+---
+
+<AdminLayout title="Trial Balance">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Sage Trial Balance</span>
+    </div>
+    <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">
+      The trial balance is the only financial report available via the Sage API.
+      We'll reconstruct P&L and balance sheet views from this data.
+    </p>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">From date</label>
+        <input type="date" id="from-date" class="form-input">
+      </div>
+      <div>
+        <label style="font-size: 0.75rem; color: var(--text-light);">To date</label>
+        <input type="date" id="to-date" class="form-input">
+      </div>
+      <button class="btn btn-primary" onclick="fetchTrialBalance()">Fetch Trial Balance</button>
+    </div>
+  </div>
+
+  <div id="loading" style="display: none; text-align: center; padding: 2rem;">
+    <span class="loading" style="width: 40px; height: 40px; border-width: 3px;"></span>
+  </div>
+
+  <div id="summary" style="display: none;" class="stats-grid"></div>
+
+  <div id="pnl-section" style="display: none;">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Profit & Loss (derived)</span>
+      </div>
+      <table id="pnl-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Account</th>
+            <th>Type</th>
+            <th class="text-right">Debit</th>
+            <th class="text-right">Credit</th>
+            <th class="text-right">Net</th>
+          </tr>
+        </thead>
+        <tbody id="pnl-body"></tbody>
+        <tfoot id="pnl-foot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div id="bs-section" style="display: none;">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Balance Sheet (derived)</span>
+      </div>
+      <table id="bs-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Account</th>
+            <th>Type</th>
+            <th class="text-right">Debit</th>
+            <th class="text-right">Credit</th>
+            <th class="text-right">Net</th>
+          </tr>
+        </thead>
+        <tbody id="bs-body"></tbody>
+        <tfoot id="bs-foot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div id="raw-section" style="display: none;" class="card">
+    <div class="card-header">
+      <span class="card-title">Raw Response</span>
+      <button class="btn btn-sm btn-secondary" onclick="toggleRaw()">Show/Hide</button>
+    </div>
+    <pre id="raw-json" style="display: none;"></pre>
+  </div>
+
+  <div id="error-container" style="display: none;"></div>
+
+  <style>
+    .form-input {
+      padding: 0.5rem 0.625rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      background: var(--white);
+    }
+    .form-input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    .section-total td {
+      font-weight: 700;
+      border-top: 2px solid var(--text);
+      background: var(--secondary);
+    }
+  </style>
+
+  <script is:inline>
+    // Default to current financial year (April - March for UK)
+    const now = new Date();
+    const fyStart = now.getMonth() >= 3
+      ? new Date(now.getFullYear(), 3, 1)
+      : new Date(now.getFullYear() - 1, 3, 1);
+    document.getElementById('from-date').value = fyStart.toISOString().split('T')[0];
+    document.getElementById('to-date').value = now.toISOString().split('T')[0];
+
+    // P&L account types (revenue & expenses)
+    const pnlTypes = ['SALES', 'OTHER_INCOME', 'DIRECT_COSTS', 'OVERHEADS', 'DEPRECIATION'];
+    // Balance sheet types
+    const bsTypes = ['CURRENT_ASSETS', 'FIXED_ASSETS', 'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'EQUITY'];
+
+    function fmt(n) {
+      if (n == null || isNaN(n)) return '-';
+      return n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    async function fetchTrialBalance() {
+      const fromDate = document.getElementById('from-date').value;
+      const toDate = document.getElementById('to-date').value;
+
+      if (!fromDate || !toDate) {
+        alert('Please select both dates');
+        return;
+      }
+
+      document.getElementById('loading').style.display = 'block';
+      ['summary', 'pnl-section', 'bs-section', 'raw-section', 'error-container'].forEach(id => {
+        document.getElementById(id).style.display = 'none';
+      });
+
+      try {
+        const res = await fetch(`/api/sage/explore?endpoint=/trial_balance&from_date=${fromDate}&to_date=${toDate}`);
+        const data = await res.json();
+        document.getElementById('loading').style.display = 'none';
+
+        if (data.error) {
+          document.getElementById('error-container').innerHTML = `<div class="alert alert-error">${data.error}</div>`;
+          document.getElementById('error-container').style.display = 'block';
+          return;
+        }
+
+        // Store raw
+        document.getElementById('raw-json').textContent = JSON.stringify(data, null, 2);
+        document.getElementById('raw-section').style.display = 'block';
+
+        const items = data.$items || [];
+
+        // Split into P&L and BS
+        const pnlItems = items.filter(i => pnlTypes.includes(i.ledger_account?.ledger_account_type?.id));
+        const bsItems = items.filter(i => bsTypes.includes(i.ledger_account?.ledger_account_type?.id));
+
+        // Render P&L
+        renderTable('pnl-body', 'pnl-foot', pnlItems, 'Profit / (Loss)');
+        document.getElementById('pnl-section').style.display = 'block';
+
+        // Render BS
+        renderTable('bs-body', 'bs-foot', bsItems, 'Net Assets');
+        document.getElementById('bs-section').style.display = 'block';
+
+        // Summary stats
+        const totalIncome = pnlItems
+          .filter(i => ['SALES', 'OTHER_INCOME'].includes(i.ledger_account?.ledger_account_type?.id))
+          .reduce((sum, i) => sum + (parseFloat(i.credit) || 0) - (parseFloat(i.debit) || 0), 0);
+        const totalExpenses = pnlItems
+          .filter(i => ['DIRECT_COSTS', 'OVERHEADS', 'DEPRECIATION'].includes(i.ledger_account?.ledger_account_type?.id))
+          .reduce((sum, i) => sum + (parseFloat(i.debit) || 0) - (parseFloat(i.credit) || 0), 0);
+        const netProfit = totalIncome - totalExpenses;
+
+        document.getElementById('summary').innerHTML = `
+          <div class="stat-card">
+            <div class="stat-value" style="color: var(--success);">${fmt(totalIncome)}</div>
+            <div class="stat-label">Total Income</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="color: var(--danger);">${fmt(totalExpenses)}</div>
+            <div class="stat-label">Total Expenses</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="color: ${netProfit >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(netProfit)}</div>
+            <div class="stat-label">Net Profit / (Loss)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">${items.length}</div>
+            <div class="stat-label">Accounts with activity</div>
+          </div>
+        `;
+        document.getElementById('summary').style.display = 'grid';
+
+      } catch (e) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-container').innerHTML = `<div class="alert alert-error">Failed: ${e.message}</div>`;
+        document.getElementById('error-container').style.display = 'block';
+      }
+    }
+
+    function renderTable(bodyId, footId, items, totalLabel) {
+      const body = document.getElementById(bodyId);
+      const foot = document.getElementById(footId);
+      body.innerHTML = '';
+      foot.innerHTML = '';
+
+      let totalDebit = 0;
+      let totalCredit = 0;
+
+      // Group by account type
+      let currentType = '';
+      items.sort((a, b) => {
+        const aType = a.ledger_account?.ledger_account_type?.id || '';
+        const bType = b.ledger_account?.ledger_account_type?.id || '';
+        if (aType !== bType) return aType.localeCompare(bType);
+        return (a.ledger_account?.nominal_code || 0) - (b.ledger_account?.nominal_code || 0);
+      });
+
+      items.forEach(item => {
+        const type = item.ledger_account?.ledger_account_type?.id || 'Other';
+        if (type !== currentType) {
+          currentType = type;
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td colspan="6" style="font-weight: 700; background: #e8edf1; padding: 0.5rem 0.75rem;">${type.replace(/_/g, ' ')}</td>`;
+          body.appendChild(tr);
+        }
+
+        const debit = parseFloat(item.debit) || 0;
+        const credit = parseFloat(item.credit) || 0;
+        const net = debit - credit;
+        totalDebit += debit;
+        totalCredit += credit;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono">${item.ledger_account?.nominal_code || '-'}</td>
+          <td>${item.ledger_account?.displayed_as || '-'}</td>
+          <td class="text-muted" style="font-size: 0.75rem;">${type}</td>
+          <td class="text-right mono">${debit ? fmt(debit) : '-'}</td>
+          <td class="text-right mono">${credit ? fmt(credit) : '-'}</td>
+          <td class="text-right mono" style="font-weight: 600;">${fmt(net)}</td>
+        `;
+        body.appendChild(tr);
+      });
+
+      foot.innerHTML = `
+        <tr class="section-total">
+          <td colspan="3">${totalLabel}</td>
+          <td class="text-right mono">${fmt(totalDebit)}</td>
+          <td class="text-right mono">${fmt(totalCredit)}</td>
+          <td class="text-right mono">${fmt(totalDebit - totalCredit)}</td>
+        </tr>
+      `;
+    }
+
+    function toggleRaw() {
+      const el = document.getElementById('raw-json');
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+  </script>
+</AdminLayout>

@@ -13,6 +13,10 @@ interface Env {
   // The service account must have "Send As" permission on the shared mailbox
   AZURE_SERVICE_USER?: string;
   AZURE_SERVICE_PASSWORD?: string;
+  // Sage Business Cloud Accounting OAuth credentials
+  SAGE_CLIENT_ID?: string;
+  SAGE_CLIENT_SECRET?: string;
+  SAGE_REDIRECT_URI?: string;
 }
 
 type Runtime = import('@astrojs/cloudflare').Runtime<Env>;

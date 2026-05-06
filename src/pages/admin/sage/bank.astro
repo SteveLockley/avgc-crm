@@ -1,0 +1,80 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let bankAccounts: any[] = [];
+
+if (db) {
+  try {
+    const rows = await db.prepare('SELECT * FROM sage_bank_accounts ORDER BY displayed_as').all();
+    bankAccounts = rows.results || [];
+  } catch (e) { /* table may not exist */ }
+}
+---
+
+<AdminLayout title="Bank Accounts">
+  {bankAccounts.length === 0 ? (
+    <div class="alert alert-warning">
+      No cached bank accounts. <a href="/admin">Sync from Sage first</a>.
+    </div>
+  ) : (
+    <>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <p class="text-muted">{bankAccounts.length} bank accounts</p>
+        <button class="btn btn-sm btn-primary" onclick="syncBank()">Re-sync</button>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Account Name</th>
+              <th>Display Name</th>
+              <th>Code</th>
+              <th>Account Number</th>
+              <th>Sort Code</th>
+              <th>Type</th>
+              <th class="text-right">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bankAccounts.map((b: any) => (
+              <tr>
+                <td>{b.account_name || '-'}</td>
+                <td>{b.displayed_as}</td>
+                <td class="mono">{b.nominal_code}</td>
+                <td class="mono">{b.account_number || '-'}</td>
+                <td class="mono">{b.sort_code || '-'}</td>
+                <td>{b.bank_account_type || '-'}</td>
+                <td class="text-right mono">{b.balance || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {bankAccounts.map((b: any) => {
+        let raw: any = {};
+        try { raw = JSON.parse(b.raw_json); } catch (e) {}
+        return (
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">{b.displayed_as} — Raw Data</span>
+            </div>
+            <pre>{JSON.stringify(raw, null, 2)}</pre>
+          </div>
+        );
+      })}
+    </>
+  )}
+
+  <script is:inline>
+    async function syncBank() {
+      const res = await fetch('/api/sage/sync?type=bank_accounts', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) window.location.reload();
+      else alert('Sync failed: ' + data.error);
+    }
+  </script>
+</AdminLayout>

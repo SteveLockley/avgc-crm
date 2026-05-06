@@ -1,0 +1,90 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let contacts: any[] = [];
+let total = 0;
+
+if (db) {
+  try {
+    const countRow = await db.prepare('SELECT COUNT(*) as cnt FROM sage_contacts').first() as any;
+    total = countRow?.cnt || 0;
+    const rows = await db.prepare('SELECT id, displayed_as, name, contact_type, email, reference, balance FROM sage_contacts ORDER BY displayed_as LIMIT 200').all();
+    contacts = rows.results || [];
+  } catch (e) { /* table may not exist */ }
+}
+
+// Summarise contact types
+const typeCount: Record<string, number> = {};
+contacts.forEach((c: any) => {
+  const types = (c.contact_type || 'unknown').split(',');
+  types.forEach((t: string) => {
+    typeCount[t.trim()] = (typeCount[t.trim()] || 0) + 1;
+  });
+});
+---
+
+<AdminLayout title="Contacts">
+  {contacts.length === 0 ? (
+    <div class="alert alert-warning">
+      No cached contacts. <a href="/admin">Sync from Sage first</a>.
+    </div>
+  ) : (
+    <>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <p class="text-muted">{total} contacts (showing first 200)</p>
+        <button class="btn btn-sm btn-primary" onclick="syncContacts()">Re-sync</button>
+      </div>
+
+      <div class="stats-grid">
+        {Object.entries(typeCount).map(([type, count]) => (
+          <div class="stat-card">
+            <div class="stat-value">{count}</div>
+            <div class="stat-label">{type}</div>
+          </div>
+        ))}
+      </div>
+
+      <div class="card">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Email</th>
+                <th>Reference</th>
+                <th class="text-right">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contacts.map((c: any) => (
+                <tr>
+                  <td>{c.displayed_as || c.name}</td>
+                  <td><span class="badge badge-info">{c.contact_type || '-'}</span></td>
+                  <td class="text-muted">{c.email || '-'}</td>
+                  <td class="mono">{c.reference || '-'}</td>
+                  <td class="text-right mono">{c.balance || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  )}
+
+  <style>
+    .table-container { overflow-x: auto; }
+  </style>
+
+  <script is:inline>
+    async function syncContacts() {
+      const res = await fetch('/api/sage/sync?type=contacts', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) window.location.reload();
+      else alert('Sync failed: ' + data.error);
+    }
+  </script>
+</AdminLayout>
