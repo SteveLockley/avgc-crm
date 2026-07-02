@@ -192,17 +192,14 @@ export async function POST({ locals, request }: APIContext) {
       await deleteItem(accessToken, siteId, uploadResult.id);
     }
 
-    const sharingUrl = await createSharingLink(accessToken, siteId, finalItemId);
-
-    const url = sharingUrl || finalWebUrl;
-
-    // For images, use public domain proxy URL (crm domain is behind Cloudflare Access)
-    const imageUrl = isImage
+    // Use public domain proxy URLs — the CRM domain is behind Cloudflare Access so
+    // SharePoint sharing links and direct URLs won't be accessible to email recipients.
+    const url = isImage
       ? `https://www.alnmouthvillage.golf/api/image/${finalItemId}`
-      : url;
+      : `https://www.alnmouthvillage.golf/api/document/${finalItemId}`;
 
     return new Response(
-      JSON.stringify({ success: true, url, imageUrl, filename: targetFilename, isImage }),
+      JSON.stringify({ success: true, url, imageUrl: url, filename: targetFilename, isImage }),
       { headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {

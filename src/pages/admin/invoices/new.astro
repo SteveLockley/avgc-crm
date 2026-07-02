@@ -1,0 +1,419 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { formatCurrency, getCurrentMembershipPeriod, type Member } from '../../../lib/db';
+
+const db = Astro.locals.runtime.env.DB;
+const user = Astro.locals.user;
+
+const period = getCurrentMembershipPeriod();
+
+const paymentItemsResult = await db.prepare(
+  `SELECT id, name, fee, category FROM payment_items WHERE active = 1 ORDER BY category, name`
+).all();
+const allPaymentItems = (paymentItemsResult.results || []) as { id: number; name: string; fee: number; category: string }[];
+const feePaymentItems = allPaymentItems.filter(p => p.category === 'Fee');
+const subPaymentItems = allPaymentItems.filter(p => p.category === 'Subscription');
+
+let error = '';
+let redirectTo = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const memberId = parseInt(formData.get('member_id') as string);
+  const periodStart = formData.get('period_start') as string;
+  const periodEnd = formData.get('period_end') as string;
+  const descriptions = formData.getAll('description') as string[];
+  const unitPrices = formData.getAll('unit_price') as string[];
+  const quantities = formData.getAll('quantity') as string[];
+  const paymentItemIds = formData.getAll('payment_item_id') as string[];
+
+  if (!memberId || isNaN(memberId)) {
+    error = 'Please select a member';
+  } else if (!periodStart || !periodEnd) {
+    error = 'Please set the invoice period';
+  } else {
+    const validItems: { paymentItemId: number | null; description: string; unitPrice: number; quantity: number; lineTotal: number }[] = [];
+    for (let i = 0; i < descriptions.length; i++) {
+      const desc = descriptions[i]?.trim();
+      const price = parseFloat(unitPrices[i]);
+      const qty = parseInt(quantities[i]) || 1;
+      if (desc && !isNaN(price) && price >= 0) {
+        validItems.push({
+          paymentItemId: paymentItemIds[i] ? parseInt(paymentItemIds[i]) : null,
+          description: desc,
+          unitPrice: price,
+          quantity: qty,
+          lineTotal: parseFloat((price * qty).toFixed(2)),
+        });
+      }
+    }
+
+    if (validItems.length === 0) {
+      error = 'Add at least one line item';
+    } else {
+      const member = await db.prepare(`SELECT * FROM members WHERE id = ?`).bind(memberId).first<Member>();
+      if (!member) {
+        error = 'Member not found';
+      } else {
+        const total = parseFloat(validItems.reduce((s, i) => s + i.lineTotal, 0).toFixed(2));
+
+        // Generate invoice number
+        const year = parseInt(periodStart.substring(0, 4));
+        const prefix = `INV-${year}-`;
+        const last = await db.prepare(
+          `SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1`
+        ).bind(`${prefix}%`).first<{ invoice_number: string }>();
+        let seq = 1;
+        if (last?.invoice_number) {
+          const parts = last.invoice_number.split('-');
+          const lastSeq = parseInt(parts[parts.length - 1], 10);
+          if (!isNaN(lastSeq)) seq = lastSeq + 1;
+        }
+        const invoiceNumber = `${prefix}${String(seq).padStart(3, '0')}`;
+
+        const invoiceResult = await db.prepare(
+          `INSERT INTO invoices (invoice_number, member_id, period_start, period_end, subtotal, total, status, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)`
+        ).bind(invoiceNumber, memberId, periodStart, periodEnd, total, total, user?.email || 'manual').run();
+
+        const invoiceId = invoiceResult.meta?.last_row_id;
+        if (!invoiceId) {
+          error = 'Failed to create invoice';
+        } else {
+          for (const item of validItems) {
+            await db.prepare(
+              `INSERT INTO invoice_items (invoice_id, payment_item_id, description, quantity, unit_price, line_total)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            ).bind(invoiceId, item.paymentItemId || null, item.description, item.quantity, item.unitPrice, item.lineTotal).run();
+          }
+
+          await db.prepare(
+            `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+          ).bind(total, memberId).run();
+
+          await db.prepare(
+            `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'create_manual_invoice', 'invoice', ?, ?)`
+          ).bind(user?.email || 'system', invoiceId, JSON.stringify({ invoiceNumber, memberId, total })).run();
+
+          redirectTo = `/admin/invoices/${invoiceId}`;
+        }
+      }
+    }
+  }
+
+  if (redirectTo) return Astro.redirect(redirectTo);
+}
+---
+
+<AdminLayout title="New Invoice">
+  <div class="page-wrap">
+
+    <div class="page-header">
+      <div class="header-left">
+        <a href="/admin/invoices" class="back-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </a>
+        <div>
+          <h1>New Invoice</h1>
+          <p class="header-subtitle">Create a manual invoice for any member</p>
+        </div>
+      </div>
+    </div>
+
+    {error && (
+      <div class="m3-alert m3-alert-error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        {error}
+      </div>
+    )}
+
+    <form method="POST" id="new-invoice-form">
+      <div class="form-grid">
+
+        <!-- Member -->
+        <div class="m3-card">
+          <div class="m3-card-header"><h2>Member</h2></div>
+          <div class="search-row">
+            <input type="text" id="member-search-input" class="field" placeholder="Search by name…" autocomplete="off" />
+          </div>
+          <div id="member-search-results" class="search-results"></div>
+          <div id="selected-member-preview" class="selected-preview" style="display:none">
+            <div class="selected-info">
+              <span id="selected-member-name" class="selected-name"></span>
+              <span id="selected-member-cat" class="cat-badge"></span>
+            </div>
+            <button type="button" class="btn btn-tonal btn-sm" id="clear-member">Change</button>
+          </div>
+          <input type="hidden" name="member_id" id="member-id-input" />
+        </div>
+
+        <!-- Period -->
+        <div class="m3-card">
+          <div class="m3-card-header"><h2>Period</h2></div>
+          <div class="period-row">
+            <div class="field-group">
+              <label class="field-label">Start</label>
+              <input type="date" name="period_start" class="field" value={period.start} required />
+            </div>
+            <div class="field-group">
+              <label class="field-label">End</label>
+              <input type="date" name="period_end" class="field" value={period.end} required />
+            </div>
+          </div>
+        </div>
+
+        <!-- Line Items -->
+        <div class="m3-card full-width">
+          <div class="m3-card-header">
+            <h2>Line Items</h2>
+            <button type="button" class="btn btn-tonal btn-sm" id="add-row-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Row
+            </button>
+          </div>
+
+          <div id="items-list">
+            <div class="item-row" data-row="0">
+              <select name="payment_item_id" class="item-select" onchange="fillRow(this)">
+                <option value="">Custom item</option>
+                <optgroup label="— Fees —">
+                  {feePaymentItems.map(pi => (
+                    <option value={pi.id} data-fee={pi.fee} data-name={pi.name}>{pi.name} — {formatCurrency(pi.fee)}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="— Subscriptions —">
+                  {subPaymentItems.map(pi => (
+                    <option value={pi.id} data-fee={pi.fee} data-name={pi.name}>{pi.name} — {formatCurrency(pi.fee)}</option>
+                  ))}
+                </optgroup>
+              </select>
+              <input type="text" name="description" class="item-desc" placeholder="Description" required />
+              <input type="number" name="unit_price" class="item-price" placeholder="0.00" min="0" step="0.01" required oninput="updateTotal()" />
+              <input type="number" name="quantity" class="item-qty" value="1" min="1" oninput="updateTotal()" />
+              <button type="button" class="icon-btn icon-btn-danger remove-row-btn" title="Remove row" onclick="removeRow(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="total-preview">
+            <span class="total-label">Total</span>
+            <span id="running-total" class="total-amount">£0.00</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="form-actions">
+        <a href="/admin/invoices" class="btn btn-tonal">Cancel</a>
+        <button type="submit" class="btn btn-filled">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Create Invoice
+        </button>
+      </div>
+    </form>
+  </div>
+</AdminLayout>
+
+<style>
+  .page-wrap { max-width: 900px; }
+
+  .m3-alert {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1rem 1.25rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;
+  }
+  .m3-alert svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .m3-alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+  .page-header {
+    display: flex; justify-content: space-between; align-items: center;
+    background: white; border-radius: 16px; padding: 1rem 1.5rem;
+    margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .header-left { display: flex; align-items: center; gap: 1rem; }
+  .back-btn {
+    width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: 12px; background: #f0f0f0; color: #555; text-decoration: none; transition: background 0.2s;
+  }
+  .back-btn:hover { background: #e0e0e0; color: #1e5631; }
+  .back-btn svg { width: 20px; height: 20px; }
+  h1 { margin: 0; font-size: 1.35rem; font-weight: 700; color: #1a1a1a; }
+  .header-subtitle { margin: 0.15rem 0 0; font-size: 0.875rem; color: #666; }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+  .full-width { grid-column: 1 / -1; }
+  @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } }
+
+  .m3-card { background: white; border-radius: 16px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .m3-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+  .m3-card-header h2 { margin: 0; font-size: 1rem; font-weight: 600; color: #333; }
+
+  .field {
+    width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #ddd; border-radius: 10px;
+    font-size: 0.9rem; box-sizing: border-box;
+  }
+  .field:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .field-label { display: block; font-size: 0.75rem; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.3rem; }
+  .field-group { display: flex; flex-direction: column; }
+
+  .search-row { margin-bottom: 0.5rem; }
+  .search-results { display: flex; flex-direction: column; gap: 0.35rem; }
+  .search-result-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.85rem; border: 1px solid #e5e7eb; border-radius: 10px;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .search-result-row:hover { background: #f0fdf4; border-color: #1e5631; }
+  .selected-preview {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.65rem 0.85rem; background: #f0fdf4; border-radius: 10px; border: 1px solid #d1fae5;
+  }
+  .selected-info { display: flex; align-items: center; gap: 0.5rem; }
+  .selected-name { font-weight: 600; color: #1a1a1a; }
+  .cat-badge { display: inline-flex; padding: 0.2rem 0.65rem; background: #e8f5e9; color: #1e5631; border-radius: 100px; font-size: 0.75rem; font-weight: 600; }
+
+  .period-row { display: flex; gap: 1rem; }
+  .period-row .field-group { flex: 1; }
+
+  /* Line items table */
+  #items-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+  .item-row { display: flex; gap: 0.5rem; align-items: center; }
+  .item-select { flex: 2; min-width: 140px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; background: white; cursor: pointer; }
+  .item-select:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-desc { flex: 3; min-width: 120px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; }
+  .item-desc:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-price { width: 90px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; text-align: right; }
+  .item-price:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-qty { width: 60px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; text-align: center; }
+  .item-qty:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+  .icon-btn {
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; cursor: pointer; border: none; transition: all 0.2s; flex-shrink: 0;
+  }
+  .icon-btn svg { width: 15px; height: 15px; }
+  .icon-btn-danger { background: transparent; color: #c62828; }
+  .icon-btn-danger:hover { background: #ffebee; }
+
+  .total-preview {
+    display: flex; justify-content: flex-end; align-items: center; gap: 1rem;
+    padding: 0.75rem 1rem; background: #1e5631; border-radius: 10px; color: white;
+  }
+  .total-label { font-size: 0.85rem; font-weight: 500; opacity: 0.8; }
+  .total-amount { font-size: 1.1rem; font-weight: 700; }
+
+  .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.375rem;
+    padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.85rem; font-weight: 500;
+    cursor: pointer; border: none; text-decoration: none; transition: all 0.2s; white-space: nowrap;
+  }
+  .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .btn-filled { background: #1e5631; color: white; }
+  .btn-filled:hover { background: #164424; }
+  .btn-tonal { background: #e8f5e9; color: #1e5631; }
+  .btn-tonal:hover { background: #dcfce7; }
+  .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+  @media (max-width: 600px) {
+    .item-row { flex-wrap: wrap; }
+    .item-select, .item-desc { min-width: 100%; }
+  }
+</style>
+
+<script>
+  // Member search
+  const memberInput = document.getElementById('member-search-input') as HTMLInputElement;
+  const memberResults = document.getElementById('member-search-results');
+  const memberIdInput = document.getElementById('member-id-input') as HTMLInputElement;
+  const selectedPreview = document.getElementById('selected-member-preview');
+  const selectedName = document.getElementById('selected-member-name');
+  const selectedCat = document.getElementById('selected-member-cat');
+  const clearMember = document.getElementById('clear-member');
+  let memberTimer: any = null;
+
+  function selectMember(id: number, name: string, category: string) {
+    memberIdInput.value = String(id);
+    selectedName!.textContent = name;
+    selectedCat!.textContent = category;
+    selectedPreview!.style.display = 'flex';
+    memberInput.style.display = 'none';
+    memberResults!.innerHTML = '';
+  }
+
+  clearMember?.addEventListener('click', () => {
+    memberIdInput.value = '';
+    selectedPreview!.style.display = 'none';
+    memberInput.style.display = '';
+    memberInput.value = '';
+    memberInput.focus();
+  });
+
+  memberInput?.addEventListener('input', function() {
+    clearTimeout(memberTimer);
+    const q = this.value.trim();
+    if (q.length < 2) { memberResults!.innerHTML = ''; return; }
+    memberTimer = setTimeout(() => {
+      fetch(`/api/member-search?q=${encodeURIComponent(q)}`)
+        .then(r => r.json())
+        .then((data: { members: { id: number; first_name: string; surname: string; category: string }[] }) => {
+          if (!data.members?.length) { memberResults!.innerHTML = '<p style="color:#888;font-size:0.85rem;margin:0.25rem 0;">No members found</p>'; return; }
+          memberResults!.innerHTML = data.members.map(m => `
+            <div class="search-result-row" onclick="selectMemberGlobal(${m.id}, '${m.first_name} ${m.surname}', '${m.category}')">
+              <strong style="font-size:0.9rem;">${m.first_name} ${m.surname}</strong>
+              <span style="background:#e8f5e9;color:#1e5631;padding:0.15rem 0.5rem;border-radius:100px;font-size:0.75rem;font-weight:600;">${m.category}</span>
+            </div>`).join('');
+        });
+    }, 300);
+  });
+
+  (window as any).selectMemberGlobal = selectMember;
+
+  // Item row management
+  function fillRow(select: HTMLSelectElement) {
+    const row = select.closest('.item-row') as HTMLElement;
+    const opt = select.options[select.selectedIndex] as HTMLOptionElement & { dataset: { fee?: string; name?: string } };
+    const descInput = row.querySelector('.item-desc') as HTMLInputElement;
+    const priceInput = row.querySelector('.item-price') as HTMLInputElement;
+    if (opt.dataset.name) {
+      descInput.value = opt.dataset.name;
+      priceInput.value = opt.dataset.fee || '';
+    } else {
+      descInput.value = '';
+      priceInput.value = '';
+    }
+    updateTotal();
+  }
+  (window as any).fillRow = fillRow;
+
+  function removeRow(btn: HTMLElement) {
+    const rows = document.querySelectorAll('.item-row');
+    if (rows.length <= 1) return;
+    btn.closest('.item-row')?.remove();
+    updateTotal();
+  }
+  (window as any).removeRow = removeRow;
+
+  function updateTotal() {
+    let total = 0;
+    document.querySelectorAll('.item-row').forEach(row => {
+      const price = parseFloat((row.querySelector('.item-price') as HTMLInputElement)?.value || '0');
+      const qty = parseInt((row.querySelector('.item-qty') as HTMLInputElement)?.value || '1');
+      if (!isNaN(price) && !isNaN(qty)) total += price * qty;
+    });
+    const el = document.getElementById('running-total');
+    if (el) el.textContent = '£' + total.toFixed(2);
+  }
+  (window as any).updateTotal = updateTotal;
+
+  document.getElementById('add-row-btn')?.addEventListener('click', () => {
+    const template = document.querySelector('.item-row') as HTMLElement;
+    const clone = template.cloneNode(true) as HTMLElement;
+    (clone.querySelector('.item-select') as HTMLSelectElement).selectedIndex = 0;
+    (clone.querySelector('.item-desc') as HTMLInputElement).value = '';
+    (clone.querySelector('.item-price') as HTMLInputElement).value = '';
+    (clone.querySelector('.item-qty') as HTMLInputElement).value = '1';
+    document.getElementById('items-list')?.appendChild(clone);
+  });
+</script>

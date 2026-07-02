@@ -1,0 +1,236 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { createSageClient } from '@/lib/sage';
+
+const env = Astro.locals.runtime?.env;
+const FIRST_FY_YEAR = 2019; // earliest year with meaningful data
+
+let error = '';
+let chartData: { year: string; income: number; expenses: number; surplus: number; ytd: boolean }[] = [];
+
+function addYears(date: Date, n: number) {
+  const d = new Date(date);
+  d.setFullYear(d.getFullYear() + n);
+  return d;
+}
+function isoDate(d: Date) { return d.toISOString().split('T')[0]; }
+
+function accountType(displayedAs: string): 'income' | 'expense' | null {
+  const m = displayedAs?.match(/\((\d+)\)\s*$/);
+  if (!m) return null;
+  const code = parseInt(m[1]);
+  if (code >= 4000 && code < 5000) return 'income';
+  if (code >= 5000 && code < 9000) return 'expense';
+  return null;
+}
+
+function summarise(items: any[]) {
+  const totalIncome = items
+    .filter(i => accountType(i.displayed_as) === 'income')
+    .reduce((s, i) => s + (parseFloat(i.credit) || 0) - (parseFloat(i.debit) || 0), 0);
+  const totalExpenses = items
+    .filter(i => accountType(i.displayed_as) === 'expense')
+    .reduce((s, i) => s + (parseFloat(i.debit) || 0) - (parseFloat(i.credit) || 0), 0);
+  return { totalIncome, totalExpenses, surplus: totalIncome - totalExpenses };
+}
+
+if (env?.DB && env?.SAGE_CLIENT_ID && env?.SAGE_CLIENT_SECRET) {
+  try {
+    const client = createSageClient(env);
+    const settings = await client.getFinancialSettings() as any;
+
+    const yearEndStr: string = settings?.year_end_date ?? '';
+    const now = new Date();
+
+    // Find current FY end year
+    let currentFyEnd = new Date(yearEndStr || `${now.getFullYear()}-12-31`);
+    while (currentFyEnd < now) currentFyEnd.setFullYear(currentFyEnd.getFullYear() + 1);
+    const currentFyEndYear = currentFyEnd.getFullYear();
+
+    // Build year ranges for FIRST_FY_YEAR → current
+    const years: { endYear: number; start: Date; end: Date; ytd: boolean }[] = [];
+    const yearEndTemplate = new Date(yearEndStr || '2025-12-31');
+
+    for (let y = FIRST_FY_YEAR; y <= currentFyEndYear; y++) {
+      const fyEnd = new Date(yearEndTemplate);
+      fyEnd.setFullYear(y);
+      const fyStart = addYears(fyEnd, -1);
+      fyStart.setDate(fyStart.getDate() + 1);
+      const isCurrentYear = y === currentFyEndYear;
+      years.push({ endYear: y, start: fyStart, end: isCurrentYear ? now : fyEnd, ytd: isCurrentYear });
+    }
+
+    // Fetch all years in parallel
+    const results = await Promise.all(
+      years.map(y =>
+        client.getTrialBalance(isoDate(y.start), isoDate(y.end))
+          .then((raw: any) => ({ ...y, items: raw?.ledger_accounts || [] }))
+          .catch(() => ({ ...y, items: [] }))
+      )
+    );
+
+    // Build label: if FY crosses calendar years show "2024/25", otherwise just "2025"
+    function fyLabel(y: typeof years[0]): string {
+      const startYear = y.start.getFullYear();
+      const endYear = y.endYear;
+      const cross = startYear !== endYear;
+      const base = cross ? `${startYear}/${String(endYear).slice(2)}` : String(endYear);
+      return y.ytd ? `${base}*` : base;
+    }
+
+    chartData = results.map(r => {
+      const { totalIncome, totalExpenses, surplus } = summarise(r.items);
+      return { year: fyLabel(r), income: Math.round(totalIncome), expenses: Math.round(totalExpenses), surplus: Math.round(surplus), ytd: r.ytd };
+    });
+
+  } catch (e: any) {
+    error = e.message?.includes('NO_SAGE_CONNECTION') ? 'Not connected to Sage.' : e.message;
+  }
+}
+
+const chartJson = JSON.stringify(chartData);
+---
+
+<AdminLayout title="Financial History">
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  {!error && chartData.length === 0 && (
+    <div class="alert alert-warning">No data available.</div>
+  )}
+
+  {!error && chartData.length > 0 && (
+    <>
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-header">
+          <span class="card-title">Income, Expenditure &amp; Surplus by Year</span>
+          <span class="hist-ytd-note">* current year YTD</span>
+        </div>
+        <div class="hist-chart-wrap">
+          <canvas id="history-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Year by Year Summary</span></div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th class="text-right">Income</th>
+                <th class="text-right">Expenditure</th>
+                <th class="text-right">Surplus / (Deficit)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chartData.map(row => (
+                <tr class={row.ytd ? 'hist-row-ytd' : ''}>
+                  <td>
+                    <a class="hist-year-link"
+                       href={`/admin/sage/dashboard${row.ytd ? '' : `?fy=${row.year.replace(/[^0-9]/g, '').slice(0, 4)}`}`}>
+                      {row.year}
+                    </a>
+                  </td>
+                  <td class="text-right mono hist-income">£{row.income.toLocaleString('en-GB')}</td>
+                  <td class="text-right mono hist-expense">£{row.expenses.toLocaleString('en-GB')}</td>
+                  <td class={`text-right mono ${row.surplus >= 0 ? 'hist-surplus' : 'hist-deficit'}`}>
+                    {row.surplus < 0 ? '(' : ''}£{Math.abs(row.surplus).toLocaleString('en-GB')}{row.surplus < 0 ? ')' : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  )}
+
+  <style>
+    .hist-ytd-note { font-size: 0.75rem; color: var(--text-light); }
+    .hist-chart-wrap { position: relative; width: 100%; aspect-ratio: 4/3; }
+    @media (min-width: 600px) { .hist-chart-wrap { aspect-ratio: 16/7; } }
+    .hist-chart-wrap canvas { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .hist-row-ytd { font-style: italic; }
+    .hist-year-link { color: var(--primary); text-decoration: none; font-weight: 600; }
+    .hist-year-link:hover { text-decoration: underline; }
+    .hist-income  { color: var(--success); }
+    .hist-expense { color: var(--danger); }
+    .hist-surplus { color: var(--success); }
+    .hist-deficit { color: var(--danger); }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" is:inline></script>
+  <script define:vars={{ chartJson }}>
+    const data = JSON.parse(chartJson);
+    const labels = data.map(d => d.year);
+
+    const ctx = document.getElementById('history-chart');
+    if (ctx) {
+      const chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Income',
+              data: data.map(d => d.income),
+              backgroundColor: 'rgba(40, 167, 69, 0.75)',
+              borderColor: 'rgba(40, 167, 69, 1)',
+              borderWidth: 1,
+              order: 2,
+            },
+            {
+              label: 'Expenditure',
+              data: data.map(d => d.expenses),
+              backgroundColor: 'rgba(220, 53, 69, 0.75)',
+              borderColor: 'rgba(220, 53, 69, 1)',
+              borderWidth: 1,
+              order: 2,
+            },
+            {
+              label: 'Surplus / Deficit',
+              data: data.map(d => d.surplus),
+              type: 'line',
+              borderColor: 'rgba(30, 86, 49, 1)',
+              backgroundColor: 'rgba(30, 86, 49, 0.1)',
+              borderWidth: 2.5,
+              pointRadius: 5,
+              pointBackgroundColor: data.map(d => d.surplus >= 0 ? 'rgba(30,86,49,1)' : 'rgba(220,53,69,1)'),
+              fill: false,
+              tension: 0.3,
+              order: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: {
+              callbacks: {
+                label: ctx => ` ${ctx.dataset.label}: £${Math.abs(ctx.parsed.y).toLocaleString('en-GB')}${ctx.parsed.y < 0 ? ' (deficit)' : ''}`,
+              },
+            },
+          },
+          scales: {
+            x: { grid: { display: false } },
+            y: {
+              ticks: {
+                callback: v => '£' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v),
+              },
+            },
+          },
+        },
+      });
+      let _resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => chart.resize(), 80);
+      });
+    }
+  </script>
+</AdminLayout>

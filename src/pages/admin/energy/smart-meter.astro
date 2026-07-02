@@ -1,0 +1,896 @@
+---
+import EnergyLayout from '../../../layouts/EnergyLayout.astro';
+import SmartMeterCharts from '../../../components/energy/SmartMeterCharts';
+import LoggerCharts from '../../../components/energy/LoggerCharts';
+
+const db = Astro.locals.runtime.env.DB;
+
+const fmtDate = (iso: string | null | undefined) => {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
+}
+const meters = (await db.prepare('SELECT mpan, name FROM energy_meters WHERE has_smart = 1').all()).results as any[];
+
+let loadProfile: any[] = [];
+let dailyTotals: any[] = [];
+let heatmap: any[] = [];
+let meterName = '';
+let mpan = '';
+let totalKwh = 0;
+let dayCount = 0;
+let fromDate = '';
+let toDate = '';
+let chargingStats: any = null;
+let annualFloatKwh = 0;
+let annualStandbyKwh = 0;
+let totalSavingKwh = 0;
+let totalSavingGbp = '0';
+let avgStartTime = '—';
+let avgEndTime = '—';
+let pctDoneBy2130 = 0;
+
+// Kitchen logger data — all meters
+const loggerMeterNames = ((await db.prepare(
+  `SELECT DISTINCT meter_name FROM energy_logger_circuits ORDER BY meter_name`
+).all()).results as any[]).map((r: any) => r.meter_name)
+
+const loggerData: Record<string, {
+  stats: any; circuits: any[]; dailyTotals: any[]; hourlyProfile: any[]; hourlyMain: any[]
+}> = {}
+
+for (const meterName of loggerMeterNames) {
+  const stats = await db.prepare(`
+    SELECT COUNT(DISTINCT reading_date) AS days,
+      ROUND(SUM(kwh), 1) AS total,
+      MIN(reading_date) AS from_date,
+      MAX(reading_date) AS to_date
+    FROM energy_logger_readings
+    WHERE meter_name = ? AND circuit = 'main'
+  `).bind(meterName).first() as any
+
+  const circuits = (await db.prepare(`
+    SELECT c.circuit, c.label, ROUND(SUM(r.kwh), 3) AS total_kwh
+    FROM energy_logger_circuits c
+    LEFT JOIN energy_logger_readings r
+      ON r.meter_name = c.meter_name AND r.circuit = c.circuit
+    WHERE c.meter_name = ?
+    GROUP BY c.circuit, c.label
+    ORDER BY CASE WHEN c.circuit = 'main' THEN 0 ELSE 1 END, c.circuit
+  `).bind(meterName).all()).results as any[]
+
+  // Pivot: date → {circuit: kwh} for the last 14 days
+  const rawDaily = (await db.prepare(`
+    SELECT reading_date, circuit, ROUND(SUM(kwh), 3) AS daily_kwh
+    FROM energy_logger_readings
+    WHERE meter_name = ?
+    GROUP BY reading_date, circuit
+    ORDER BY reading_date
+  `).bind(meterName).all()).results as any[]
+
+  const dateMap: Record<string, Record<string, number>> = {}
+  for (const row of rawDaily) {
+    (dateMap[row.reading_date] ??= {})[row.circuit] = row.daily_kwh
+  }
+  const dailyTotals = Object.entries(dateMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, vals]) => ({ date, ...vals }))
+
+  const rawHourly = (await db.prepare(`
+    SELECT reading_hour, circuit, ROUND(AVG(kwh), 4) AS avg_kwh
+    FROM energy_logger_readings
+    WHERE meter_name = ?
+    GROUP BY reading_hour, circuit
+    ORDER BY reading_hour
+  `).bind(meterName).all()).results as any[]
+
+  const hourMap: Record<number, Record<string, number>> = {}
+  for (const row of rawHourly) {
+    (hourMap[row.reading_hour] ??= {})[row.circuit] = row.avg_kwh
+  }
+  const hourlyProfile = Array.from({ length: 24 }, (_, h) => ({ hour: h, ...(hourMap[h] ?? {}) }))
+
+  const rawHourlyMain = (await db.prepare(`
+    SELECT reading_hour,
+      ROUND(AVG(kwh), 4) AS avg_kwh,
+      ROUND(MAX(kwh), 4) AS max_kwh,
+      ROUND(MIN(kwh), 4) AS min_kwh
+    FROM energy_logger_readings
+    WHERE meter_name = ? AND circuit = 'main'
+    GROUP BY reading_hour
+    ORDER BY reading_hour
+  `).bind(meterName).all()).results as any[]
+
+  const mainMap: Record<number, { avg_kwh: number; max_kwh: number }> = {}
+  for (const row of rawHourlyMain) mainMap[row.reading_hour] = row
+  const hourlyMain = Array.from({ length: 24 }, (_, h) => ({
+    hour: h,
+    avg_kwh: mainMap[h]?.avg_kwh ?? 0,
+    max_kwh: mainMap[h]?.max_kwh ?? 0,
+    min_kwh: mainMap[h]?.min_kwh ?? 0,
+  }))
+
+  loggerData[meterName] = { stats, circuits, dailyTotals, hourlyProfile, hourlyMain }
+}
+
+if (meters.length > 0) {
+  mpan = meters[0].mpan;
+  meterName = meters[0].name;
+
+  const summary = await db.prepare(`
+    SELECT COUNT(DISTINCT reading_date) AS days, ROUND(SUM(kwh),1) AS total,
+      MIN(reading_date) AS from_date, MAX(reading_date) AS to_date
+    FROM energy_smart_readings WHERE mpan = ?
+  `).bind(mpan).first() as any;
+  totalKwh = summary?.total ?? 0;
+  dayCount  = summary?.days ?? 0;
+  fromDate  = summary?.from_date ?? '';
+  toDate    = summary?.to_date ?? '';
+
+  const rawProfile = (await db.prepare(`
+    SELECT interval_time,
+      ROUND(AVG(kwh), 4) AS avg_kwh,
+      ROUND(MIN(kwh), 4) AS min_kwh,
+      ROUND(MAX(kwh), 4) AS max_kwh
+    FROM energy_smart_readings WHERE mpan = ?
+    GROUP BY interval_time ORDER BY interval_time
+  `).bind(mpan).all()).results as any[];
+
+  const baseLoadRows = (await db.prepare(`
+    SELECT interval_time, ROUND(AVG(kwh), 4) AS base_kwh
+    FROM energy_smart_readings
+    WHERE mpan = ?
+      AND reading_date IN (
+        SELECT reading_date FROM energy_smart_readings
+        WHERE mpan = ?
+        GROUP BY reading_date HAVING MAX(kwh) < 0.5
+      )
+      AND kwh > 0
+    GROUP BY interval_time
+  `).bind(mpan, mpan).all()).results as any[];
+
+  const baseMap = Object.fromEntries(baseLoadRows.map((r: any) => [r.interval_time, r.base_kwh]));
+  loadProfile = rawProfile.map((r: any) => ({ ...r, base_kwh: baseMap[r.interval_time] ?? null }));
+
+  dailyTotals = (await db.prepare(`
+    SELECT reading_date, ROUND(SUM(kwh), 2) AS total_kwh
+    FROM energy_smart_readings WHERE mpan = ?
+    GROUP BY reading_date ORDER BY reading_date
+  `).bind(mpan).all()).results;
+
+  heatmap = (await db.prepare(`
+    SELECT interval_time,
+      CAST(strftime('%w', reading_date) AS INTEGER) AS weekday,
+      ROUND(AVG(kwh), 4) AS avg_kwh
+    FROM energy_smart_readings WHERE mpan = ?
+    GROUP BY interval_time, weekday
+  `).bind(mpan).all()).results;
+
+  // Charging optimisation analysis
+  // "Extended" days = days where charging was still running at/after 22:00 (tournament cycling)
+  chargingStats = await db.prepare(`
+    WITH extended_days AS (
+      SELECT DISTINCT reading_date FROM energy_smart_readings
+      WHERE mpan = ? AND kwh > 0.8 AND interval_time >= '22:00'
+    ),
+    per_day AS (
+      SELECT
+        reading_date,
+        MAX(kwh) AS peak_kwh,
+        MIN(CASE WHEN kwh > 0.8 THEN interval_time END) AS charge_start,
+        MAX(CASE WHEN kwh > 0.8 THEN interval_time END) AS charge_end,
+        reading_date IN (SELECT reading_date FROM extended_days) AS is_extended
+      FROM energy_smart_readings
+      WHERE mpan = ?
+      GROUP BY reading_date
+    ),
+    normal_charging AS (
+      SELECT * FROM per_day WHERE peak_kwh > 1.0 AND is_extended = 0
+    )
+    SELECT
+      (SELECT COUNT(*) FROM per_day) AS total_days,
+      (SELECT COUNT(*) FROM normal_charging) AS normal_charging_days,
+      (SELECT COUNT(*) FROM extended_days) AS extended_days,
+      (SELECT COUNT(*) FROM per_day WHERE peak_kwh <= 0.5) AS base_load_days,
+      ROUND(AVG(
+        CAST(substr(charge_start,1,2) AS INTEGER)*60 + CAST(substr(charge_start,4,2) AS INTEGER)
+      )) AS avg_start_min,
+      ROUND(AVG(
+        CAST(substr(charge_end,1,2) AS INTEGER)*60 + CAST(substr(charge_end,4,2) AS INTEGER)
+      )) AS avg_end_min,
+      COUNT(CASE WHEN charge_end <= '20:30' THEN 1 END) AS done_by_2030,
+      COUNT(CASE WHEN charge_end <= '21:30' THEN 1 END) AS done_by_2130
+    FROM normal_charging
+  `).bind(mpan, mpan).first() as any;
+
+  // Overnight energy excess on normal days (22:00-07:00, above base load of 0.228 kWh/slot)
+  const overnightExcess = await db.prepare(`
+    WITH extended_days AS (
+      SELECT DISTINCT reading_date FROM energy_smart_readings
+      WHERE mpan = ? AND kwh > 0.8 AND interval_time >= '22:00'
+    )
+    SELECT
+      ROUND(SUM(CASE WHEN interval_time >= '22:00' THEN kwh ELSE 0 END), 1) AS kwh_after_22h,
+      ROUND(SUM(CASE WHEN interval_time >= '22:00' THEN kwh ELSE 0 END) -
+            COUNT(DISTINCT CASE WHEN interval_time = '22:00' THEN reading_date END) * 4 * 0.228, 1) AS excess_22h,
+      ROUND(SUM(CASE WHEN interval_time <= '07:00' AND kwh > 0 THEN kwh ELSE 0 END), 1) AS kwh_before_07h,
+      ROUND(SUM(CASE WHEN interval_time <= '07:00' AND kwh > 0 THEN kwh ELSE 0 END) -
+            COUNT(DISTINCT CASE WHEN interval_time = '00:00' THEN reading_date END) * 15 * 0.228, 1) AS excess_am
+    FROM energy_smart_readings
+    WHERE mpan = ? AND reading_date NOT IN (SELECT reading_date FROM extended_days)
+  `).bind(mpan, mpan).first() as any;
+
+  const scaleFactor = 365 / (chargingStats?.total_days ?? 193);
+  annualFloatKwh = Math.round(((overnightExcess?.excess_22h ?? 0) + (overnightExcess?.excess_am ?? 0)) * scaleFactor);
+  annualStandbyKwh = Math.round(0.07 * 18 * (chargingStats?.total_days ?? 193) * scaleFactor);
+  totalSavingKwh = annualFloatKwh + annualStandbyKwh;
+  totalSavingGbp = (totalSavingKwh * 0.275).toFixed(0);
+
+  const fmtTime = (mins: number) => {
+    const h = Math.floor(mins / 60).toString().padStart(2, '0');
+    const m = (mins % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+  avgStartTime = chargingStats?.avg_start_min ? fmtTime(chargingStats.avg_start_min) : '—';
+  avgEndTime   = chargingStats?.avg_end_min   ? fmtTime(chargingStats.avg_end_min)   : '—';
+  pctDoneBy2130 = chargingStats?.normal_charging_days
+    ? Math.round((chargingStats.done_by_2130 / chargingStats.normal_charging_days) * 100)
+    : 0;
+}
+---
+
+<EnergyLayout title="Smart Metering" tab="tractor-shed">
+
+  {meters.length === 0 ? (
+    <div class="empty-state-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <h3>No smart meter data yet</h3>
+      <p>Upload a UsageReport_kWh.csv file to see half-hourly analysis.</p>
+      <a href="/admin/energy/upload" class="action-btn primary" style="display:inline-flex;">Upload smart meter data</a>
+    </div>
+  ) : (
+    <>
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{totalKwh?.toLocaleString()}</span>
+            <span class="stat-label">Total kWh recorded</span>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{dayCount}</span>
+            <span class="stat-label">Days of data</span>
+          </div>
+        </div>
+        <div class="stat-card stat-success">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{dayCount > 0 ? (totalKwh / dayCount).toFixed(1) : '—'}</span>
+            <span class="stat-label">Avg kWh per day</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span>{meterName}</span>
+          </div>
+          <span class="card-badge">{fmtDate(fromDate)} → {fmtDate(toDate)}</span>
+        </div>
+        <div class="card-content" style="min-width:0;overflow:hidden;">
+          <SmartMeterCharts
+            client:only="react"
+            loadProfile={loadProfile as any}
+            dailyTotals={dailyTotals as any}
+            heatmap={heatmap as any}
+          />
+        </div>
+      </div>
+
+      <!-- Charging optimisation analysis -->
+      <div class="m3-card opt-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Buggy charger timer — potential saving</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <p class="opt-intro">
+            Based on {chargingStats?.total_days ?? 0} days of half-hourly meter data, the table below shows the
+            typical buggy charging window and estimates how much electricity could be saved by fitting a
+            timer switch to the buggy charger circuit.
+          </p>
+
+          <div class="opt-grid">
+
+            <!-- Charging pattern -->
+            <div class="opt-section">
+              <h3 class="opt-heading">Observed charging pattern</h3>
+              <table class="opt-table">
+                <tbody>
+                  <tr>
+                    <td>Charging days per dataset period</td>
+                    <td class="val">{chargingStats?.normal_charging_days ?? 0} normal + {chargingStats?.extended_days ?? 0} intensive</td>
+                  </tr>
+                  <tr>
+                    <td>Average time buggies plugged in</td>
+                    <td class="val">{avgStartTime}</td>
+                  </tr>
+                  <tr>
+                    <td>Average time bulk charging ends</td>
+                    <td class="val">{avgEndTime}</td>
+                  </tr>
+                  <tr>
+                    <td>Days charging complete by 21:30</td>
+                    <td class="val">{pctDoneBy2130}% of normal charging days</td>
+                  </tr>
+                  <tr>
+                    <td>Intensive cycling days (competition weeks)</td>
+                    <td class="val">{chargingStats?.extended_days ?? 0} days — overnight charging continues</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Timer recommendation -->
+            <div class="opt-section">
+              <h3 class="opt-heading">Recommended timer settings</h3>
+              <div class="timer-row">
+                <div class="timer-block timer-off">
+                  <div class="timer-label">Switch OFF</div>
+                  <div class="timer-time">22:00</div>
+                  <div class="timer-note">All buggies fully charged by then on {pctDoneBy2130}% of charging days</div>
+                </div>
+                <div class="timer-arrow">→</div>
+                <div class="timer-block timer-on">
+                  <div class="timer-label">Switch ON</div>
+                  <div class="timer-time">07:30</div>
+                  <div class="timer-note">Gives 30–60 min top-up before first tee time</div>
+                </div>
+              </div>
+              <p class="opt-note">
+                <strong>Intensive periods:</strong> During competitions or back-to-back buggy hire days,
+                bypass the timer or extend the window (e.g. OFF at 01:00, ON at 06:00) to allow
+                full overnight charging cycles.
+              </p>
+            </div>
+
+          </div>
+
+          <!-- Saving estimate -->
+          <div class="saving-banner">
+            <div class="saving-row">
+              <div class="saving-item">
+                <div class="saving-value">{annualFloatKwh} kWh</div>
+                <div class="saving-label">Float charge saving<br/><span class="saving-sub">energy consumed after charging complete</span></div>
+              </div>
+              <div class="saving-plus">+</div>
+              <div class="saving-item">
+                <div class="saving-value">~{annualStandbyKwh} kWh</div>
+                <div class="saving-label">Charger standby saving<br/><span class="saving-sub">estimated from charger idle draw</span></div>
+              </div>
+              <div class="saving-equals">=</div>
+              <div class="saving-item saving-total">
+                <div class="saving-value">~{totalSavingKwh} kWh/yr</div>
+                <div class="saving-label">Estimated annual saving<br/><span class="saving-sub">≈ £{totalSavingGbp}/yr at 27.5p/kWh</span></div>
+              </div>
+            </div>
+            <p class="saving-footer">
+              A secondary benefit is battery longevity: lead-acid batteries kept in continuous float charge
+              degrade faster. Reducing float time can extend battery life significantly — at £200–400 per
+              battery with 5 buggies, this may be the larger saving over the long term.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charging strategy comparison -->
+      {(() => {
+        // ── Fleet & tariff assumptions ─────────────────────────────────────
+        // 1 "double" buggy (large battery) — can complete 2×18 holes per charge
+        // 4 "standard" buggies — can only complete 1×18 holes per charge; need midday top-up
+        const BUGGY_DOUBLE  = 1   // large-battery buggy: 2 rounds per charge, once-daily charging
+        const BUGGY_STD     = 4   // standard buggies: 1 round per charge, twice-daily when both rounds hired
+        const KWH_DOUBLE    = 8   // kWh per full charge for the double-round buggy
+        const KWH_STD_FULL  = 5   // kWh per full charge for a standard buggy
+        const KWH_TOPUP     = 2.5 // kWh per midday top-up (after 1 morning round, ~50% depleted)
+        const RATE_PEAK     = 27.5 / 100  // £/kWh current flat rate
+        const RATE_OFFPEAK  = 15   / 100  // £/kWh assumed off-peak (midnight–07:00) — confirm with supplier
+        const HIRE_DAYS     = Math.round((chargingStats?.normal_charging_days ?? 77) * (365 / (chargingStats?.total_days ?? 193)))
+
+        // ── Per-day energy & cost ──────────────────────────────────────────
+        // Current: all charging at peak rate, same energy profile as Plan B
+        const currFullKwh  = BUGGY_DOUBLE * KWH_DOUBLE + BUGGY_STD * KWH_STD_FULL
+        const currTopupKwh = BUGGY_STD * KWH_TOPUP
+        const currCostDay  = (currFullKwh + currTopupKwh) * RATE_PEAK
+
+        // Plan A: single overnight charge, off-peak, all 5 buggies
+        const planAKwh      = BUGGY_DOUBLE * KWH_DOUBLE + BUGGY_STD * KWH_STD_FULL
+        const planACostDay  = planAKwh * RATE_OFFPEAK
+
+        // Plan B: overnight off-peak + midday peak top-up for 4 standard buggies
+        const planBNightKwh = BUGGY_DOUBLE * KWH_DOUBLE + BUGGY_STD * KWH_STD_FULL
+        const planBDayKwh   = BUGGY_STD * KWH_TOPUP
+        const planBCostDay  = planBNightKwh * RATE_OFFPEAK + planBDayKwh * RATE_PEAK
+
+        const fmt = (n: number) => n.toFixed(2)
+        const fmtK = (n: number) => Math.round(n).toLocaleString()
+
+        return (
+          <div class="m3-card opt-card strat-card">
+            <div class="card-header">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>Buggy charging strategy — cost comparison</span>
+              </div>
+            </div>
+            <div class="card-content">
+
+              <p class="opt-intro">
+                Shifting charging to the cheaper overnight off-peak window (midnight–07:00) reduces both
+                energy cost per kWh and total energy wasted in float charge.  Two proposed plans are shown
+                below — one assumes all buggies charge once overnight only; the other retains a
+                midday top-up for the 4 standard buggies on days with both morning and afternoon rounds.
+              </p>
+
+              <!-- Assumptions box -->
+              <div class="assump-box">
+                <span class="assump-label">Assumptions</span>
+                <span>5 buggies total</span>
+                <span class="sep">·</span>
+                <span>1 large-battery buggy: 2×18 holes per charge (8 kWh)</span>
+                <span class="sep">·</span>
+                <span>4 standard buggies: 1×18 holes per charge (5 kWh)</span>
+                <span class="sep">·</span>
+                <span>2.5 kWh midday top-up</span>
+                <span class="sep">·</span>
+                <span>Peak: 27.5p/kWh · Off-peak: 15p/kWh*</span>
+                <span class="sep">·</span>
+                <span>~{HIRE_DAYS} hire days/year</span>
+              </div>
+
+              <!-- Plan cards -->
+              <div class="tl-legend">
+                <span><span class="tl-legend-dot" style="background:#16a34a"></span>Off-peak charge (midnight–07:00, 15p/kWh)</span>
+                <span><span class="tl-legend-dot" style="background:#f59e0b"></span>Peak charge (27.5p/kWh)</span>
+                <span><span class="tl-legend-dot" style="background:#f0f0f0; border:1px solid #ddd"></span>No charge</span>
+              </div>
+              <div class="plans-row">
+
+                <!-- Current -->
+                <div class="plan-card plan-current">
+                  <div class="plan-heading">Current</div>
+                  <div class="plan-sub">Daytime charging, flat rate</div>
+                  <div class="timeline-wrap">
+                    <div class="timeline">
+                      <div class="tl-label">Std ×4</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg peak" style="left:54.2%;width:8.3%"  title="13:00–15:00 midday top-up (peak)"></div>
+                        <div class="tl-seg peak" style="left:70.8%;width:12.5%" title="17:00–20:00 evening full (peak)"></div>
+                      </div>
+                    </div>
+                    <div class="timeline">
+                      <div class="tl-label">Double ×1</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg peak" style="left:70.8%;width:16.7%" title="17:00–21:00 evening full (peak)"></div>
+                      </div>
+                    </div>
+                    <div class="tl-axis">
+                      <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+                    </div>
+                  </div>
+                  <table class="plan-costs">
+                    <tr><td>Daily energy</td>   <td>{fmtK(currFullKwh + currTopupKwh)} kWh</td></tr>
+                    <tr><td>Off-peak kWh</td>   <td>0</td></tr>
+                    <tr><td>Peak kWh</td>        <td>{fmtK(currFullKwh + currTopupKwh)} kWh @ 27.5p</td></tr>
+                    <tr><td>Daily cost</td>      <td>£{fmt(currCostDay)}</td></tr>
+                    <tr class="annual"><td>Annual cost</td><td>£{fmtK(currCostDay * HIRE_DAYS)}</td></tr>
+                  </table>
+                </div>
+
+                <!-- Plan A -->
+                <div class="plan-card plan-a">
+                  <div class="plan-heading">Plan A</div>
+                  <div class="plan-sub">Once-daily overnight charge</div>
+                  <div class="timeline-wrap">
+                    <div class="timeline">
+                      <div class="tl-label">Std ×4</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg offpeak" style="left:0%;width:20.8%" title="00:00–05:00 full charge (off-peak)"></div>
+                      </div>
+                    </div>
+                    <div class="timeline">
+                      <div class="tl-label">Double ×1</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg offpeak" style="left:0%;width:33.3%" title="00:00–08:00 full charge (off-peak)"></div>
+                      </div>
+                    </div>
+                    <div class="tl-axis">
+                      <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+                    </div>
+                  </div>
+                  <table class="plan-costs">
+                    <tr><td>Daily energy</td>    <td>{fmtK(planAKwh)} kWh</td></tr>
+                    <tr><td>Off-peak kWh</td>    <td>{fmtK(planAKwh)} kWh @ 15p</td></tr>
+                    <tr><td>Peak kWh</td>         <td>0</td></tr>
+                    <tr><td>Daily cost</td>       <td>£{fmt(planACostDay)}</td></tr>
+                    <tr class="annual"><td>Annual cost</td><td>£{fmtK(planACostDay * HIRE_DAYS)}</td></tr>
+                  </table>
+                  <div class="plan-note plan-note-amber">
+                    <strong>Note:</strong> After a morning 18-hole round, the 4 standard buggies will be
+                    fully depleted — they cannot do an afternoon 18-hole round without a midday charge.
+                    Plan A only works on days where afternoon buggy hire does NOT include the 4 standard
+                    buggies doing a full 18-hole round.  See risk analysis below.
+                  </div>
+                </div>
+
+                <!-- Plan B -->
+                <div class="plan-card plan-b">
+                  <div class="plan-heading">Plan B</div>
+                  <div class="plan-sub">Overnight + midday top-up</div>
+                  <div class="timeline-wrap">
+                    <div class="timeline">
+                      <div class="tl-label">Std ×4</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg offpeak" style="left:0%;width:20.8%"  title="00:00–05:00 full charge (off-peak)"></div>
+                        <div class="tl-seg peak"    style="left:54.2%;width:6.3%" title="13:00–14:30 top-up (peak)"></div>
+                      </div>
+                    </div>
+                    <div class="timeline">
+                      <div class="tl-label">Double ×1</div>
+                      <div class="tl-bar">
+                        <div class="tl-seg offpeak" style="left:0%;width:33.3%" title="00:00–08:00 full charge (off-peak)"></div>
+                      </div>
+                    </div>
+                    <div class="tl-axis">
+                      <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+                    </div>
+                  </div>
+                  <table class="plan-costs">
+                    <tr><td>Daily energy</td>    <td>{fmtK(planBNightKwh + planBDayKwh)} kWh</td></tr>
+                    <tr><td>Off-peak kWh</td>    <td>{fmtK(planBNightKwh)} kWh @ 15p</td></tr>
+                    <tr><td>Peak kWh</td>         <td>{fmtK(planBDayKwh)} kWh @ 27.5p</td></tr>
+                    <tr><td>Daily cost</td>       <td>£{fmt(planBCostDay)}</td></tr>
+                    <tr class="annual"><td>Annual cost</td><td>£{fmtK(planBCostDay * HIRE_DAYS)}</td></tr>
+                  </table>
+                  <div class="plan-note plan-note-green">
+                    <strong>Full operational capability</strong> — all buggies fully charged for both
+                    morning and afternoon rounds.  Only the midday top-up runs at peak rate; overnight
+                    full charge uses the cheap tariff.
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Summary comparison table -->
+              <div class="strat-summary">
+                <h3 class="opt-heading">Annual saving summary</h3>
+                <table class="summary-table">
+                  <thead>
+                    <tr>
+                      <th>Scenario</th>
+                      <th>Annual energy (kWh)</th>
+                      <th>Annual cost (£)</th>
+                      <th>Saving vs current</th>
+                      <th>Operational impact</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="row-current">
+                      <td><strong>Current</strong> — flat rate, daytime</td>
+                      <td>{fmtK((currFullKwh + currTopupKwh) * HIRE_DAYS)}</td>
+                      <td>£{fmtK(currCostDay * HIRE_DAYS)}</td>
+                      <td>—</td>
+                      <td>Full</td>
+                    </tr>
+                    <tr class="row-b">
+                      <td><strong>Plan B</strong> — overnight + midday</td>
+                      <td>{fmtK((planBNightKwh + planBDayKwh) * HIRE_DAYS)}</td>
+                      <td>£{fmtK(planBCostDay * HIRE_DAYS)}</td>
+                      <td class="saving-cell">£{fmtK((currCostDay - planBCostDay) * HIRE_DAYS)}/yr</td>
+                      <td>Full — no change</td>
+                    </tr>
+                    <tr class="row-a">
+                      <td><strong>Plan A</strong> — overnight only</td>
+                      <td>{fmtK(planAKwh * HIRE_DAYS)}</td>
+                      <td>£{fmtK(planACostDay * HIRE_DAYS)}</td>
+                      <td class="saving-cell">£{fmtK((currCostDay - planACostDay) * HIRE_DAYS)}/yr</td>
+                      <td>Afternoon buggies at partial charge</td>
+                    </tr>
+                    <tr class="row-diff">
+                      <td colspan="2"><em>Plan B → Plan A additional saving</em></td>
+                      <td colspan="3" class="saving-cell">£{fmtK((planBCostDay - planACostDay) * HIRE_DAYS)}/yr by eliminating midday peak-rate charging</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p class="strat-footnote">
+                  * Off-peak rate of 15p/kWh is illustrative — this requires switching to a time-of-use
+                  tariff with your electricity supplier.  Actual overnight rates vary from 7p–20p/kWh
+                  depending on contract.  The above savings also exclude standing charges, which may
+                  increase on some ToU tariffs.  Confirm rates with your supplier before switching.
+                  The required charger schedule (midnight ON, ~04:00–05:00 cut-off when complete) can
+                  be achieved with a simple 7-day plug-in timer switch (≈£15–25).
+                </p>
+
+                <!-- Plan A risk analysis from BRS booking data -->
+                <div class="risk-box">
+                  <div class="risk-heading">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;flex-shrink:0;color:#b45309">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                    Plan A — Operational risk assessment
+                    <span class="risk-badge">Based on BRS booking data</span>
+                  </div>
+                  <div class="risk-body">
+                    <p>
+                      Plan A (overnight-only charging) works only on days where the 4 standard buggies
+                      are <strong>not</strong> needed for both a morning round <em>and</em> an afternoon round.
+                      After one 18-hole round, a standard buggy has 0% charge remaining — it cannot
+                      complete a second round without a midday top-up.
+                    </p>
+                    <div class="risk-stats">
+                      <div class="risk-stat risk-stat-red">
+                        <div class="risk-stat-val">40</div>
+                        <div class="risk-stat-lbl">at-risk hire days</div>
+                        <div class="risk-stat-note">of 170 hire days analysed</div>
+                      </div>
+                      <div class="risk-stat risk-stat-amber">
+                        <div class="risk-stat-val">24%</div>
+                        <div class="risk-stat-lbl">of hire days</div>
+                        <div class="risk-stat-note">had both AM &amp; PM rounds</div>
+                      </div>
+                      <div class="risk-stat risk-stat-green">
+                        <div class="risk-stat-val">76%</div>
+                        <div class="risk-stat-lbl">Plan A safe days</div>
+                        <div class="risk-stat-note">morning hire only</div>
+                      </div>
+                    </div>
+                    <p style="margin:0.75rem 0 0;font-size:0.8rem;color:#555;line-height:1.6;">
+                      Analysis of 170 hire days (Nov 2024 – Jun 2025) from BRS bookings.
+                      A day is "at-risk" if any buggy tee time is booked before 13:00 <em>and</em>
+                      another after 13:00 — the morning round depletes standard buggies before the
+                      afternoon session begins.  On those days Plan B (midday top-up) is required.
+                    </p>
+                    <div class="risk-recommendation">
+                      <strong>Recommended approach:</strong> Default to Plan B (overnight + midday top-up) to
+                      ensure all buggies are always available.  Switch to Plan A manually on low-demand
+                      days when you can confirm no afternoon tee times are booked.  This captures most
+                      of Plan A's additional saving on calm days whilst eliminating the operational risk.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )
+      })()}
+    </>
+  )}
+
+  {loggerMeterNames.map(meterName => {
+    const { stats, circuits, dailyTotals, hourlyProfile, hourlyMain } = loggerData[meterName]
+    const days = stats?.days ?? 0
+    const total = stats?.total ?? 0
+    return (
+      <div class="logger-section">
+        <h2 class="section-heading">{meterName.charAt(0).toUpperCase() + meterName.slice(1)} Meter</h2>
+
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value">{total?.toLocaleString()}</span>
+              <span class="stat-label">Total kWh recorded</span>
+            </div>
+          </div>
+          <div class="stat-card stat-info">
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value">{days}</span>
+              <span class="stat-label">Days of data</span>
+            </div>
+          </div>
+          <div class="stat-card stat-success">
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value">{days > 0 ? (total / days).toFixed(1) : '—'}</span>
+              <span class="stat-label">Avg kWh per day</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="m3-card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+              <span>{meterName.charAt(0).toUpperCase() + meterName.slice(1)} meter circuits</span>
+            </div>
+            {stats?.from_date && <span class="card-badge">{fmtDate(stats.from_date)} → {fmtDate(stats.to_date)}</span>}
+          </div>
+          <div class="card-content" style="min-width:0;overflow:hidden;">
+            <LoggerCharts
+              client:only="react"
+              circuits={circuits as any}
+              dailyTotals={dailyTotals as any}
+              hourlyProfile={hourlyProfile as any}
+              hourlyMain={hourlyMain as any}
+            />
+          </div>
+        </div>
+      </div>
+    )
+  })}
+
+</EnergyLayout>
+
+<style>
+  .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+  .header-content h1 { margin: 0; font-size: 1.75rem; font-weight: 600; color: #1a1a1a; }
+  .subtitle { margin: 0.25rem 0 0; color: #666; font-size: 0.95rem; }
+
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem; }
+  .stat-card { background: #fff; border-radius: 16px; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8; min-width: 0; overflow: hidden; }
+  .stat-icon { width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0; background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); display: flex; align-items: center; justify-content: center; }
+  .stat-icon svg { width: 24px; height: 24px; color: #fff; }
+  .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+  .stat-info    .stat-icon { background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%); }
+  .stat-content { display: flex; flex-direction: column; min-width: 0; }
+  .stat-value { font-size: 1.75rem; font-weight: 700; color: #1a1a1a; line-height: 1; }
+  .stat-label { font-size: 0.85rem; color: #666; margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .m3-card { background: #fff; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8; overflow: hidden; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa; }
+  .card-title { display: flex; align-items: center; gap: 0.625rem; font-weight: 600; color: #1a1a1a; font-size: 1rem; }
+  .card-title svg { width: 20px; height: 20px; color: #1e5631; }
+  .card-badge { font-size: 0.75rem; padding: 0.25rem 0.625rem; background: #e8f5e9; color: #1e5631; border-radius: 20px; font-weight: 500; }
+  .card-content { padding: 1.25rem; }
+
+  .action-btn { display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 1.125rem; border-radius: 10px; font-size: 0.9rem; font-weight: 500; text-decoration: none; transition: all 0.2s ease; white-space: nowrap; }
+  .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .action-btn.primary { background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); color: #fff; }
+  .action-btn.primary:hover { background: linear-gradient(135deg, #164024 0%, #246339 100%); }
+
+  .empty-state-card { background: #fff; border-radius: 16px; border: 1px solid #e8e8e8; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4rem 2rem; gap: 0.75rem; }
+  .empty-state-card svg { width: 48px; height: 48px; color: #ccc; }
+  .empty-state-card h3 { font-size: 1.125rem; font-weight: 600; color: #333; margin: 0; }
+  .empty-state-card p { color: #666; font-size: 0.9rem; margin: 0; }
+
+  .logger-section { margin-top: 2.5rem; }
+  .section-heading { font-size: 1.25rem; font-weight: 600; color: #1a1a1a; margin: 0 0 1.25rem; }
+
+  /* Charging optimisation section */
+  .opt-card { margin-top: 1.5rem; }
+  .opt-intro { font-size: 0.9rem; color: #555; margin: 0 0 1.25rem; line-height: 1.6; }
+  .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+  .opt-section {}
+  .opt-heading { font-size: 0.875rem; font-weight: 700; color: #1e5631; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 0.75rem; }
+  .opt-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  .opt-table td { padding: 0.5rem 0; border-bottom: 1px solid #f0f0f0; color: #555; vertical-align: top; }
+  .opt-table td.val { font-weight: 600; color: #1a1a1a; text-align: right; padding-left: 1rem; white-space: nowrap; }
+  .opt-table tr:last-child td { border-bottom: none; }
+
+  .timer-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+  .timer-block { flex: 1; border-radius: 12px; padding: 1rem; text-align: center; }
+  .timer-off { background: #fef2f2; border: 1.5px solid #fca5a5; }
+  .timer-on  { background: #f0fdf4; border: 1.5px solid #86efac; }
+  .timer-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 0.25rem; }
+  .timer-off .timer-label { color: #dc2626; }
+  .timer-on  .timer-label { color: #16a34a; }
+  .timer-time { font-size: 2rem; font-weight: 800; line-height: 1; margin-bottom: 0.5rem; }
+  .timer-off .timer-time { color: #dc2626; }
+  .timer-on  .timer-time { color: #16a34a; }
+  .timer-note { font-size: 0.78rem; color: #666; line-height: 1.4; }
+  .timer-arrow { font-size: 1.5rem; color: #aaa; flex-shrink: 0; }
+  .opt-note { font-size: 0.825rem; color: #666; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 0.75rem; margin: 0; line-height: 1.5; }
+
+  .saving-banner { background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border: 1.5px solid #86efac; border-radius: 12px; padding: 1.25rem 1.5rem; }
+  .saving-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.875rem; flex-wrap: wrap; }
+  .saving-item { flex: 1; min-width: 120px; text-align: center; }
+  .saving-total { background: #fff; border-radius: 10px; padding: 0.75rem; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .saving-value { font-size: 1.25rem; font-weight: 800; color: #1e5631; line-height: 1; margin-bottom: 0.25rem; }
+  .saving-total .saving-value { font-size: 1.4rem; color: #15803d; }
+  .saving-label { font-size: 0.78rem; color: #555; line-height: 1.4; }
+  .saving-sub { font-size: 0.72rem; color: #888; }
+  .saving-plus, .saving-equals { font-size: 1.5rem; font-weight: 700; color: #6b7280; flex-shrink: 0; }
+  .saving-footer { font-size: 0.825rem; color: #555; margin: 0; line-height: 1.5; border-top: 1px solid #bbf7d0; padding-top: 0.75rem; }
+
+  /* Charging strategy section */
+  .strat-card { margin-top: 1.5rem; }
+  .assump-box { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; background: #f8f9fa; border: 1px solid #e8e8e8; border-radius: 8px; padding: 0.625rem 1rem; font-size: 0.8rem; color: #555; margin-bottom: 1.5rem; }
+  .assump-label { font-weight: 700; color: #1a1a1a; margin-right: 0.25rem; }
+  .sep { color: #bbb; }
+
+  .plans-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  .plan-card { border-radius: 12px; border: 1.5px solid #e8e8e8; padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; background: #fff; }
+  .plan-current { border-color: #d1d5db; background: #f9fafb; }
+  .plan-a  { border-color: #86efac; background: #f0fdf4; }
+  .plan-b  { border-color: #93c5fd; background: #eff6ff; }
+  .plan-heading { font-size: 1.1rem; font-weight: 800; color: #1a1a1a; }
+  .plan-sub { font-size: 0.8rem; color: #666; margin-top: -0.5rem; }
+
+  /* Timeline bars */
+  .timeline-wrap { display: flex; flex-direction: column; gap: 0.35rem; }
+  .timeline { display: flex; align-items: center; gap: 0.5rem; }
+  .tl-label { font-size: 0.72rem; color: #888; width: 54px; flex-shrink: 0; white-space: nowrap; }
+  .tl-bar { flex: 1; height: 16px; background: #f0f0f0; border-radius: 4px; position: relative; overflow: hidden; }
+  .tl-seg { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+  .tl-seg.offpeak { background: #16a34a; }
+  .tl-seg.peak    { background: #f59e0b; }
+  .tl-axis { display: flex; justify-content: space-between; font-size: 0.68rem; color: #aaa; padding: 0 0 0 54px; }
+
+  .plan-costs { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .plan-costs td { padding: 0.3rem 0; border-bottom: 1px solid rgba(0,0,0,0.06); color: #555; }
+  .plan-costs td:last-child { text-align: right; font-weight: 600; color: #1a1a1a; }
+  .plan-costs tr.annual td { font-size: 0.875rem; font-weight: 700; border-bottom: none; color: #1a1a1a; }
+  .plan-costs tr.annual td:last-child { font-size: 1rem; color: #1e5631; }
+  .plan-a .plan-costs tr.annual td:last-child { color: #15803d; }
+  .plan-b .plan-costs tr.annual td:last-child { color: #1d4ed8; }
+
+  .plan-note { font-size: 0.775rem; border-radius: 8px; padding: 0.625rem 0.75rem; line-height: 1.5; margin-top: auto; }
+  .plan-note-amber { background: #fffbeb; border: 1px solid #fde68a; color: #78350f; }
+  .plan-note-green { background: #f0fdf4; border: 1px solid #86efac; color: #14532d; }
+
+  /* Summary table */
+  .strat-summary { margin-top: 0.5rem; }
+  .summary-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .summary-table th { text-align: left; padding: 0.5rem 0.75rem; background: #f8f9fa; font-weight: 700; font-size: 0.78rem; color: #555; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #e8e8e8; }
+  .summary-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #f0f0f0; color: #333; }
+  .row-current td { background: #fafafa; color: #666; }
+  .row-b td { background: #eff6ff; }
+  .row-a td { background: #f0fdf4; }
+  .row-diff td { background: #fff; font-size: 0.8rem; color: #666; border-bottom: none; }
+  .saving-cell { font-weight: 700; color: #15803d; }
+  .strat-footnote { font-size: 0.8rem; color: #777; margin: 1rem 0 0; line-height: 1.6; padding: 0.875rem 1rem; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; }
+
+  .risk-box { margin-top: 1.25rem; border: 1.5px solid #fbbf24; border-radius: 12px; overflow: hidden; }
+  .risk-heading { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem; color: #78350f; background: #fef3c7; padding: 0.75rem 1rem; border-bottom: 1px solid #fde68a; }
+  .risk-badge { margin-left: auto; font-size: 0.7rem; font-weight: 500; color: #92400e; background: #fde68a; border-radius: 20px; padding: 0.2rem 0.625rem; }
+  .risk-body { padding: 1rem; font-size: 0.8375rem; color: #555; line-height: 1.6; }
+  .risk-body p { margin: 0 0 0.75rem; }
+  .risk-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin: 0.875rem 0; }
+  .risk-stat { border-radius: 10px; padding: 0.75rem; text-align: center; border: 1.5px solid; }
+  .risk-stat-red   { background: #fef2f2; border-color: #fca5a5; }
+  .risk-stat-amber { background: #fffbeb; border-color: #fde68a; }
+  .risk-stat-green { background: #f0fdf4; border-color: #86efac; }
+  .risk-stat-val  { font-size: 1.75rem; font-weight: 700; line-height: 1; margin-bottom: 3px; }
+  .risk-stat-red   .risk-stat-val { color: #dc2626; }
+  .risk-stat-amber .risk-stat-val { color: #d97706; }
+  .risk-stat-green .risk-stat-val { color: #16a34a; }
+  .risk-stat-lbl  { font-size: 0.775rem; font-weight: 600; color: #374151; }
+  .risk-stat-note { font-size: 0.7rem; color: #9ca3af; margin-top: 2px; }
+  .risk-recommendation { margin-top: 0.875rem; padding: 0.75rem 1rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: 0.8rem; color: #1e3a5f; line-height: 1.6; }
+
+  /* Legend */
+  .tl-legend { display: flex; gap: 1rem; font-size: 0.75rem; color: #666; margin-bottom: 0.25rem; padding-left: 54px; }
+  .tl-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+
+  @media (max-width: 900px) { .plans-row { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) {
+    .stats-row { grid-template-columns: 1fr 1fr; }
+    .page-header { flex-direction: column; }
+    .opt-grid { grid-template-columns: 1fr; }
+    .timer-row { flex-direction: column; }
+    .timer-arrow { transform: rotate(90deg); }
+  }
+  @media (max-width: 480px) { .stats-row { grid-template-columns: 1fr; } }
+</style>

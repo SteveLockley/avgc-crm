@@ -1,0 +1,570 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = (Astro.locals as any).runtime?.env?.DB;
+
+// Load page data
+const [importsResult, mappingsResult, debitAccountRow, ledgerAccountsResult] = await Promise.all([
+  db?.prepare(`
+    SELECT * FROM touchoffice_sage_imports
+    WHERE import_date >= date('now', '-90 days')
+    ORDER BY import_date DESC
+  `).all().catch(() => ({ results: [] })) ?? { results: [] },
+
+  db?.prepare(`SELECT * FROM dept_sage_mapping ORDER BY dept_pattern`).all().catch(() => ({ results: [] })) ?? { results: [] },
+
+  db?.prepare(`SELECT value FROM app_settings WHERE key = 'sage_sales_debit_account_id'`)
+    .first<{ value: string }>().catch(() => null) ?? null,
+
+  db?.prepare(`
+    SELECT id, nominal_code, name, displayed_as, ledger_account_type
+    FROM sage_ledger_accounts
+    WHERE is_visible_in_journals = 1
+    ORDER BY nominal_code
+  `).all().catch(() => ({ results: [] })) ?? { results: [] },
+]);
+
+const imports     = (importsResult.results   || []) as any[];
+const mappings    = (mappingsResult.results  || []) as any[];
+const debitAccId  = debitAccountRow?.value ?? '';
+const allAccounts = (ledgerAccountsResult.results || []) as any[];
+
+// Yesterday as default import date
+const yesterday = new Date();
+yesterday.setDate(yesterday.getDate() - 1);
+const defaultDate = yesterday.toISOString().slice(0, 10);
+
+function fmt(n: number) {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
+}
+function fmtDate(iso: string) {
+  if (!iso) return '';
+  return new Date(iso.replace(' ', 'T')).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+}
+---
+
+<AdminLayout title="POS Sales Import">
+  <style is:global>
+    .si-page-header { margin-bottom: 1.5rem; }
+    .si-page-header h1 { font-size: 1.75rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .si-page-header p  { color: #666; font-size: 0.875rem; margin: 0.25rem 0 0; }
+
+    .si-card {
+      background: #fff; border-radius: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8;
+      overflow: hidden; margin-bottom: 1.5rem;
+    }
+    .si-card-header {
+      padding: 1rem 1.25rem; border-bottom: 1px solid #f0f0f0;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #fafafa;
+    }
+    .si-card-header h2 { font-size: 1rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .si-card-body { padding: 1.25rem; }
+
+    .si-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .si-table th {
+      padding: 0.5rem 0.75rem; text-align: left; background: #fafafa;
+      font-weight: 600; color: #666; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.5px; border-bottom: 2px solid #e8e8e8;
+    }
+    .si-table td { padding: 0.625rem 0.75rem; border-bottom: 1px solid #f0f0f0; color: #333; vertical-align: middle; }
+    .si-table tr:last-child td { border-bottom: none; }
+    .si-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .si-badge {
+      display: inline-block; padding: 0.2rem 0.6rem; border-radius: 20px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .si-badge.imported { background: #dcfce7; color: #166534; }
+    .si-badge.error    { background: #fee2e2; color: #991b1b; }
+    .si-badge.pending  { background: #fef9c3; color: #854d0e; }
+
+    .si-form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .si-field { display: flex; flex-direction: column; gap: 0.375rem; }
+    .si-field label { font-size: 0.8125rem; font-weight: 500; color: #555; }
+    .si-field input, .si-field select {
+      padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 0.875rem; background: #fff; color: #1a1a1a;
+    }
+    .si-field input:focus, .si-field select:focus {
+      outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1);
+    }
+    .si-field select { min-width: 280px; }
+
+    .si-btn {
+      padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem;
+      font-weight: 500; cursor: pointer; border: none; transition: background 0.15s;
+    }
+    .si-btn.primary   { background: #1e5631; color: #fff; }
+    .si-btn.primary:hover { background: #174a28; }
+    .si-btn.secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+    .si-btn.secondary:hover { background: #e5e7eb; }
+    .si-btn.danger    { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .si-btn.danger:hover { background: #fecaca; }
+    .si-btn:disabled  { opacity: 0.5; cursor: not-allowed; }
+
+    .si-alert {
+      padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.875rem; margin-bottom: 1rem;
+    }
+    .si-alert.info    { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+    .si-alert.success { background: #dcfce7; border: 1px solid #bbf7d0; color: #166534; }
+    .si-alert.error   { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; }
+    .si-alert.warning { background: #fef9c3; border: 1px solid #fde68a; color: #854d0e; }
+
+    #preview-box { display: none; margin-top: 1rem; }
+    #preview-box.visible { display: block; }
+
+    .si-preview-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 0.5rem; }
+    .si-preview-table th { padding: 0.375rem 0.75rem; text-align: left; background: #f9fafb; font-size: 0.75rem; text-transform: uppercase; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
+    .si-preview-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f3f4f6; color: #333; }
+    .si-preview-table td.num { text-align: right; }
+    .si-preview-table tfoot td { font-weight: 700; border-top: 2px solid #e5e7eb; background: #f9fafb; }
+
+    .si-toggle { appearance: none; width: 36px; height: 20px; background: #d1d5db; border-radius: 10px; cursor: pointer; position: relative; transition: background 0.2s; }
+    .si-toggle:checked { background: #1e5631; }
+    .si-toggle::before { content: ''; position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: transform 0.2s; }
+    .si-toggle:checked::before { transform: translateX(16px); }
+
+    .si-empty { text-align: center; padding: 2rem; color: #999; font-size: 0.875rem; }
+
+    .si-debit-display {
+      padding: 0.5rem 0.75rem; background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 8px; font-size: 0.875rem; color: #374151;
+      display: flex; align-items: center; gap: 0.75rem;
+    }
+    .si-debit-display .name { font-weight: 500; }
+    .si-debit-display .none { color: #9ca3af; font-style: italic; }
+  </style>
+
+  <div class="si-page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+    <div>
+      <h1>POS Sales Import</h1>
+      <p>Import daily TouchOffice department totals into Sage as journal entries</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <button class="si-btn secondary" id="sync-btn">Sync accounts from Sage</button>
+      <span id="sync-msg" style="font-size:0.8125rem;color:#666;display:none;"></span>
+    </div>
+  </div>
+
+  <!-- ── Clearing Account ─────────────────────────────────────────────── -->
+  <div class="si-card">
+    <div class="si-card-header">
+      <h2>Clearing (Debit) Account</h2>
+    </div>
+    <div class="si-card-body">
+      <p style="font-size:0.875rem;color:#555;margin:0 0 0.75rem;">
+        The Sage account debited for the daily total — typically a till, cash, or bank clearing account.
+      </p>
+      <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+        <div class="si-debit-display" id="debit-display">
+          <span id="debit-name" class={debitAccId ? 'name' : 'none'}>
+            {debitAccId
+              ? (allAccounts.find((a: any) => a.id === debitAccId)?.displayed_as ?? debitAccId)
+              : 'Not set'}
+          </span>
+        </div>
+        <button class="si-btn secondary" id="change-debit-btn">Change</button>
+      </div>
+      <div id="debit-change-form" style="display:none;margin-top:0.75rem;">
+        <div class="si-form-row">
+          <div class="si-field">
+            <label>Select account</label>
+            <select id="debit-account-select">
+              <option value="">— choose account —</option>
+              {allAccounts.map((a: any) => (
+                <option value={a.id} selected={a.id === debitAccId}>{a.displayed_as}</option>
+              ))}
+            </select>
+          </div>
+          <button class="si-btn primary" id="save-debit-btn">Save</button>
+          <button class="si-btn secondary" id="cancel-debit-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Department Mapping ───────────────────────────────────────────── -->
+  <div class="si-card">
+    <div class="si-card-header">
+      <h2>Department Mapping</h2>
+    </div>
+    <div class="si-card-body">
+      <p style="font-size:0.875rem;color:#555;margin:0 0 1rem;">
+        Map TouchOffice department names to Sage nominal accounts. Pattern matching is case-insensitive
+        and checks if the department name <em>contains</em> the pattern (e.g. "Bar" matches "Bar Sales").
+      </p>
+
+      {mappings.length === 0
+        ? <p class="si-empty">No mappings yet. Add one below.</p>
+        : (
+          <table class="si-table" style="margin-bottom:1.25rem;" id="mapping-table">
+            <thead>
+              <tr>
+                <th>Department pattern</th>
+                <th>Sage account (credit)</th>
+                <th style="text-align:center;">Enabled</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {mappings.map((m: any) => (
+                <tr data-id={m.id}>
+                  <td><code style="background:#f3f4f6;padding:0.1rem 0.4rem;border-radius:4px;">{m.dept_pattern}</code></td>
+                  <td>{m.sage_ledger_account_name ?? m.sage_ledger_account_id}</td>
+                  <td style="text-align:center;">
+                    <input type="checkbox" class="si-toggle mapping-toggle" data-id={m.id} checked={m.enabled === 1} />
+                  </td>
+                  <td>
+                    <button class="si-btn danger mapping-delete" data-id={m.id} style="padding:0.25rem 0.5rem;font-size:0.75rem;">Remove</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+
+      <div id="mapping-msg" style="display:none;" class="si-alert"></div>
+
+      <div style="border-top:1px solid #f0f0f0;padding-top:1rem;">
+        <p style="font-size:0.8125rem;font-weight:600;color:#555;margin:0 0 0.75rem;">Add mapping</p>
+        <div class="si-form-row">
+          <div class="si-field">
+            <label>Department pattern</label>
+            <input type="text" id="new-pattern" placeholder="e.g. Bar" style="width:160px;" />
+          </div>
+          <div class="si-field">
+            <label>Sage account (credit)</label>
+            <select id="new-account">
+              <option value="">— choose account —</option>
+              {allAccounts.map((a: any) => (
+                <option value={a.id} data-name={a.displayed_as}>{a.displayed_as}</option>
+              ))}
+            </select>
+          </div>
+          <button class="si-btn primary" id="add-mapping-btn">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Import a Date ────────────────────────────────────────────────── -->
+  <div class="si-card">
+    <div class="si-card-header">
+      <h2>Import a Date</h2>
+    </div>
+    <div class="si-card-body">
+      <div class="si-form-row" style="align-items:flex-end;">
+        <div class="si-field">
+          <label for="import-date">Date</label>
+          <input type="date" id="import-date" value={defaultDate} max={defaultDate} />
+        </div>
+        <button class="si-btn secondary" id="preview-btn">Preview</button>
+      </div>
+
+      <div id="import-msg" style="display:none;" class="si-alert"></div>
+
+      <div id="preview-box">
+        <p style="font-size:0.8125rem;font-weight:600;color:#555;margin:0 0 0.5rem;">
+          Preview — <span id="preview-date-label"></span>
+        </p>
+        <table class="si-preview-table">
+          <thead>
+            <tr><th>Department</th><th>Sage account (credit)</th><th class="num">Amount</th></tr>
+          </thead>
+          <tbody id="preview-rows"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="2">Total</td>
+              <td class="num" id="preview-total"></td>
+            </tr>
+          </tfoot>
+        </table>
+        <div style="margin-top:1rem;display:flex;align-items:center;gap:0.75rem;">
+          <button class="si-btn primary" id="confirm-btn">Confirm Import to Sage</button>
+          <span id="import-spinner" style="display:none;font-size:0.875rem;color:#666;">Posting to Sage…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Import History ───────────────────────────────────────────────── -->
+  <div class="si-card">
+    <div class="si-card-header">
+      <h2>Import History</h2>
+      <span style="font-size:0.8125rem;color:#888;">Last 90 days</span>
+    </div>
+    <div class="si-card-body" style="padding:0;">
+      {imports.length === 0
+        ? <p class="si-empty">No imports yet.</p>
+        : (
+          <table class="si-table" id="history-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Status</th>
+                <th class="num">Total</th>
+                <th>Departments</th>
+                <th>Sage journal</th>
+                <th>Imported at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {imports.map((imp: any) => {
+                let depts: string[] = [];
+                try { depts = JSON.parse(imp.dept_breakdown_json || '[]').map((d: any) => d.deptName); } catch {}
+                return (
+                  <tr>
+                    <td>{fmtDate(imp.import_date)}</td>
+                    <td><span class={`si-badge ${imp.status}`}>{imp.status}</span></td>
+                    <td class="num">{imp.total_amount != null ? fmt(imp.total_amount) : '—'}</td>
+                    <td style="font-size:0.8125rem;color:#555;">{depts.join(', ') || '—'}</td>
+                    <td style="font-size:0.8125rem;font-family:monospace;">{imp.sage_journal_id || '—'}</td>
+                    <td style="font-size:0.8125rem;color:#888;">{imp.imported_at ? fmtDate(imp.imported_at) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )
+      }
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ debitAccId }}>
+    var currentDebitAccId = debitAccId;
+
+    function fmt(n) {
+      return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
+    }
+
+    function showAlert(el, msg, type) {
+      el.textContent = msg;
+      el.className = 'si-alert ' + type;
+      el.style.display = 'block';
+    }
+    function hideAlert(el) { el.style.display = 'none'; }
+
+    // ── Debit account ──────────────────────────────────────────────────
+    document.getElementById('change-debit-btn').addEventListener('click', function() {
+      document.getElementById('debit-change-form').style.display = 'block';
+      this.style.display = 'none';
+    });
+    document.getElementById('cancel-debit-btn').addEventListener('click', function() {
+      document.getElementById('debit-change-form').style.display = 'none';
+      document.getElementById('change-debit-btn').style.display = 'inline-flex';
+    });
+    document.getElementById('save-debit-btn').addEventListener('click', async function() {
+      var sel = document.getElementById('debit-account-select');
+      var id = sel.value;
+      var name = sel.options[sel.selectedIndex].text;
+      if (!id) { alert('Please select an account'); return; }
+
+      await fetch('/api/sage/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {});
+
+      var res = await fetch('/api/app-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'sage_sales_debit_account_id', value: id }),
+      });
+
+      if (!res.ok) {
+        // fall back to direct D1 upsert via a dedicated endpoint isn't available,
+        // use a custom approach via import-sales which handles app_settings too
+        // Store via a simple POST to a settings stub — store inline
+        alert('Could not save setting. Please try again.');
+        return;
+      }
+
+      currentDebitAccId = id;
+      var nameEl = document.getElementById('debit-name');
+      nameEl.className = 'name';
+      nameEl.textContent = name;
+      document.getElementById('debit-change-form').style.display = 'none';
+      document.getElementById('change-debit-btn').style.display = 'inline-flex';
+    });
+
+    // ── Department mapping ─────────────────────────────────────────────
+    var mappingMsg = document.getElementById('mapping-msg');
+
+    document.getElementById('add-mapping-btn').addEventListener('click', async function() {
+      var pattern = document.getElementById('new-pattern').value.trim();
+      var accSel  = document.getElementById('new-account');
+      var accId   = accSel.value;
+      var accName = accSel.options[accSel.selectedIndex]?.dataset?.name || accSel.options[accSel.selectedIndex]?.text || '';
+
+      if (!pattern || !accId) {
+        showAlert(mappingMsg, 'Pattern and account are both required.', 'warning');
+        return;
+      }
+
+      var res = await fetch('/api/sage/dept-mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deptPattern: pattern, sageAccountId: accId, sageAccountName: accName }),
+      });
+
+      if (!res.ok) {
+        var err = await res.json().catch(() => ({}));
+        showAlert(mappingMsg, err.error || 'Failed to add mapping', 'error');
+        return;
+      }
+
+      showAlert(mappingMsg, 'Mapping added. Reloading…', 'success');
+      setTimeout(function() { location.reload(); }, 800);
+    });
+
+    // Toggle enable/disable
+    document.querySelectorAll('.mapping-toggle').forEach(function(el) {
+      el.addEventListener('change', async function() {
+        var id = this.dataset.id;
+        await fetch('/api/sage/dept-mapping', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: parseInt(id), enabled: this.checked }),
+        });
+      });
+    });
+
+    // Delete mapping
+    document.querySelectorAll('.mapping-delete').forEach(function(el) {
+      el.addEventListener('click', async function() {
+        if (!confirm('Remove this mapping?')) return;
+        var id = this.dataset.id;
+        var res = await fetch('/api/sage/dept-mapping', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: parseInt(id) }),
+        });
+        if (res.ok) this.closest('tr').remove();
+        else showAlert(mappingMsg, 'Failed to delete mapping', 'error');
+      });
+    });
+
+    // ── Preview ────────────────────────────────────────────────────────
+    var previewBox  = document.getElementById('preview-box');
+    var importMsg   = document.getElementById('import-msg');
+    var confirmBtn  = document.getElementById('confirm-btn');
+    var previewRows = document.getElementById('preview-rows');
+    var previewTotal = document.getElementById('preview-total');
+    var previewDateLabel = document.getElementById('preview-date-label');
+    var spinner     = document.getElementById('import-spinner');
+    var currentPreviewData = null;
+
+    document.getElementById('preview-btn').addEventListener('click', async function() {
+      var date = document.getElementById('import-date').value;
+      if (!date) { showAlert(importMsg, 'Select a date first', 'warning'); return; }
+
+      hideAlert(importMsg);
+      previewBox.classList.remove('visible');
+      this.disabled = true;
+      this.textContent = 'Loading…';
+
+      try {
+        var res = await fetch('/api/sage/import-sales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date, preview: true }),
+        });
+        var data = await res.json();
+
+        if (!res.ok) {
+          showAlert(importMsg,
+            data.error === 'no_data' ? 'No matching department data found for this date. Check your department mappings.' : (data.message || data.error || 'Preview failed'),
+            'error');
+          return;
+        }
+
+        // Populate preview
+        currentPreviewData = data;
+        previewDateLabel.textContent = new Date(date + 'T12:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+        previewRows.innerHTML = data.matched.map(function(m) {
+          return '<tr><td>' + m.deptName + '</td><td>' + m.ledgerAccountName + '</td><td class="num">' + fmt(m.value) + '</td></tr>';
+        }).join('');
+        previewTotal.textContent = fmt(data.total);
+        previewBox.classList.add('visible');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Confirm Import to Sage';
+
+      } finally {
+        this.disabled = false;
+        this.textContent = 'Preview';
+      }
+    });
+
+    // ── Sync accounts from Sage ────────────────────────────────────────
+    document.getElementById('sync-btn').addEventListener('click', async function() {
+      var msg = document.getElementById('sync-msg');
+      this.disabled = true;
+      this.textContent = 'Syncing…';
+      msg.textContent = '';
+      msg.style.display = 'none';
+
+      try {
+        var res = await fetch('/api/sage/sync', { method: 'POST' });
+        var data = await res.json().catch(function() { return {}; });
+        if (res.ok) {
+          msg.textContent = 'Synced. Reloading…';
+          msg.style.display = 'inline';
+          setTimeout(function() { location.reload(); }, 800);
+        } else {
+          msg.textContent = 'Sync failed: ' + (data.error || res.status);
+          msg.style.display = 'inline';
+          this.disabled = false;
+          this.textContent = 'Sync accounts from Sage';
+        }
+      } catch {
+        msg.textContent = 'Network error';
+        msg.style.display = 'inline';
+        this.disabled = false;
+        this.textContent = 'Sync accounts from Sage';
+      }
+    });
+
+    // ── Confirm Import ─────────────────────────────────────────────────
+    confirmBtn.addEventListener('click', async function() {
+      var date = document.getElementById('import-date').value;
+      if (!date || !currentPreviewData) return;
+
+      if (!confirm('Post journal to Sage for ' + date + '?\n\nTotal: ' + fmt(currentPreviewData.total) + '\n\nThis cannot be undone from here.')) return;
+
+      this.disabled = true;
+      spinner.style.display = 'inline';
+
+      try {
+        var res = await fetch('/api/sage/import-sales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date, preview: false }),
+        });
+        var data = await res.json();
+
+        if (!res.ok) {
+          if (data.error === 'already_imported') {
+            showAlert(importMsg, data.message, 'warning');
+          } else {
+            showAlert(importMsg, data.detail || data.message || data.error || 'Import failed', 'error');
+          }
+          this.disabled = false;
+          return;
+        }
+
+        showAlert(importMsg, 'Journal posted to Sage. Sage ID: ' + (data.sageJournalId || 'unknown') + '. Reloading…', 'success');
+        previewBox.classList.remove('visible');
+        currentPreviewData = null;
+        setTimeout(function() { location.reload(); }, 1500);
+
+      } finally {
+        spinner.style.display = 'none';
+        this.textContent = 'Confirm Import to Sage';
+      }
+    });
+  </script>
+</AdminLayout>

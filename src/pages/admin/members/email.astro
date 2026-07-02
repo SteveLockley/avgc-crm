@@ -168,8 +168,18 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
                 </svg>
                 Document
               </button>
+              <button type="button" id="btn-attach-pdf" class="toolbar-btn" title="Attach a PDF file to the email">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="12" y1="18" x2="12" y2="12"/>
+                  <line x1="9" y1="15" x2="15" y2="15"/>
+                </svg>
+                Attach PDF
+              </button>
               <input type="file" id="file-image" accept="image/*" style="display:none;" />
               <input type="file" id="file-doc" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf" style="display:none;" />
+              <input type="file" id="file-attachment" accept=".pdf" style="display:none;" />
               <span id="upload-status" class="upload-status"></span>
             </div>
             <div contenteditable="true" id="body" class="email-editor" data-placeholder="Type your message here...">{defaultBody}</div>
@@ -178,6 +188,12 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
                 Tip: Use {'{first_name}'}, {'{surname}'}, or {'{name}'} for personalization
               </div>
             )}
+          </div>
+
+          <!-- Attachments -->
+          <div id="attachments-area" class="attachments-area" style="display:none;">
+            <div class="attachments-label">Attachments:</div>
+            <div id="attachment-chips"></div>
           </div>
 
           <!-- Footer -->
@@ -402,6 +418,53 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
       border-radius: 6px;
       font-size: 0.8rem;
       color: #1e5631;
+    }
+
+    .attachments-area {
+      padding: 0.75rem 1.5rem;
+      border-top: 1px solid #e5e5e5;
+      background: #fafafa;
+    }
+
+    .attachments-label {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+
+    #attachment-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .attachment-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.25rem 0.625rem;
+      background: #f0f7f0;
+      border: 1px solid #c8dcc8;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      color: #1e5631;
+    }
+
+    .attachment-chip button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #1e5631;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .attachment-chip button:hover {
+      color: #c62828;
     }
 
     .email-preview-footer {
@@ -744,6 +807,65 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
       }
     });
 
+    // PDF attachment support — uploads to SharePoint, stores sharing link
+    const attachmentLinks = []; // [{ name, url }]
+
+    function renderAttachmentChips() {
+      const chips = document.getElementById('attachment-chips');
+      const area = document.getElementById('attachments-area');
+      chips.innerHTML = '';
+      attachmentLinks.forEach((att, idx) => {
+        const chip = document.createElement('span');
+        chip.className = 'attachment-chip';
+        chip.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          ${att.name}
+          <button title="Remove attachment" data-idx="${idx}">×</button>
+        `;
+        chip.querySelector('button').addEventListener('click', () => {
+          attachmentLinks.splice(idx, 1);
+          renderAttachmentChips();
+        });
+        chips.appendChild(chip);
+      });
+      area.style.display = attachmentLinks.length > 0 ? '' : 'none';
+    }
+
+    document.getElementById('btn-attach-pdf')?.addEventListener('click', () => {
+      document.getElementById('file-attachment').click();
+    });
+
+    document.getElementById('file-attachment')?.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      e.target.value = '';
+
+      const status = document.getElementById('upload-status');
+      const attachBtn = document.getElementById('btn-attach-pdf');
+      status.className = 'upload-status';
+      status.textContent = 'Uploading ' + file.name + '...';
+      attachBtn.disabled = true;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await fetch('/api/upload-email-asset', { method: 'POST', body: formData });
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || 'Upload failed');
+        attachmentLinks.push({ name: file.name, url: result.url });
+        renderAttachmentChips();
+        status.textContent = '';
+      } catch (err) {
+        status.className = 'upload-status error';
+        status.textContent = err.message;
+      } finally {
+        attachBtn.disabled = false;
+      }
+    });
+
     // Convert contenteditable HTML back to plain text with placeholders
     function getBodyText() {
       const editor = document.getElementById('body');
@@ -804,7 +926,7 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
         const resp = await fetch('/api/send-member-email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'test', subject, body, testEmail: senderEmail }),
+          body: JSON.stringify({ action: 'test', subject, body, testEmail: senderEmail, attachmentLinks }),
         });
         const result = await resp.json();
         if (result.success) {
@@ -850,7 +972,7 @@ const memberIdsJson = JSON.stringify(validMembers.map(m => m.id));
           `${processed} / ${count} processed`;
 
         try {
-          const payload = { action: 'send', subject, body, memberIds: chunk };
+          const payload = { action: 'send', subject, body, memberIds: chunk, attachmentLinks };
           if (testEmail) payload.testEmail = testEmail;
 
           const resp = await fetch('/api/send-member-email', {

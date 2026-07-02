@@ -1332,3 +1332,60 @@ export async function fetchWeeklyReport(
     fetchedAt: new Date().toISOString(),
   };
 }
+
+// TouchOffice customer group IDs
+export const TO_GROUP_MEMBERS = 1;
+export const TO_GROUP_SOCIAL = 2;
+export const TO_GROUP_DEAD_CARDS = 3;
+
+// TouchOffice customer flag bitmask values
+export const TO_FLAG_BLACKLISTED = 1;
+
+/**
+ * Update a TouchOffice customer card's fields.
+ * Uses the field[num][fieldname] POST format discovered from browser devtools.
+ * Only sends the fields you provide — unchanged fields are left alone.
+ */
+export async function updateCustomerCard(
+  db: any,
+  env: any,
+  touchofficeNum: number,
+  fields: {
+    firstname?: string;
+    lastname?: string;
+    longname?: string;
+    accountnumber?: string | number;
+    custgroup?: number;
+    flag?: number;
+  }
+): Promise<{ ok: boolean; error?: string }> {
+  const { session } = await ensureSession(db, env);
+  const cookie = `icrtouch_connect_login_id=${session}`;
+  const num = String(touchofficeNum);
+  const editUrl = `${BASE_URL}/apps/editcustomerdetails?num=${num}`;
+
+  const params = new URLSearchParams();
+  if (fields.firstname !== undefined) params.set(`field[${num}][firstname]`, fields.firstname);
+  if (fields.lastname !== undefined) params.set(`field[${num}][lastname]`, fields.lastname);
+  if (fields.longname !== undefined) params.set(`field[${num}][longname]`, fields.longname);
+  if (fields.accountnumber !== undefined) params.set(`field[${num}][accountnumber]`, String(fields.accountnumber));
+  if (fields.custgroup !== undefined) params.set(`field[${num}][custgroup]`, String(fields.custgroup));
+  if (fields.flag !== undefined) params.set(`field[${num}][flag]`, String(fields.flag));
+  params.set('submit-savecustomer', '');
+
+  const res = await fetch(editUrl, {
+    method: 'POST',
+    headers: {
+      'Cookie': cookie,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': BASE_URL,
+      'Referer': editUrl,
+    },
+    body: params.toString(),
+  });
+
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  const html = await res.text();
+  if (html.includes('name="submit-login"')) return { ok: false, error: 'Session expired' };
+  return { ok: true };
+}

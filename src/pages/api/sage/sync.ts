@@ -17,6 +17,9 @@ export const POST: APIRoute = async ({ url, locals }) => {
 
   const syncType = url.searchParams.get('type') || 'all';
 
+  // D1 rejects undefined — coerce any undefined value to null
+  const n = (v: any): any => v ?? null;
+
   try {
     const client = createSageClient(env);
     const results: Record<string, number> = {};
@@ -37,11 +40,11 @@ export const POST: APIRoute = async ({ url, locals }) => {
             is_visible_in_other_receipts=excluded.is_visible_in_other_receipts, is_visible_in_reporting=excluded.is_visible_in_reporting,
             is_visible_in_sales=excluded.is_visible_in_sales, raw_json=excluded.raw_json, last_synced=datetime('now')
         `).bind(
-          a.id, a.nominal_code, a.name, a.displayed_as,
-          a.ledger_account_type?.id || null,
-          a.ledger_account_group?.id || a.ledger_account_group?.displayed_as || null,
-          a.tax_rate?.id || null,
-          a.balance?.toString() || null,
+          n(a.id), n(a.nominal_code), n(a.name), n(a.displayed_as),
+          n(a.ledger_account_type?.id ?? a.ledger_account_type),
+          n(a.ledger_account_group?.id ?? a.ledger_account_group?.displayed_as ?? a.ledger_account_group),
+          n(a.tax_rate?.id),
+          n(a.balance != null ? String(a.balance) : null),
           a.visible_in_banking ? 1 : 0,
           a.visible_in_expenses ? 1 : 0,
           a.visible_in_journals ? 1 : 0,
@@ -68,12 +71,12 @@ export const POST: APIRoute = async ({ url, locals }) => {
             sort_code=excluded.sort_code, balance=excluded.balance,
             bank_account_type=excluded.bank_account_type, raw_json=excluded.raw_json, last_synced=datetime('now')
         `).bind(
-          b.id, b.displayed_as, b.nominal_code,
-          b.bank_account_details?.account_name || null,
-          b.bank_account_details?.account_number || null,
-          b.bank_account_details?.sort_code || null,
-          b.balance?.toString() || null,
-          b.bank_account_type?.id || null,
+          n(b.id), n(b.displayed_as), n(b.nominal_code),
+          n(b.bank_account_details?.account_name),
+          n(b.bank_account_details?.account_number),
+          n(b.bank_account_details?.sort_code),
+          n(b.balance != null ? String(b.balance) : null),
+          n(b.bank_account_type?.id ?? b.bank_account_type),
           JSON.stringify(b),
         ).run();
       }
@@ -93,11 +96,11 @@ export const POST: APIRoute = async ({ url, locals }) => {
             reference=excluded.reference, balance=excluded.balance,
             raw_json=excluded.raw_json, last_synced=datetime('now')
         `).bind(
-          c.id, c.displayed_as, c.name,
-          c.contact_types?.map((t: any) => t.id).join(',') || null,
-          c.email || null,
-          c.reference || null,
-          c.balance?.toString() || null,
+          n(c.id), n(c.displayed_as), n(c.name),
+          n(Array.isArray(c.contact_types) ? c.contact_types.map((t: any) => t.id).join(',') : null),
+          n(c.email),
+          n(c.reference),
+          n(c.balance != null ? String(c.balance) : null),
           JSON.stringify(c),
         ).run();
       }
@@ -116,8 +119,8 @@ export const POST: APIRoute = async ({ url, locals }) => {
             percentage=excluded.percentage, is_visible=excluded.is_visible,
             raw_json=excluded.raw_json, last_synced=datetime('now')
         `).bind(
-          t.id, t.displayed_as, t.name,
-          t.percentage || 0,
+          n(t.id), n(t.displayed_as), n(t.name),
+          t.percentage ?? 0,
           t.is_visible ? 1 : 0,
           JSON.stringify(t),
         ).run();

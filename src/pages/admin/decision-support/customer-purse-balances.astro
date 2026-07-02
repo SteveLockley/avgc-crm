@@ -824,6 +824,12 @@ function fmtDate(iso: string) {
         document.getElementById('statTotal').textContent  = fmt(total);
         document.getElementById('statNonZero').textContent = String(nonZero.length);
         document.getElementById('statTotal2').textContent  = String(allRows.length);
+        const latestFetched = allRows.reduce((latest, r) => (r.fetched_at > latest ? r.fetched_at : latest), '');
+        const lastFetchedEl = document.getElementById('statLastFetched');
+        if (lastFetchedEl && latestFetched) {
+          const d = new Date(latestFetched.replace(' ', 'T') + 'Z');
+          lastFetchedEl.textContent = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        }
         updateSeniorsMismatch(
           allRows.find(r => r.customer_number === 1035)?.account_balance ?? null,
           data.seniorsPurseBalance,

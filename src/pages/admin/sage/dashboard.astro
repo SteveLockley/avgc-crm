@@ -1,0 +1,553 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { createSageClient } from '@/lib/sage';
+
+const env = Astro.locals.runtime?.env;
+const FIRST_FY_YEAR = 2017;
+
+let error = '';
+let bankAccounts: any[] = [];
+let tbThis: any[] = [];
+let tbLast: any[] = [];
+let tbLastSP: any[] = [];
+let fyThisLabel = '';
+let fyLastLabel = '';
+let yearPct = 0;
+let daysElapsed = 0;
+let daysInYear = 365;
+let isCurrentYear = true;
+let selectedFyEndYear = 0;
+let fyYearOptions: { value: number; label: string }[] = [];
+
+function addYears(date: Date, n: number) {
+  const d = new Date(date);
+  d.setFullYear(d.getFullYear() + n);
+  return d;
+}
+function isoDate(d: Date) { return d.toISOString().split('T')[0]; }
+function shortDate(d: Date) {
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function accountType(displayedAs: string): 'income' | 'expense' | null {
+  const m = displayedAs?.match(/\((\d+)\)\s*$/);
+  if (!m) return null;
+  const code = parseInt(m[1]);
+  if (code >= 4000 && code < 5000) return 'income';
+  if (code >= 5000 && code < 9000) return 'expense';
+  return null;
+}
+
+function summarise(items: any[]) {
+  const income = items
+    .filter(i => accountType(i.displayed_as) === 'income')
+    .map(i => ({ name: i.displayed_as, value: (parseFloat(i.credit) || 0) - (parseFloat(i.debit) || 0) }))
+    .filter(i => i.value !== 0)
+    .sort((a, b) => b.value - a.value);
+  const expenses = items
+    .filter(i => accountType(i.displayed_as) === 'expense')
+    .map(i => ({ name: i.displayed_as, value: (parseFloat(i.debit) || 0) - (parseFloat(i.credit) || 0) }))
+    .filter(i => i.value !== 0)
+    .sort((a, b) => b.value - a.value);
+  const totalIncome = income.reduce((s, i) => s + i.value, 0);
+  const totalExpenses = expenses.reduce((s, i) => s + i.value, 0);
+  return { income, expenses, totalIncome, totalExpenses, surplus: totalIncome - totalExpenses };
+}
+
+if (env?.DB && env?.SAGE_CLIENT_ID && env?.SAGE_CLIENT_SECRET) {
+  try {
+    const client = createSageClient(env);
+
+    const [settings, bankList] = await Promise.all([
+      client.getFinancialSettings() as Promise<any>,
+      client.getBankAccounts(),
+    ]);
+
+    bankAccounts = await Promise.all(bankList.map((b: any) => client.get<any>(`/bank_accounts/${b.id}`)));
+
+    const yearEndStr: string = settings?.year_end_date ?? '';
+    const now = new Date();
+
+    // Find current FY end year (advance stale Sage date)
+    let currentFyEnd = new Date(yearEndStr || `${now.getFullYear()}-12-31`);
+    while (currentFyEnd < now) currentFyEnd.setFullYear(currentFyEnd.getFullYear() + 1);
+    const currentFyEndYear = currentFyEnd.getFullYear();
+
+    // Read selected year from URL; default to current
+    const fyParam = parseInt(Astro.url.searchParams.get('fy') || '');
+    selectedFyEndYear = Number.isFinite(fyParam) && fyParam >= FIRST_FY_YEAR && fyParam <= currentFyEndYear
+      ? fyParam
+      : currentFyEndYear;
+    isCurrentYear = selectedFyEndYear === currentFyEndYear;
+
+    // Compute FY dates for selected year
+    let fyEndThis: Date;
+    let fyStartThis: Date;
+
+    if (yearEndStr) {
+      fyEndThis = new Date(yearEndStr);
+      fyEndThis.setFullYear(selectedFyEndYear);
+      fyStartThis = addYears(fyEndThis, -1);
+      fyStartThis.setDate(fyStartThis.getDate() + 1);
+      if (isCurrentYear) fyEndThis = now;
+    } else {
+      fyStartThis = new Date(`${selectedFyEndYear}-01-01`);
+      fyEndThis = isCurrentYear ? now : new Date(`${selectedFyEndYear}-12-31`);
+    }
+
+    const fyStartLast = addYears(fyStartThis, -1);
+    const fyEndLast = new Date(fyStartThis.getTime() - 86400000);
+
+    fyThisLabel = `${shortDate(fyStartThis)} – ${shortDate(fyEndThis)}`;
+    fyLastLabel = `${shortDate(fyStartLast)} – ${shortDate(fyEndLast)}`;
+
+    // Year-progress metrics (current year only)
+    if (isCurrentYear) {
+      const fyFullEnd = addYears(fyStartThis, 1);
+      fyFullEnd.setDate(fyFullEnd.getDate() - 1);
+      daysInYear = Math.round((fyFullEnd.getTime() - fyStartThis.getTime()) / 86400000) + 1;
+      daysElapsed = Math.round((fyEndThis.getTime() - fyStartThis.getTime()) / 86400000) + 1;
+      yearPct = daysElapsed / daysInYear;
+    }
+
+    // Build year selector options
+    const yearEndTemplate = new Date(yearEndStr || '2025-12-31');
+    for (let y = currentFyEndYear; y >= FIRST_FY_YEAR; y--) {
+      const endD = new Date(yearEndTemplate);
+      endD.setFullYear(y);
+      const startD = addYears(endD, -1);
+      startD.setDate(startD.getDate() + 1);
+      const crossYear = startD.getFullYear() !== endD.getFullYear();
+      const label = crossYear
+        ? `${startD.getFullYear()}/${String(y).slice(2)}`
+        : String(y);
+      fyYearOptions.push({ value: y, label: y === currentFyEndYear ? `${label} (current)` : label });
+    }
+
+    // Fetch trial balances; same-period is optional (current year only)
+    const samePeriodEndLast = addYears(fyEndThis, -1);
+    const [tbThisRaw, tbLastRaw, tbLastSPRaw] = await Promise.all([
+      client.getTrialBalance(isoDate(fyStartThis), isoDate(fyEndThis)) as Promise<any>,
+      client.getTrialBalance(isoDate(fyStartLast), isoDate(fyEndLast)) as Promise<any>,
+      isCurrentYear
+        ? client.getTrialBalance(isoDate(fyStartLast), isoDate(samePeriodEndLast)).catch(() => null) as Promise<any>
+        : Promise.resolve(null),
+    ]);
+
+    tbThis = tbThisRaw?.ledger_accounts || [];
+    tbLast = tbLastRaw?.ledger_accounts || [];
+    tbLastSP = tbLastSPRaw?.ledger_accounts || [];
+
+  } catch (e: any) {
+    error = e.message?.includes('NO_SAGE_CONNECTION') ? 'Not connected to Sage.' : e.message;
+  }
+}
+
+const thisYear = summarise(tbThis);
+const lastYear = summarise(tbLast);
+const lastYearSP = summarise(tbLastSP);
+const totalBank = bankAccounts.reduce((s, b) => s + (parseFloat(b.balance) || 0), 0);
+
+function projValue(ytd: number, spLast: number | undefined, fullLast: number | undefined): number {
+  if (spLast != null && fullLast != null && spLast !== 0 && fullLast !== 0) {
+    return ytd / (spLast / fullLast);
+  }
+  return yearPct > 0 ? ytd / yearPct : 0;
+}
+
+const incomeSpMap  = Object.fromEntries(lastYearSP.income.map(i => [i.name, i.value]));
+const incomeLyMap  = Object.fromEntries(lastYear.income.map(i => [i.name, i.value]));
+const expenseSpMap = Object.fromEntries(lastYearSP.expenses.map(i => [i.name, i.value]));
+const expenseLyMap = Object.fromEntries(lastYear.expenses.map(i => [i.name, i.value]));
+
+const projIncome  = (name: string, ytd: number) => projValue(ytd, incomeSpMap[name], incomeLyMap[name]);
+const projExpense = (name: string, ytd: number) => projValue(ytd, expenseSpMap[name], expenseLyMap[name]);
+
+const projTotalIncome   = projValue(thisYear.totalIncome,   lastYearSP.totalIncome,   lastYear.totalIncome);
+const projTotalExpenses = projValue(thisYear.totalExpenses, lastYearSP.totalExpenses, lastYear.totalExpenses);
+const projSurplus       = projTotalIncome - projTotalExpenses;
+
+function fmt(n: number) { return Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtSigned(n: number) { return (n < 0 ? '−' : '') + fmt(n); }
+function diff(curr: number, prev: number) {
+  if (!prev) return null;
+  return Math.round(((curr - prev) / Math.abs(prev)) * 100);
+}
+const pctComplete = Math.round(yearPct * 100);
+---
+
+<AdminLayout title="Financial Overview">
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  {!error && (
+    <>
+      <!-- Year selector -->
+      <div class="fin-header">
+        <h2 class="fin-title">{isCurrentYear ? 'Current Year (YTD)' : fyThisLabel}</h2>
+        <div class="fin-year-picker">
+          <label for="fy-select" class="fin-year-label">Financial Year</label>
+          <select id="fy-select" class="fin-select" onchange="location.href='?fy='+this.value">
+            {fyYearOptions.map(opt => (
+              <option value={opt.value} selected={opt.value === selectedFyEndYear}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <!-- Year progress banner (current year only) -->
+      {isCurrentYear && (
+        <div class="fin-progress-banner">
+          <div class="fin-progress-top">
+            <span class="fin-progress-meta">Day {daysElapsed} of {daysInYear} &nbsp;·&nbsp; {pctComplete}% complete</span>
+            <span class="fin-progress-note">Projections based on same-period last year</span>
+          </div>
+          <div class="fin-progress-track">
+            <div class="fin-progress-fill" style={`width: ${pctComplete}%`}></div>
+          </div>
+        </div>
+      )}
+
+      <!-- Summary stat cards -->
+      <div class={`fin-summary ${isCurrentYear ? 'fin-summary--3col' : 'fin-summary--2col'}`}>
+
+        <div class="fin-section">
+          <div class="fin-section-label">{isCurrentYear ? `This Year YTD · ${fyThisLabel}` : fyThisLabel}</div>
+          <div class="fin-metrics">
+            {[
+              { label: 'Income', value: thisYear.totalIncome, prev: lastYear.totalIncome, color: 'success' },
+              { label: 'Expenditure', value: thisYear.totalExpenses, prev: lastYear.totalExpenses, color: 'danger' },
+              { label: thisYear.surplus >= 0 ? 'Surplus' : 'Deficit', value: thisYear.surplus, prev: lastYear.surplus, color: thisYear.surplus >= 0 ? 'success' : 'danger' },
+            ].map(({ label, value, prev, color }) => {
+              const d = diff(value, prev);
+              return (
+                <div class="fin-metric-card">
+                  <div class={`fin-metric-value fin-metric-value--${color}`}>£{fmt(value)}</div>
+                  <div class="fin-metric-label">{label}</div>
+                  {d !== null && (
+                    <div class={`fin-metric-delta fin-metric-delta--${d >= 0 ? 'up' : 'down'}`}>
+                      {d >= 0 ? '▲' : '▼'} {Math.abs(d)}%
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {isCurrentYear && (
+          <div class="fin-section">
+            <div class="fin-section-label">Full Year Projection</div>
+            <div class="fin-metrics">
+              {[
+                { label: 'Income', value: projTotalIncome, prev: lastYear.totalIncome, color: 'success' },
+                { label: 'Expenditure', value: projTotalExpenses, prev: lastYear.totalExpenses, color: 'danger' },
+                { label: projSurplus >= 0 ? 'Surplus' : 'Deficit', value: projSurplus, prev: lastYear.surplus, color: projSurplus >= 0 ? 'success' : 'danger' },
+              ].map(({ label, value, prev, color }) => {
+                const d = diff(value, prev);
+                return (
+                  <div class="fin-metric-card fin-metric-card--projected">
+                    <div class={`fin-metric-value fin-metric-value--${color}`}>£{fmt(value)}</div>
+                    <div class="fin-metric-label">{label}</div>
+                    {d !== null && (
+                      <div class={`fin-metric-delta fin-metric-delta--${d >= 0 ? 'up' : 'down'}`}>
+                        {d >= 0 ? '▲' : '▼'} {Math.abs(d)}% vs last yr
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div class="fin-section">
+          <div class="fin-section-label">{isCurrentYear ? `Last Year · ${fyLastLabel}` : `Prior Year · ${fyLastLabel}`}</div>
+          <div class="fin-metrics">
+            {[
+              { label: 'Income', value: lastYear.totalIncome, color: 'success' },
+              { label: 'Expenditure', value: lastYear.totalExpenses, color: 'danger' },
+              { label: lastYear.surplus >= 0 ? 'Surplus' : 'Deficit', value: lastYear.surplus, color: lastYear.surplus >= 0 ? 'success' : 'danger' },
+            ].map(({ label, value, color }) => (
+              <div class="fin-metric-card fin-metric-card--muted">
+                <div class={`fin-metric-value fin-metric-value--${color}`}>£{fmt(value)}</div>
+                <div class="fin-metric-label">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Income & Expenditure breakdown -->
+      <div class="fin-breakdown">
+
+        <div class="card" style="margin: 0;">
+          <div class="card-header"><span class="card-title">Income by Account</span></div>
+          {thisYear.income.length === 0 && lastYear.income.length === 0 ? (
+            <p class="text-muted" style="padding: 0.5rem 0;">No income data found.</p>
+          ) : (
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th class="text-right">{isCurrentYear ? 'YTD' : 'Actual'}</th>
+                    {isCurrentYear && <th class="text-right fin-col-proj">Projected</th>}
+                    <th class="text-right text-muted">{isCurrentYear ? 'Last Year' : 'Prior Year'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const allNames = [...new Set([...thisYear.income, ...lastYear.income].map(i => i.name))];
+                    const tMap = Object.fromEntries(thisYear.income.map(i => [i.name, i.value]));
+                    const lMap = Object.fromEntries(lastYear.income.map(i => [i.name, i.value]));
+                    return allNames.map(name => (
+                      <tr>
+                        <td class="fin-account-name">{name}</td>
+                        <td class="text-right mono">{tMap[name] != null ? `£${fmt(tMap[name])}` : '—'}</td>
+                        {isCurrentYear && <td class="text-right mono fin-col-proj">{tMap[name] != null ? `£${fmt(projIncome(name, tMap[name]))}` : '—'}</td>}
+                        <td class="text-right mono text-muted">{lMap[name] != null ? `£${fmt(lMap[name])}` : '—'}</td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+                <tfoot>
+                  <tr class="fin-total-row">
+                    <td>Total</td>
+                    <td class="text-right mono">£{fmt(thisYear.totalIncome)}</td>
+                    {isCurrentYear && <td class="text-right mono fin-col-proj">£{fmt(projTotalIncome)}</td>}
+                    <td class="text-right mono text-muted">£{fmt(lastYear.totalIncome)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div class="card" style="margin: 0;">
+          <div class="card-header"><span class="card-title">Expenditure by Account</span></div>
+          {thisYear.expenses.length === 0 && lastYear.expenses.length === 0 ? (
+            <p class="text-muted" style="padding: 0.5rem 0;">No expenditure data found.</p>
+          ) : (
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th class="text-right">{isCurrentYear ? 'YTD' : 'Actual'}</th>
+                    {isCurrentYear && <th class="text-right fin-col-proj">Projected</th>}
+                    <th class="text-right text-muted">{isCurrentYear ? 'Last Year' : 'Prior Year'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const allNames = [...new Set([...thisYear.expenses, ...lastYear.expenses].map(i => i.name))];
+                    const tMap = Object.fromEntries(thisYear.expenses.map(i => [i.name, i.value]));
+                    const lMap = Object.fromEntries(lastYear.expenses.map(i => [i.name, i.value]));
+                    return allNames.map(name => (
+                      <tr>
+                        <td class="fin-account-name">{name}</td>
+                        <td class="text-right mono">{tMap[name] != null ? `£${fmt(tMap[name])}` : '—'}</td>
+                        {isCurrentYear && <td class="text-right mono fin-col-proj">{tMap[name] != null ? `£${fmt(projExpense(name, tMap[name]))}` : '—'}</td>}
+                        <td class="text-right mono text-muted">{lMap[name] != null ? `£${fmt(lMap[name])}` : '—'}</td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+                <tfoot>
+                  <tr class="fin-total-row">
+                    <td>Total</td>
+                    <td class="text-right mono">£{fmt(thisYear.totalExpenses)}</td>
+                    {isCurrentYear && <td class="text-right mono fin-col-proj">£{fmt(projTotalExpenses)}</td>}
+                    <td class="text-right mono text-muted">£{fmt(lastYear.totalExpenses)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      <!-- Bank accounts (current year only) -->
+      {isCurrentYear && bankAccounts.length > 0 && (
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Bank Accounts</span>
+            <span class="fin-bank-total">Total: £{fmtSigned(totalBank)}</span>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th class="mono text-muted fin-col-acctno">Account No.</th>
+                  <th class="text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bankAccounts
+                  .filter((b: any) => (parseFloat(b.balance) || 0) !== 0 || b.displayed_as !== 'Do Not Use')
+                  .map((b: any) => {
+                    const bal = parseFloat(b.balance) || 0;
+                    return (
+                      <tr>
+                        <td>{b.displayed_as}</td>
+                        <td class="mono text-muted fin-col-acctno">{b.bank_account_details?.account_number ?? '—'}</td>
+                        <td class="text-right mono" style={bal < 0 ? 'color: var(--danger);' : ''}>£{fmtSigned(bal)}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+              <tfoot>
+                <tr class="fin-total-row">
+                  <td colspan="2">Total</td>
+                  <td class="text-right mono" style={totalBank < 0 ? 'color: var(--danger);' : ''}>£{fmtSigned(totalBank)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  )}
+
+  <style>
+    /* ── Header ── */
+    .fin-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .fin-title { margin: 0; font-size: 1.125rem; font-weight: 600; }
+    .fin-year-picker { display: flex; align-items: center; gap: 0.5rem; }
+    .fin-year-label { font-size: 0.8rem; color: var(--text-light); white-space: nowrap; }
+    .fin-select {
+      font-size: 0.875rem;
+      padding: 0.4rem 0.75rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .fin-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+    /* ── Progress banner ── */
+    .fin-progress-banner {
+      background: #eef4f0;
+      border: 1px solid #c6dbc9;
+      border-radius: 12px;
+      padding: 0.875rem 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .fin-progress-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0.25rem 1rem;
+      margin-bottom: 0.5rem;
+    }
+    .fin-progress-meta { font-size: 0.75rem; font-weight: 600; color: var(--primary); }
+    .fin-progress-note { font-size: 0.7rem; color: var(--text-light); }
+    .fin-progress-track { height: 6px; background: #c6dbc9; border-radius: 3px; overflow: hidden; }
+    .fin-progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.4s ease; }
+
+    /* ── Summary sections ── */
+    .fin-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .fin-section {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+    .fin-section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-light);
+      margin-bottom: 0.75rem;
+    }
+    .fin-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.625rem;
+    }
+    .fin-metric-card {
+      background: #f8faf9;
+      border-radius: 10px;
+      padding: 0.75rem 0.625rem;
+      border: 1px solid #e8ede9;
+    }
+    .fin-metric-card--projected {
+      background: #f5fbf6;
+      border: 1.5px dashed #9cc4a0;
+    }
+    .fin-metric-card--muted {
+      background: #fafafa;
+      border-color: #ebebeb;
+    }
+    .fin-metric-value {
+      font-size: clamp(0.9rem, 2.5vw, 1.25rem);
+      font-weight: 700;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+    .fin-metric-value--success { color: var(--success); }
+    .fin-metric-value--danger  { color: var(--danger); }
+    .fin-metric-label {
+      font-size: 0.7rem;
+      color: var(--text-light);
+      margin-top: 0.2rem;
+    }
+    .fin-metric-delta {
+      font-size: 0.65rem;
+      margin-top: 0.2rem;
+      font-weight: 600;
+    }
+    .fin-metric-delta--up   { color: var(--success); }
+    .fin-metric-delta--down { color: var(--danger); }
+
+    /* Desktop: sections side by side */
+    @media (min-width: 860px) {
+      .fin-summary--3col { flex-direction: row; align-items: flex-start; }
+      .fin-summary--3col .fin-section { flex: 1; }
+      .fin-summary--2col { flex-direction: row; align-items: flex-start; }
+      .fin-summary--2col .fin-section { flex: 1; }
+      .fin-metric-value { font-size: 1.25rem; }
+    }
+
+    /* ── Breakdown tables ── */
+    .fin-breakdown {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (min-width: 860px) {
+      .fin-breakdown { grid-template-columns: 1fr 1fr; }
+    }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    .fin-account-name { min-width: 10rem; }
+    .fin-col-proj { color: var(--primary); font-style: italic; white-space: nowrap; }
+    .fin-col-acctno { width: 7rem; }
+    .fin-total-row { font-weight: 700; border-top: 2px solid var(--border); }
+
+    /* ── Bank total ── */
+    .fin-bank-total { font-size: 0.875rem; font-weight: 700; }
+  </style>
+
+</AdminLayout>

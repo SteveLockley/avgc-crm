@@ -1,268 +1,486 @@
 ---
 import AdminLayout from '@/layouts/AdminLayout.astro';
+import { createSageClient } from '@/lib/sage';
 
-// Trial balance is fetched live from Sage
-// This is the only "report" endpoint Sage provides
+const env = Astro.locals.runtime?.env;
+const FIRST_FY_YEAR = 2017;
+
+let error = '';
+let fyThisLabel = '';
+let fyOpenLabel = '';
+let fyCloseLabel = '';
+let selectedFyEndYear = 0;
+let fyYearOptions: { value: number; label: string }[] = [];
+
+// Account data: id → {dr, cr}
+const openMap  = new Map<string, { dr: number; cr: number }>();
+const closeMap = new Map<string, { dr: number; cr: number }>();
+const periodMap = new Map<string, { dr: number; cr: number }>();
+// Account metadata: id → {name, type, section}
+const metaMap  = new Map<string, { name: string; type: string; section: string }>();
+
+function addYears(date: Date, n: number) {
+  const d = new Date(date);
+  d.setFullYear(d.getFullYear() + n);
+  return d;
+}
+function isoDate(d: Date) { return d.toISOString().split('T')[0]; }
+function shortDate(d: Date) {
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Sage returns both singular and plural type IDs depending on version/region
+const TYPE_TO_SECTION: Record<string, string> = {
+  // Assets
+  FIXED_ASSETS: 'Fixed Assets',   FIXED_ASSET: 'Fixed Assets',
+  CURRENT_ASSETS: 'Current Assets', CURRENT_ASSET: 'Current Assets',
+  BANK: 'Current Assets',
+  // Liabilities
+  CURRENT_LIABILITIES: 'Current Liabilities', CURRENT_LIABILITY: 'Current Liabilities',
+  LONG_TERM_LIABILITIES: 'Long-term Liabilities', FUTURE_LIABILITY: 'Long-term Liabilities',
+  // Equity
+  EQUITY: 'Capital & Reserves',
+  // Income
+  SALES: 'Income', OTHER_INCOME: 'Income',
+  // Expenses
+  COST_OF_SALES: 'Direct Costs', DIRECT_COSTS: 'Direct Costs', DIRECT_EXPENSES: 'Direct Costs',
+  OVERHEADS: 'Overheads',
+  DEPRECIATION: 'Depreciation',
+  OTHER_EXPENSES: 'Other Expenses',
+};
+
+const SECTION_ORDER = [
+  'Fixed Assets', 'Current Assets', 'Current Liabilities', 'Long-term Liabilities',
+  'Capital & Reserves', 'Income', 'Direct Costs', 'Overheads', 'Depreciation', 'Other Expenses',
+];
+
+const BALANCE_SHEET = new Set([
+  'Fixed Assets', 'Current Assets', 'Current Liabilities', 'Long-term Liabilities', 'Capital & Reserves',
+]);
+
+// Sections where debit is the normal (positive) balance
+const DEBIT_NORMAL_SECTIONS = new Set([
+  'Fixed Assets', 'Current Assets',
+  'Direct Costs', 'Overheads', 'Depreciation', 'Other Expenses',
+]);
+
+// Fallback: classify by nominal code range when Sage type is unrecognised
+function sectionFromCode(code: number): string {
+  if (code < 1000) return 'Fixed Assets';
+  if (code < 2000) return 'Current Assets';
+  if (code < 3000) return 'Current Liabilities';
+  if (code < 4000) return 'Capital & Reserves';
+  if (code < 5000) return 'Income';
+  if (code < 9000) return 'Overheads';
+  return 'Other Expenses';
+}
+
+function getSection(acc: any): string {
+  const typeId = acc.ledger_account_type?.id ?? '';
+  if (typeId && TYPE_TO_SECTION[typeId]) return TYPE_TO_SECTION[typeId];
+  // Fall back to nominal code range
+  const m = (acc.displayed_as ?? '').match(/\((\d+)\)\s*$/);
+  if (m) return sectionFromCode(parseInt(m[1]));
+  return acc.ledger_account_group?.displayed_as ?? 'Other';
+}
+
+// Returns the net balance as a positive number for normal-balance accounts
+function netBal(dr: number, cr: number, section: string): number {
+  return DEBIT_NORMAL_SECTIONS.has(section) ? (dr - cr) : (cr - dr);
+}
+
+function loadAccounts(items: any[], target: Map<string, { dr: number; cr: number }>) {
+  for (const acc of items) {
+    const dr = parseFloat(acc.debit) || 0;
+    const cr = parseFloat(acc.credit) || 0;
+    target.set(acc.id, { dr, cr });
+    if (!metaMap.has(acc.id)) {
+      metaMap.set(acc.id, {
+        name: acc.displayed_as ?? '—',
+        type: acc.ledger_account_type?.id ?? '',
+        section: getSection(acc),
+      });
+    }
+  }
+}
+
+if (env?.DB && env?.SAGE_CLIENT_ID && env?.SAGE_CLIENT_SECRET) {
+  try {
+    const client = createSageClient(env);
+
+    const settings = await client.getFinancialSettings() as any;
+    const yearEndStr: string = settings?.year_end_date ?? '';
+    const now = new Date();
+
+    let currentFyEnd = new Date(yearEndStr || `${now.getFullYear()}-12-31`);
+    while (currentFyEnd < now) currentFyEnd.setFullYear(currentFyEnd.getFullYear() + 1);
+    const currentFyEndYear = currentFyEnd.getFullYear();
+
+    const fyParam = parseInt(Astro.url.searchParams.get('fy') || '');
+    selectedFyEndYear = Number.isFinite(fyParam) && fyParam >= FIRST_FY_YEAR && fyParam <= currentFyEndYear
+      ? fyParam
+      : currentFyEndYear;
+    const isCurrentYear = selectedFyEndYear === currentFyEndYear;
+
+    const yearEndTemplate = new Date(yearEndStr || '2025-12-31');
+    let fyEndThis: Date;
+    let fyStartThis: Date;
+
+    if (yearEndStr) {
+      fyEndThis = new Date(yearEndStr);
+      fyEndThis.setFullYear(selectedFyEndYear);
+      fyStartThis = addYears(fyEndThis, -1);
+      fyStartThis.setDate(fyStartThis.getDate() + 1);
+      if (isCurrentYear) fyEndThis = now;
+    } else {
+      fyStartThis = new Date(`${selectedFyEndYear}-01-01`);
+      fyEndThis = isCurrentYear ? now : new Date(`${selectedFyEndYear}-12-31`);
+    }
+
+    // Opening balance = cumulative as at day before FY start
+    const fyOpenEnd = new Date(fyStartThis);
+    fyOpenEnd.setDate(fyOpenEnd.getDate() - 1);
+
+    fyOpenLabel  = shortDate(fyOpenEnd);
+    fyCloseLabel = shortDate(fyEndThis);
+    fyThisLabel  = `${shortDate(fyStartThis)} – ${shortDate(fyEndThis)}`;
+
+    // Build year selector options
+    for (let y = currentFyEndYear; y >= FIRST_FY_YEAR; y--) {
+      const endD = new Date(yearEndTemplate);
+      endD.setFullYear(y);
+      const startD = addYears(endD, -1);
+      startD.setDate(startD.getDate() + 1);
+      const isThisYear = y === currentFyEndYear;
+      const crossYear = startD.getFullYear() !== endD.getFullYear();
+      const label = crossYear
+        ? `${startD.getFullYear()}/${String(y).slice(2)}`
+        : String(y);
+      fyYearOptions.push({ value: y, label: isThisYear ? `${label} (current)` : label });
+    }
+
+    // Three parallel TB fetches
+    const [tbOpenRaw, tbCloseRaw, tbPeriodRaw] = await Promise.all([
+      client.getTrialBalance('2000-01-01', isoDate(fyOpenEnd))  as Promise<any>,
+      client.getTrialBalance('2000-01-01', isoDate(fyEndThis))  as Promise<any>,
+      client.getTrialBalance(isoDate(fyStartThis), isoDate(fyEndThis)) as Promise<any>,
+    ]);
+
+    loadAccounts(tbOpenRaw?.ledger_accounts   ?? [], openMap);
+    loadAccounts(tbCloseRaw?.ledger_accounts  ?? [], closeMap);
+    loadAccounts(tbPeriodRaw?.ledger_accounts ?? [], periodMap);
+
+  } catch (e: any) {
+    error = e.message?.includes('NO_SAGE_CONNECTION') ? 'Not connected to Sage.' : e.message;
+  }
+}
+
+// ── Build display rows ──────────────────────────────────────────────────
+
+// All account IDs that appear in any TB, grouped by section
+const bySection = new Map<string, string[]>(); // section → [id]
+for (const [id, meta] of metaMap) {
+  const { section } = meta;
+  // Only include if there's something non-zero in at least one TB
+  const o = openMap.get(id);
+  const c = closeMap.get(id);
+  const p = periodMap.get(id);
+  const hasValue = [o, c, p].some(x => x && (Math.abs(x.dr) > 0.005 || Math.abs(x.cr) > 0.005));
+  if (!hasValue) continue;
+  if (!bySection.has(section)) bySection.set(section, []);
+  bySection.get(section)!.push(id);
+}
+
+// Sort sections
+const sortedSections = [...bySection.entries()].sort(([a], [b]) => {
+  const ai = SECTION_ORDER.indexOf(a);
+  const bi = SECTION_ORDER.indexOf(b);
+  if (ai === -1 && bi === -1) return a.localeCompare(b);
+  if (ai === -1) return 1;
+  if (bi === -1) return -1;
+  return ai - bi;
+});
+
+// Sort accounts within section by nominal code
+function getCode(id: string): number {
+  const m = metaMap.get(id)?.name?.match(/\((\d+)\)\s*$/);
+  return m ? parseInt(m[1]) : 9999;
+}
+for (const [, ids] of sortedSections) ids.sort((a, b) => getCode(a) - getCode(b));
+
+// Closing BS balance sanity check
+let closeBSDr = 0, closeBSCr = 0;
+for (const [id, meta] of metaMap) {
+  if (!BALANCE_SHEET.has(meta.section)) continue;
+  const c = closeMap.get(id);
+  if (!c) continue;
+  closeBSDr += c.dr;
+  closeBSCr += c.cr;
+}
+const bsImbalance = Math.abs(closeBSDr - closeBSCr);
+const bsBalanced = bsImbalance < 0.005;
+
+function fmtNet(n: number): string {
+  if (Math.abs(n) < 0.005) return '';
+  return Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtTotal(n: number): string {
+  return Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function isNeg(n: number) { return n < -0.005; }
 ---
 
 <AdminLayout title="Trial Balance">
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">Sage Trial Balance</span>
-    </div>
-    <p class="text-muted" style="margin-bottom: 1rem; font-size: 0.875rem;">
-      The trial balance is the only financial report available via the Sage API.
-      We'll reconstruct P&L and balance sheet views from this data.
-    </p>
-    <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: end;">
-      <div>
-        <label style="font-size: 0.75rem; color: var(--text-light);">From date</label>
-        <input type="date" id="from-date" class="form-input">
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  {!error && (
+    <>
+      <div class="tb-header">
+        <div>
+          <h2 class="tb-title">Trial Balance</h2>
+          {fyThisLabel && <p class="tb-period">Period: {fyThisLabel}</p>}
+        </div>
+        <div class="tb-controls">
+          <label for="fy-select" class="tb-year-label">Financial Year</label>
+          <select id="fy-select" class="tb-select" onchange="location.href='?fy='+this.value">
+            {fyYearOptions.map(opt => (
+              <option value={opt.value} selected={opt.value === selectedFyEndYear}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
-      <div>
-        <label style="font-size: 0.75rem; color: var(--text-light);">To date</label>
-        <input type="date" id="to-date" class="form-input">
-      </div>
-      <button class="btn btn-primary" onclick="fetchTrialBalance()">Fetch Trial Balance</button>
-    </div>
-  </div>
 
-  <div id="loading" style="display: none; text-align: center; padding: 2rem;">
-    <span class="loading" style="width: 40px; height: 40px; border-width: 3px;"></span>
-  </div>
+      {!bsBalanced && (
+        <div class="alert alert-warning" style="margin-bottom:1rem;">
+          Balance sheet is out by £{fmtTotal(bsImbalance)} — check for transactions predating 2000 or unreconciled items in Sage.
+        </div>
+      )}
 
-  <div id="summary" style="display: none;" class="stats-grid"></div>
+      {metaMap.size === 0 && (
+        <p class="text-muted">No account data returned from Sage for this period.</p>
+      )}
 
-  <div id="pnl-section" style="display: none;">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Profit & Loss (derived)</span>
-      </div>
-      <table id="pnl-table">
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Account</th>
-            <th>Type</th>
-            <th class="text-right">Debit</th>
-            <th class="text-right">Credit</th>
-            <th class="text-right">Net</th>
-          </tr>
-        </thead>
-        <tbody id="pnl-body"></tbody>
-        <tfoot id="pnl-foot"></tfoot>
-      </table>
-    </div>
-  </div>
+      {metaMap.size > 0 && (
+        <div class="card" style="padding:0; overflow:hidden;">
+          <div class="table-scroll">
+            <table class="tb-table">
+              <thead>
+                <tr>
+                  <th class="col-name">Account</th>
+                  <th class="text-right col-val" title={`As at ${fyOpenLabel}`}>Opening<br/><span class="col-sub">{fyOpenLabel}</span></th>
+                  <th class="text-right col-val">Period Movement</th>
+                  <th class="text-right col-val" title={`As at ${fyCloseLabel}`}>Closing<br/><span class="col-sub">{fyCloseLabel}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedSections.map(([section, ids]) => {
+                  const isBS = BALANCE_SHEET.has(section);
 
-  <div id="bs-section" style="display: none;">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Balance Sheet (derived)</span>
-      </div>
-      <table id="bs-table">
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Account</th>
-            <th>Type</th>
-            <th class="text-right">Debit</th>
-            <th class="text-right">Credit</th>
-            <th class="text-right">Net</th>
-          </tr>
-        </thead>
-        <tbody id="bs-body"></tbody>
-        <tfoot id="bs-foot"></tfoot>
-      </table>
-    </div>
-  </div>
+                  let secOpenTotal = 0, secMoveTotal = 0, secCloseTotal = 0;
+                  for (const id of ids) {
+                    const meta = metaMap.get(id)!;
+                    const o = openMap.get(id)  ?? { dr: 0, cr: 0 };
+                    const c = closeMap.get(id) ?? { dr: 0, cr: 0 };
+                    const p = periodMap.get(id) ?? { dr: 0, cr: 0 };
+                    if (isBS) {
+                      secOpenTotal  += netBal(o.dr, o.cr, meta.section);
+                      secCloseTotal += netBal(c.dr, c.cr, meta.section);
+                      secMoveTotal  += netBal(c.dr, c.cr, meta.section) - netBal(o.dr, o.cr, meta.section);
+                    } else {
+                      secMoveTotal += netBal(p.dr, p.cr, meta.section);
+                    }
+                  }
 
-  <div id="raw-section" style="display: none;" class="card">
-    <div class="card-header">
-      <span class="card-title">Raw Response</span>
-      <button class="btn btn-sm btn-secondary" onclick="toggleRaw()">Show/Hide</button>
-    </div>
-    <pre id="raw-json" style="display: none;"></pre>
-  </div>
+                  return (
+                    <>
+                      <tr class={`tb-section-header ${isBS ? 'tb-section-bs' : 'tb-section-pl'}`}>
+                        <td colspan="4">{isBS ? 'Balance Sheet' : 'Income & Expenditure'} — {section}</td>
+                      </tr>
 
-  <div id="error-container" style="display: none;"></div>
+                      {ids.map(id => {
+                        const meta = metaMap.get(id)!;
+                        const o = openMap.get(id)  ?? { dr: 0, cr: 0 };
+                        const c = closeMap.get(id) ?? { dr: 0, cr: 0 };
+                        const p = periodMap.get(id) ?? { dr: 0, cr: 0 };
+                        const openNet  = netBal(o.dr, o.cr, meta.section);
+                        const closeNet = netBal(c.dr, c.cr, meta.section);
+                        const moveNet  = isBS
+                          ? closeNet - openNet
+                          : netBal(p.dr, p.cr, meta.section);
+                        return (
+                          <tr class="tb-row">
+                            <td class="tb-account-name">{meta.name}</td>
+                            {isBS
+                              ? <>
+                                  <td class={`text-right mono col-val ${isNeg(openNet) ? 'val-neg' : ''}`}>{fmtNet(openNet)}</td>
+                                  <td class={`text-right mono col-val ${isNeg(moveNet) ? 'val-neg' : ''}`}>{fmtNet(moveNet)}</td>
+                                  <td class={`text-right mono col-val ${isNeg(closeNet) ? 'val-neg' : ''}`}>{fmtNet(closeNet)}</td>
+                                </>
+                              : <>
+                                  <td class="text-right mono col-val val-dash">—</td>
+                                  <td class={`text-right mono col-val ${isNeg(moveNet) ? 'val-neg' : ''}`}>{fmtNet(moveNet)}</td>
+                                  <td class="text-right mono col-val val-dash">—</td>
+                                </>
+                            }
+                          </tr>
+                        );
+                      })}
+
+                      <tr class="tb-subtotal">
+                        <td>Subtotal — {section}</td>
+                        {isBS
+                          ? <>
+                              <td class={`text-right mono col-val ${isNeg(secOpenTotal) ? 'val-neg' : ''}`}>{fmtTotal(secOpenTotal)}</td>
+                              <td class={`text-right mono col-val ${isNeg(secMoveTotal) ? 'val-neg' : ''}`}>{fmtTotal(secMoveTotal)}</td>
+                              <td class={`text-right mono col-val ${isNeg(secCloseTotal) ? 'val-neg' : ''}`}>{fmtTotal(secCloseTotal)}</td>
+                            </>
+                          : <>
+                              <td class="text-right mono col-val val-dash">—</td>
+                              <td class={`text-right mono col-val ${isNeg(secMoveTotal) ? 'val-neg' : ''}`}>{fmtTotal(secMoveTotal)}</td>
+                              <td class="text-right mono col-val val-dash">—</td>
+                            </>
+                        }
+                      </tr>
+                    </>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                {(() => {
+                  let grandOpen = 0, grandMove = 0, grandClose = 0;
+                  for (const [section, ids] of sortedSections) {
+                    const isBS = BALANCE_SHEET.has(section);
+                    for (const id of ids) {
+                      const meta = metaMap.get(id)!;
+                      const o = openMap.get(id)  ?? { dr: 0, cr: 0 };
+                      const c = closeMap.get(id) ?? { dr: 0, cr: 0 };
+                      const p = periodMap.get(id) ?? { dr: 0, cr: 0 };
+                      if (isBS) {
+                        grandOpen  += netBal(o.dr, o.cr, meta.section);
+                        grandClose += netBal(c.dr, c.cr, meta.section);
+                        grandMove  += netBal(c.dr, c.cr, meta.section) - netBal(o.dr, o.cr, meta.section);
+                      } else {
+                        grandMove += netBal(p.dr, p.cr, meta.section);
+                      }
+                    }
+                  }
+                  return (
+                    <tr class={`tb-grand-total ${bsBalanced ? 'tb-balanced' : 'tb-unbalanced'}`}>
+                      <td>
+                        Grand Total
+                        {bsBalanced
+                          ? <span class="tb-balanced-badge">BS Balanced</span>
+                          : <span class="tb-unbalanced-badge">Out by £{fmtTotal(bsImbalance)}</span>
+                        }
+                      </td>
+                      <td class={`text-right mono col-val ${isNeg(grandOpen) ? 'val-neg' : ''}`}>{fmtTotal(grandOpen)}</td>
+                      <td class={`text-right mono col-val ${isNeg(grandMove) ? 'val-neg' : ''}`}>{fmtTotal(grandMove)}</td>
+                      <td class={`text-right mono col-val ${isNeg(grandClose) ? 'val-neg' : ''}`}>{fmtTotal(grandClose)}</td>
+                    </tr>
+                  );
+                })()}
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  )}
 
   <style>
-    .form-input {
-      padding: 0.5rem 0.625rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 0.875rem;
-      font-family: inherit;
-      background: var(--white);
+    .tb-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
     }
-    .form-input:focus {
-      outline: none;
-      border-color: var(--primary);
+    .tb-title  { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.2rem; }
+    .tb-period { font-size: 0.8rem; color: var(--text-light); margin: 0; }
+    .tb-controls { display: flex; align-items: center; gap: 0.5rem; }
+    .tb-year-label { font-size: 0.8rem; color: var(--text-light); white-space: nowrap; }
+    .tb-select {
+      font-size: 0.875rem; padding: 0.4rem 0.75rem;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      background: #fff; color: var(--text); cursor: pointer;
     }
-    .section-total td {
-      font-weight: 700;
-      border-top: 2px solid var(--text);
+    .tb-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    .tb-table { width: 100%; border-collapse: collapse; }
+    .tb-table th, .tb-table td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .tb-table th {
       background: var(--secondary);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-align: right;
+      line-height: 1.3;
+      vertical-align: bottom;
     }
+    .tb-table th.col-name { text-align: left; }
+    .col-sub { font-weight: 400; color: var(--text-light); font-size: 0.7rem; }
+
+    .col-name { min-width: 14rem; }
+    .col-val  { width: 8rem; white-space: nowrap; }
+
+    .tb-section-header td {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 0.5rem 0.75rem 0.3rem;
+      border-bottom: none;
+      border-top: 2px solid var(--border);
+    }
+    .tb-section-bs td { background: #f0f4f1; color: #1e5631; }
+    .tb-section-pl td { background: #f3f4f8; color: #2c3e7a; }
+
+    .tb-row:hover { background: #fafafa; }
+    .tb-account-name { color: var(--text); }
+
+    .val-neg  { color: var(--danger); }
+    .val-dash { color: #ccc; }
+
+    .tb-subtotal td {
+      font-weight: 600;
+      font-size: 0.8rem;
+      color: var(--text-light);
+      background: #fafafa;
+      border-top: 1px solid var(--border);
+      border-bottom: 2px solid var(--border);
+      padding: 0.45rem 0.75rem;
+    }
+
+    .tb-grand-total td {
+      font-weight: 700;
+      font-size: 0.875rem;
+      padding: 0.75rem;
+      border-top: 3px double var(--border);
+    }
+    .tb-balanced td   { background: #f0f9f2; }
+    .tb-unbalanced td { background: #fff5f5; }
+
+    .tb-balanced-badge {
+      display: inline-block; margin-left: 0.5rem;
+      padding: 0.15rem 0.5rem; background: #d4edda; color: #155724;
+      border-radius: 4px; font-size: 0.7rem; font-weight: 600;
+    }
+    .tb-unbalanced-badge {
+      display: inline-block; margin-left: 0.5rem;
+      padding: 0.15rem 0.5rem; background: #f8d7da; color: #721c24;
+      border-radius: 4px; font-size: 0.7rem; font-weight: 600;
+    }
+
+    .text-muted { color: var(--text-light); font-size: 0.875rem; }
+    .mono { font-family: 'SFMono-Regular', Consolas, monospace; }
+    .text-right { text-align: right; }
   </style>
 
-  <script is:inline>
-    // Default to current financial year (April - March for UK)
-    const now = new Date();
-    const fyStart = now.getMonth() >= 3
-      ? new Date(now.getFullYear(), 3, 1)
-      : new Date(now.getFullYear() - 1, 3, 1);
-    document.getElementById('from-date').value = fyStart.toISOString().split('T')[0];
-    document.getElementById('to-date').value = now.toISOString().split('T')[0];
-
-    // P&L account types (revenue & expenses)
-    const pnlTypes = ['SALES', 'OTHER_INCOME', 'DIRECT_COSTS', 'OVERHEADS', 'DEPRECIATION'];
-    // Balance sheet types
-    const bsTypes = ['CURRENT_ASSETS', 'FIXED_ASSETS', 'CURRENT_LIABILITY', 'LONG_TERM_LIABILITY', 'EQUITY'];
-
-    function fmt(n) {
-      if (n == null || isNaN(n)) return '-';
-      return n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
-    async function fetchTrialBalance() {
-      const fromDate = document.getElementById('from-date').value;
-      const toDate = document.getElementById('to-date').value;
-
-      if (!fromDate || !toDate) {
-        alert('Please select both dates');
-        return;
-      }
-
-      document.getElementById('loading').style.display = 'block';
-      ['summary', 'pnl-section', 'bs-section', 'raw-section', 'error-container'].forEach(id => {
-        document.getElementById(id).style.display = 'none';
-      });
-
-      try {
-        const res = await fetch(`/api/sage/explore?endpoint=/trial_balance&from_date=${fromDate}&to_date=${toDate}`);
-        const data = await res.json();
-        document.getElementById('loading').style.display = 'none';
-
-        if (data.error) {
-          document.getElementById('error-container').innerHTML = `<div class="alert alert-error">${data.error}</div>`;
-          document.getElementById('error-container').style.display = 'block';
-          return;
-        }
-
-        // Store raw
-        document.getElementById('raw-json').textContent = JSON.stringify(data, null, 2);
-        document.getElementById('raw-section').style.display = 'block';
-
-        const items = data.$items || [];
-
-        // Split into P&L and BS
-        const pnlItems = items.filter(i => pnlTypes.includes(i.ledger_account?.ledger_account_type?.id));
-        const bsItems = items.filter(i => bsTypes.includes(i.ledger_account?.ledger_account_type?.id));
-
-        // Render P&L
-        renderTable('pnl-body', 'pnl-foot', pnlItems, 'Profit / (Loss)');
-        document.getElementById('pnl-section').style.display = 'block';
-
-        // Render BS
-        renderTable('bs-body', 'bs-foot', bsItems, 'Net Assets');
-        document.getElementById('bs-section').style.display = 'block';
-
-        // Summary stats
-        const totalIncome = pnlItems
-          .filter(i => ['SALES', 'OTHER_INCOME'].includes(i.ledger_account?.ledger_account_type?.id))
-          .reduce((sum, i) => sum + (parseFloat(i.credit) || 0) - (parseFloat(i.debit) || 0), 0);
-        const totalExpenses = pnlItems
-          .filter(i => ['DIRECT_COSTS', 'OVERHEADS', 'DEPRECIATION'].includes(i.ledger_account?.ledger_account_type?.id))
-          .reduce((sum, i) => sum + (parseFloat(i.debit) || 0) - (parseFloat(i.credit) || 0), 0);
-        const netProfit = totalIncome - totalExpenses;
-
-        document.getElementById('summary').innerHTML = `
-          <div class="stat-card">
-            <div class="stat-value" style="color: var(--success);">${fmt(totalIncome)}</div>
-            <div class="stat-label">Total Income</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" style="color: var(--danger);">${fmt(totalExpenses)}</div>
-            <div class="stat-label">Total Expenses</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" style="color: ${netProfit >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(netProfit)}</div>
-            <div class="stat-label">Net Profit / (Loss)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">${items.length}</div>
-            <div class="stat-label">Accounts with activity</div>
-          </div>
-        `;
-        document.getElementById('summary').style.display = 'grid';
-
-      } catch (e) {
-        document.getElementById('loading').style.display = 'none';
-        document.getElementById('error-container').innerHTML = `<div class="alert alert-error">Failed: ${e.message}</div>`;
-        document.getElementById('error-container').style.display = 'block';
-      }
-    }
-
-    function renderTable(bodyId, footId, items, totalLabel) {
-      const body = document.getElementById(bodyId);
-      const foot = document.getElementById(footId);
-      body.innerHTML = '';
-      foot.innerHTML = '';
-
-      let totalDebit = 0;
-      let totalCredit = 0;
-
-      // Group by account type
-      let currentType = '';
-      items.sort((a, b) => {
-        const aType = a.ledger_account?.ledger_account_type?.id || '';
-        const bType = b.ledger_account?.ledger_account_type?.id || '';
-        if (aType !== bType) return aType.localeCompare(bType);
-        return (a.ledger_account?.nominal_code || 0) - (b.ledger_account?.nominal_code || 0);
-      });
-
-      items.forEach(item => {
-        const type = item.ledger_account?.ledger_account_type?.id || 'Other';
-        if (type !== currentType) {
-          currentType = type;
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td colspan="6" style="font-weight: 700; background: #e8edf1; padding: 0.5rem 0.75rem;">${type.replace(/_/g, ' ')}</td>`;
-          body.appendChild(tr);
-        }
-
-        const debit = parseFloat(item.debit) || 0;
-        const credit = parseFloat(item.credit) || 0;
-        const net = debit - credit;
-        totalDebit += debit;
-        totalCredit += credit;
-
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="mono">${item.ledger_account?.nominal_code || '-'}</td>
-          <td>${item.ledger_account?.displayed_as || '-'}</td>
-          <td class="text-muted" style="font-size: 0.75rem;">${type}</td>
-          <td class="text-right mono">${debit ? fmt(debit) : '-'}</td>
-          <td class="text-right mono">${credit ? fmt(credit) : '-'}</td>
-          <td class="text-right mono" style="font-weight: 600;">${fmt(net)}</td>
-        `;
-        body.appendChild(tr);
-      });
-
-      foot.innerHTML = `
-        <tr class="section-total">
-          <td colspan="3">${totalLabel}</td>
-          <td class="text-right mono">${fmt(totalDebit)}</td>
-          <td class="text-right mono">${fmt(totalCredit)}</td>
-          <td class="text-right mono">${fmt(totalDebit - totalCredit)}</td>
-        </tr>
-      `;
-    }
-
-    function toggleRaw() {
-      const el = document.getElementById('raw-json');
-      el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    }
-  </script>
 </AdminLayout>

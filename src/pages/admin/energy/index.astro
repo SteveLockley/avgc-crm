@@ -1,0 +1,265 @@
+---
+import EnergyLayout from '../../../layouts/EnergyLayout.astro';
+import DashboardCharts from '../../../components/energy/DashboardCharts';
+
+const db = Astro.locals.runtime.env.DB;
+
+const fmtDate = (iso: string | null | undefined) => {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
+}
+
+const smartSummary = (await db.prepare(`
+  SELECT mpan, COUNT(DISTINCT reading_date) AS days,
+    ROUND(SUM(kwh), 1) AS total_kwh,
+    MIN(reading_date) AS from_date, MAX(reading_date) AS to_date
+  FROM energy_smart_readings GROUP BY mpan
+`).all()).results as any[];
+
+const billsSummary = (await db.prepare(`
+  SELECT b.mpan, m.name,
+    ROUND(SUM(b.advance_units_kwh), 1) AS total_kwh,
+    ROUND(SUM(b.invoice_amount), 2) AS total_cost,
+    COUNT(DISTINCT b.invoice_number) AS invoices,
+    ROUND(SUM(JULIANDAY(b.closing_read_date) - JULIANDAY(b.opening_read_date))) AS total_days,
+    MIN(b.opening_read_date) AS from_dt,
+    MAX(b.closing_read_date) AS to_dt
+  FROM energy_bill_lines b LEFT JOIN energy_meters m ON m.mpan = b.mpan
+  GROUP BY b.mpan ORDER BY m.name
+`).all()).results as any[];
+
+const monthlyBills = (await db.prepare(`
+  SELECT strftime('%Y-%m', invoice_date) AS month, mpan,
+    ROUND(SUM(advance_units_kwh), 1) AS kwh,
+    ROUND(SUM(invoice_amount), 2) AS cost
+  FROM energy_bill_lines GROUP BY month, mpan ORDER BY month
+`).all()).results as any[];
+
+const meterRows = (await db.prepare('SELECT mpan, name FROM energy_meters').all()).results as any[];
+const nameMap = Object.fromEntries(meterRows.map((m: any) => [m.mpan, m.name]));
+
+const totalKwh = billsSummary.reduce((s: number, m: any) => s + (m.total_kwh ?? 0), 0);
+const totalCost = billsSummary.reduce((s: number, m: any) => s + (m.total_cost ?? 0), 0);
+const noData = smartSummary.length === 0 && billsSummary.length === 0;
+---
+
+<EnergyLayout title="Dashboard" tab="dashboard">
+
+  {noData ? (
+    <div class="empty-state-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+      <h3>No energy data yet</h3>
+      <p>Upload your CSV files to start tracking consumption patterns.</p>
+      <a href="/admin/energy/upload" class="action-btn primary" style="display:inline-flex;">Upload CSV files</a>
+    </div>
+  ) : (
+    <>
+      <!-- Summary stat cards -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{totalKwh.toLocaleString()}</span>
+            <span class="stat-label">Total kWh (billed)</span>
+          </div>
+        </div>
+        <div class="stat-card stat-success">
+          <div class="stat-icon">
+            <span style="font-size:1.75rem;font-weight:700;color:#fff;line-height:1;">£</span>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">£{totalCost.toFixed(0)}</span>
+            <span class="stat-label">Total cost (billed)</span>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{billsSummary.length}</span>
+            <span class="stat-label">Meters (billed)</span>
+          </div>
+        </div>
+        {smartSummary.length > 0 && (
+          <div class="stat-card stat-warning">
+            <div class="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value">{smartSummary[0].total_kwh?.toLocaleString()}</span>
+              <span class="stat-label">Smart meter kWh · {smartSummary[0].days} days</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <!-- Per-meter bills breakdown -->
+      {billsSummary.length > 0 && (
+        <div class="m3-card" style="margin-bottom:1.5rem;">
+          <div class="card-header">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <span>Bills by meter</span>
+            </div>
+          </div>
+          <div class="card-content" style="padding:0;overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;white-space:nowrap;">
+              <thead>
+                <tr>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:left;background:#fafafa;">Meter</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:left;background:#fafafa;">Period</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">Days</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">kWh</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">Avg kWh/day</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">Cost</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">Avg £/day</th>
+                  <th style="padding:.75rem 1rem;font-size:.75rem;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid #e8e8e8;text-align:right;background:#fafafa;">Invoices</th>
+                </tr>
+              </thead>
+              <tbody>
+                {billsSummary.map((m: any) => (
+                  <tr>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;font-weight:500;">{m.name ?? m.mpan}</td>
+                    <td style="padding:.75rem 1rem;font-size:.8125rem;color:#888;border-bottom:1px solid #f0f0f0;">{fmtDate(m.from_dt)} → {fmtDate(m.to_dt)}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;">{m.total_days}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;">{m.total_kwh?.toLocaleString()}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;">{m.total_days > 0 ? (m.total_kwh / m.total_days).toFixed(1) : '—'}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;">£{m.total_cost?.toFixed(2)}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;">{m.total_days > 0 ? `£${(m.total_cost / m.total_days).toFixed(2)}` : '—'}</td>
+                    <td style="padding:.75rem 1rem;font-size:.875rem;color:#333;border-bottom:1px solid #f0f0f0;text-align:right;">{m.invoices}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3" style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;font-weight:700;font-size:.875rem;">All meters</td>
+                  <td style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;text-align:right;font-weight:700;font-size:.875rem;">{totalKwh.toLocaleString()}</td>
+                  <td style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;text-align:right;color:#888;">—</td>
+                  <td style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;text-align:right;font-weight:700;font-size:.875rem;">£{totalCost.toFixed(2)}</td>
+                  <td style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;text-align:right;color:#888;">—</td>
+                  <td style="padding:.875rem 1rem;background:#f8f9fa;border-top:2px solid #e8e8e8;text-align:right;font-weight:700;font-size:.875rem;">{billsSummary.reduce((s: number, m: any) => s + m.invoices, 0)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <!-- Monthly chart -->
+      {monthlyBills.length > 0 && (
+        <div class="m3-card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <span>Monthly consumption</span>
+            </div>
+            <a href="/admin/energy/smart-meter" class="card-action">Smart meter →</a>
+          </div>
+          <div class="card-content" style="min-width:0;overflow:hidden;">
+            <DashboardCharts client:only="react" data={monthlyBills as any} nameMap={nameMap} />
+          </div>
+        </div>
+      )}
+    </>
+  )}
+</EnergyLayout>
+
+<style>
+  .page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+  }
+  .header-content h1 { margin: 0; font-size: 1.75rem; font-weight: 600; color: #1a1a1a; }
+  .subtitle { margin: 0.25rem 0 0; color: #666; font-size: 0.95rem; }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .stat-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #e8e8e8;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .stat-icon {
+    width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0;
+    background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stat-icon svg { width: 24px; height: 24px; color: #fff; }
+  .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+  .stat-warning .stat-icon { background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); }
+  .stat-info    .stat-icon { background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%); }
+  .stat-content { display: flex; flex-direction: column; min-width: 0; }
+  .stat-value { font-size: 1.75rem; font-weight: 700; color: #1a1a1a; line-height: 1; }
+  .stat-label { font-size: 0.85rem; color: #666; margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .m3-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #e8e8e8;
+    overflow: hidden;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fafafa;
+  }
+  .card-title { display: flex; align-items: center; gap: 0.625rem; font-weight: 600; color: #1a1a1a; font-size: 1rem; }
+  .card-title svg { width: 20px; height: 20px; color: #1e5631; }
+  .card-action { font-size: 0.85rem; color: #1e5631; text-decoration: none; font-weight: 500; }
+  .card-action:hover { text-decoration: underline; }
+  .card-content { padding: 1.25rem; }
+
+  .m3-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .m3-table th { text-align: left; padding: 0.75rem; font-weight: 600; font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #e8e8e8; }
+  .m3-table td { padding: 0.75rem; font-size: 0.9rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+  .m3-table tbody tr:last-child td { border-bottom: none; }
+  .m3-table tfoot td { padding: 0.875rem 0.75rem; background: #f8f9fa; border-top: 2px solid #e8e8e8; }
+  .text-right { text-align: right; }
+
+  .action-btn {
+    display: flex; align-items: center; gap: 0.625rem;
+    padding: 0.625rem 1.125rem;
+    border-radius: 10px; font-size: 0.9rem; font-weight: 500;
+    text-decoration: none; transition: all 0.2s ease; white-space: nowrap;
+  }
+  .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .action-btn.primary { background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); color: #fff; }
+  .action-btn.primary:hover { background: linear-gradient(135deg, #164024 0%, #246339 100%); }
+
+  .empty-state-card {
+    background: #fff; border-radius: 16px; border: 1px solid #e8e8e8;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    display: flex; flex-direction: column; align-items: center;
+    text-align: center; padding: 4rem 2rem; gap: 0.75rem;
+  }
+  .empty-state-card svg { width: 48px; height: 48px; color: #ccc; }
+  .empty-state-card h3 { font-size: 1.125rem; font-weight: 600; color: #333; margin: 0; }
+  .empty-state-card p { color: #666; font-size: 0.9rem; margin: 0; }
+
+  @media (max-width: 900px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) {
+    .stats-row { grid-template-columns: 1fr; }
+    .page-header { flex-direction: column; }
+  }
+</style>

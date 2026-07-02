@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
+import react from '@astrojs/react';
 
 export default defineConfig({
   output: 'server',
@@ -8,5 +9,16 @@ export default defineConfig({
       enabled: true
     }
   }),
-  site: 'https://www.alnmouthvillage.golf'
+  integrations: [react()],
+  site: 'https://www.alnmouthvillage.golf',
+  vite: {
+    ssr: {
+      noExternal: ['react-dom'],
+    },
+    resolve: {
+      alias: {
+        'react-dom/server': 'react-dom/server.edge',
+      }
+    }
+  }
 });

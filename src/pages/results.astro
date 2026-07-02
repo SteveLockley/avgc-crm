@@ -10,7 +10,20 @@ import {
 } from '../lib/masterscoreboard';
 
 const env = (Astro.locals as any).runtime?.env;
+const db = env?.DB;
 const msbConfigured = isMsbConfigured(env);
+
+let resultPdfs: { id: number; title: string; url: string; uploaded_at: string }[] = [];
+try {
+  if (db) {
+    const result = await db.prepare(
+      `SELECT id, title, url, uploaded_at FROM result_pdfs ORDER BY uploaded_at DESC LIMIT 4`
+    ).all();
+    resultPdfs = (result.results || []) as typeof resultPdfs;
+  }
+} catch (e) {
+  // table may not exist yet before migration runs
+}
 
 let recentResults: any[] = [];
 let meritList: any[] = [];
@@ -67,15 +80,47 @@ if (msbConfigured) {
 
       <!-- Main tab bar -->
       <div class="tabs-nav" role="tablist">
-        <button class="tab-btn active" role="tab" data-tab="recent" aria-selected="true">Recent Results</button>
+        {resultPdfs.length > 0 && (
+          <button class="tab-btn active" role="tab" data-tab="sheets" aria-selected="true">Result Sheets</button>
+        )}
+        <button class={`tab-btn${resultPdfs.length === 0 ? ' active' : ''}`} role="tab" data-tab="recent" aria-selected={resultPdfs.length === 0 ? 'true' : 'false'}>Recent Results</button>
         <button class="tab-btn" role="tab" data-tab="merit" aria-selected="false">Orders of Merit</button>
         <button class="tab-btn" role="tab" data-tab="eclectics" aria-selected="false">Eclectics</button>
         <button class="tab-btn" role="tab" data-tab="matchplay" aria-selected="false">Match Play</button>
         <button class="tab-btn" role="tab" data-tab="bestof" aria-selected="false">Best of Series</button>
       </div>
 
+      <!-- Result Sheets (PDF links) -->
+      {resultPdfs.length > 0 && (
+        <div class="tab-panel active" id="tab-sheets" role="tabpanel">
+          <div class="pdf-results-list">
+            {resultPdfs.map(pdf => (
+              <a href={pdf.url} target="_blank" rel="noopener noreferrer" class="pdf-result-card">
+                <div class="pdf-result-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                </div>
+                <div class="pdf-result-info">
+                  <span class="pdf-result-title">{pdf.title}</span>
+                  <span class="pdf-result-date">
+                    {new Date(pdf.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </span>
+                </div>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="flex-shrink:0;color:#888;">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/>
+                  <line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       <!-- Recent Results -->
-      <div class="tab-panel active" id="tab-recent" role="tabpanel">
+      <div class={`tab-panel${resultPdfs.length === 0 ? ' active' : ''}`} id="tab-recent" role="tabpanel">
         {recentResults.length > 0 ? (
           <div class="comp-list">
             {recentResults.map((comp: any) => {
@@ -770,6 +815,55 @@ if (msbConfigured) {
       padding: 2rem;
       color: var(--text-light, #666);
       font-size: 0.9rem;
+    }
+
+    /* PDF result cards */
+    .pdf-results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.625rem;
+    }
+
+    .pdf-result-card {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: var(--white, #fff);
+      border: 1px solid var(--border, #e0e0e0);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s;
+    }
+
+    .pdf-result-card:hover {
+      border-color: var(--primary, #1e5631);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .pdf-result-icon {
+      color: var(--primary, #1e5631);
+      flex-shrink: 0;
+    }
+
+    .pdf-result-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .pdf-result-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text, #1a1a1a);
+    }
+
+    .pdf-result-date {
+      font-size: 0.8rem;
+      color: var(--text-light, #666);
     }
 
     /* External link */

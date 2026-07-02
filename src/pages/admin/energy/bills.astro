@@ -1,0 +1,360 @@
+---
+import EnergyLayout from '../../../layouts/EnergyLayout.astro';
+import BillsCharts from '../../../components/energy/BillsCharts';
+
+const db = Astro.locals.runtime.env.DB;
+
+const fmtDate = (iso: string | null | undefined) => {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-')
+  return `${d}/${m}/${y}`
+}
+
+// Date range from URL params — default to full available range
+const params = Astro.url.searchParams;
+const rangeRow = await db.prepare(`
+  SELECT MIN(opening_read_date) AS min_date, MAX(closing_read_date) AS max_date
+  FROM energy_bill_lines
+`).first() as any;
+const absMin = rangeRow?.min_date ?? '';
+const absMax = rangeRow?.max_date ?? '';
+
+const fromDate = params.get('from') || absMin;
+const toDate   = params.get('to')   || absMax;
+
+const WHERE = fromDate && toDate
+  ? `WHERE b.opening_read_date >= '${fromDate}' AND b.closing_read_date <= '${toDate}'`
+  : '';
+
+// Per-meter summary including days
+const meterSummary = (await db.prepare(`
+  SELECT b.mpan, m.name,
+    ROUND(SUM(b.advance_units_kwh), 1) AS total_kwh,
+    ROUND(SUM(b.invoice_amount), 2)    AS total_cost,
+    COUNT(DISTINCT b.invoice_number)   AS invoices,
+    ROUND(SUM(JULIANDAY(b.closing_read_date) - JULIANDAY(b.opening_read_date))) AS total_days,
+    MIN(b.opening_read_date)  AS from_dt,
+    MAX(b.closing_read_date)  AS to_dt
+  FROM energy_bill_lines b LEFT JOIN energy_meters m ON m.mpan = b.mpan
+  ${WHERE}
+  GROUP BY b.mpan ORDER BY m.name
+`).all()).results as any[];
+
+// Invoice lines grouped
+const lines = (await db.prepare(`
+  SELECT b.*, m.name AS meter_name
+  FROM energy_bill_lines b LEFT JOIN energy_meters m ON m.mpan = b.mpan
+  ${WHERE}
+  ORDER BY m.name, b.opening_read_date ASC
+`).all()).results as any[];
+
+// Monthly chart data
+const monthly = (await db.prepare(`
+  SELECT strftime('%Y-%m', b.invoice_date) AS month, b.mpan,
+    ROUND(SUM(b.advance_units_kwh), 1) AS kwh,
+    ROUND(SUM(b.invoice_amount), 2)    AS cost
+  FROM energy_bill_lines b
+  ${WHERE}
+  GROUP BY month, b.mpan ORDER BY month
+`).all()).results as any[];
+
+const meterRows = (await db.prepare('SELECT mpan, name FROM energy_meters').all()).results as any[];
+const nameMap = Object.fromEntries(meterRows.map((m: any) => [m.mpan, m.name]));
+
+// Group lines by meter
+const byMeter: Record<string, { name: string; mpan: string; rows: any[] }> = {};
+for (const l of lines) {
+  if (!byMeter[l.mpan]) byMeter[l.mpan] = { name: l.meter_name ?? l.mpan, mpan: l.mpan, rows: [] };
+  byMeter[l.mpan].rows.push(l);
+}
+const meterGroups = Object.values(byMeter);
+
+// Grand totals
+const grandKwh   = meterSummary.reduce((s: number, m: any) => s + (m.total_kwh  ?? 0), 0);
+const grandCost  = meterSummary.reduce((s: number, m: any) => s + (m.total_cost ?? 0), 0);
+const grandInv   = meterSummary.reduce((s: number, m: any) => s + (m.invoices   ?? 0), 0);
+const isFiltered = fromDate !== absMin || toDate !== absMax;
+---
+
+<EnergyLayout title="Bills" tab="bills">
+
+  <!-- Date range filter -->
+  <div class="m3-card filter-card">
+    <form method="get" class="filter-form">
+      <div class="filter-field">
+        <label for="from">From</label>
+        <input type="date" id="from" name="from" value={fromDate} min={absMin} max={absMax} class="date-input" />
+      </div>
+      <div class="filter-field">
+        <label for="to">To</label>
+        <input type="date" id="to" name="to" value={toDate} min={absMin} max={absMax} class="date-input" />
+      </div>
+      <button type="submit" class="action-btn primary">Apply</button>
+      {isFiltered && (
+        <a href="/admin/energy/bills" class="action-btn secondary">Clear</a>
+      )}
+      <span class="filter-range-hint">Available: {absMin} → {absMax}</span>
+    </form>
+  </div>
+
+  {lines.length === 0 ? (
+    <div class="empty-state-card">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <h3>No data for this period</h3>
+      <p>Try a different date range, or <a href="/admin/energy/upload">upload more bill data</a>.</p>
+    </div>
+  ) : (
+    <>
+      <!-- Grand totals row -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{grandKwh.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span class="stat-label">Total kWh (all meters)</span>
+          </div>
+        </div>
+        <div class="stat-card stat-success">
+          <div class="stat-icon">
+            <span style="font-size:1.75rem;font-weight:700;color:#fff;line-height:1;">£</span>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">£{grandCost.toFixed(0)}</span>
+            <span class="stat-label">Total cost (all meters)</span>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="stat-content">
+            <span class="stat-value">{grandInv}</span>
+            <span class="stat-label">Invoices</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-meter summary table -->
+      <div class="m3-card" style="margin-bottom:1.5rem;">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            <span>Summary by meter</span>
+          </div>
+        </div>
+        <div class="card-content" style="padding:0;">
+          <div style="overflow-x:auto;">
+          <table class="m3-table">
+            <thead>
+              <tr>
+                <th>Meter</th>
+                <th>Period</th>
+                <th class="text-right">Days</th>
+                <th class="text-right">kWh</th>
+                <th class="text-right">Avg kWh/day</th>
+                <th class="text-right">Cost</th>
+                <th class="text-right">Avg £/day</th>
+                <th class="text-right">Invoices</th>
+              </tr>
+            </thead>
+            <tbody>
+              {meterSummary.map((m: any) => (
+                <tr>
+                  <td style="font-weight:500;" title={m.mpan}>{m.name ?? m.mpan}</td>
+                  <td style="font-size:0.8125rem;color:#888;white-space:nowrap;">{fmtDate(m.from_dt)} → {fmtDate(m.to_dt)}</td>
+                  <td class="text-right">{m.total_days}</td>
+                  <td class="text-right" style="font-weight:600;">{m.total_kwh?.toLocaleString()}</td>
+                  <td class="text-right">{m.total_days > 0 ? (m.total_kwh / m.total_days).toFixed(1) : '—'}</td>
+                  <td class="text-right" style="font-weight:600;">£{m.total_cost?.toFixed(2)}</td>
+                  <td class="text-right">{m.total_days > 0 ? `£${(m.total_cost / m.total_days).toFixed(2)}` : '—'}</td>
+                  <td class="text-right">{m.invoices}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" style="font-weight:700;">All meters</td>
+                <td class="text-right" style="font-weight:700;">{grandKwh.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+                <td class="text-right" style="color:#888;">—</td>
+                <td class="text-right" style="font-weight:700;">£{grandCost.toFixed(2)}</td>
+                <td class="text-right" style="color:#888;">—</td>
+                <td class="text-right" style="font-weight:700;">{grandInv}</td>
+              </tr>
+            </tfoot>
+          </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monthly chart -->
+      {monthly.length > 0 && (
+        <div class="m3-card" style="margin-bottom:1.5rem;">
+          <div class="card-header">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <span>Monthly consumption by meter</span>
+            </div>
+          </div>
+          <div class="card-content" style="min-width:0;overflow:hidden;">
+            <BillsCharts client:only="react" data={monthly as any} nameMap={nameMap} />
+          </div>
+        </div>
+      )}
+
+      <!-- Invoice lines grouped by meter -->
+      {meterGroups.map(group => {
+        const meta = meterSummary.find((m: any) => m.mpan === group.mpan) as any;
+        const days = meta?.total_days ?? 0;
+        const kwh  = meta?.total_kwh  ?? 0;
+        const cost = meta?.total_cost ?? 0;
+        return (
+          <div class="m3-card" style="margin-bottom:1.5rem;">
+            <div class="card-header">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <span title={group.mpan}>{group.name}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                <span class="card-badge">{kwh.toLocaleString(undefined,{maximumFractionDigits:0})} kWh</span>
+                <span class="card-badge">£{cost.toFixed(2)}</span>
+                {days > 0 && <span class="card-badge">{(kwh/days).toFixed(1)} kWh/day</span>}
+                <span style="font-size:0.75rem;color:#bbb;font-family:monospace;">{group.mpan}</span>
+              </div>
+            </div>
+            <div class="card-content" style="padding:0;">
+              <div style="overflow-x:auto;">
+                <table class="m3-table">
+                  <thead>
+                    <tr>
+                      <th>Invoice</th>
+                      <th>Period</th>
+                      <th class="text-right">Days</th>
+                      <th>Reg</th>
+                      <th class="text-right">Open</th>
+                      <th class="text-right">Close</th>
+                      <th class="text-right">kWh</th>
+                      <th class="text-right">kWh/day</th>
+                      <th class="text-right">Net £</th>
+                      <th class="text-right">Total £</th>
+                      <th class="text-right">VAT</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map((l: any) => {
+                      const lineDays = l.opening_read_date && l.closing_read_date
+                        ? Math.round((new Date(l.closing_read_date).getTime() - new Date(l.opening_read_date).getTime()) / 86400000)
+                        : null;
+                      const avgDay = lineDays && lineDays > 0 ? (l.advance_units_kwh / lineDays).toFixed(1) : '—';
+                      return (
+                        <tr>
+                          <td style="font-family:monospace;font-size:0.8rem;color:#888;">{l.invoice_number}</td>
+                          <td style="white-space:nowrap;font-size:0.8125rem;">{fmtDate(l.opening_read_date)} → {fmtDate(l.closing_read_date)}</td>
+                          <td class="text-right" style="color:#888;">{lineDays ?? '—'}</td>
+                          <td style="color:#888;">{l.register_id}</td>
+                          <td class="text-right">{l.opening_read?.toLocaleString()}</td>
+                          <td class="text-right">{l.closing_read?.toLocaleString()}</td>
+                          <td class="text-right" style="font-weight:600;">{l.advance_units_kwh?.toLocaleString()}</td>
+                          <td class="text-right" style="color:#888;">{avgDay}</td>
+                          <td class="text-right">£{l.net_amount?.toFixed(2)}</td>
+                          <td class="text-right" style="font-weight:600;">£{l.invoice_amount?.toFixed(2)}</td>
+                          <td class="text-right" style="color:#888;">{l.vat_rate}%</td>
+                          <td>
+                            <span class={`status-chip ${l.status === 'Cleared' ? 'success' : 'warning'}`}>{l.status}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colspan="2" style="font-weight:700;">Total</td>
+                      <td class="text-right" style="font-weight:700;">{days}</td>
+                      <td></td>
+                      <td colspan="2"></td>
+                      <td class="text-right" style="font-weight:700;">{kwh.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+                      <td class="text-right" style="font-weight:700;">{days > 0 ? (kwh/days).toFixed(1) : '—'}</td>
+                      <td></td>
+                      <td class="text-right" style="font-weight:700;">£{cost.toFixed(2)}</td>
+                      <td colspan="2"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )}
+
+
+<style>
+  .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .header-content h1 { margin: 0; font-size: 1.75rem; font-weight: 600; color: #1a1a1a; }
+  .subtitle { margin: 0.25rem 0 0; color: #666; font-size: 0.95rem; }
+
+  /* Filter bar */
+  .filter-card { margin-bottom: 1.5rem; }
+  .filter-form { display: flex; align-items: flex-end; gap: 1rem; padding: 1rem 1.25rem; flex-wrap: wrap; }
+  .filter-field { display: flex; flex-direction: column; gap: 4px; }
+  .filter-field label { font-size: 0.75rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.4px; }
+  .date-input { border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.875rem; font-family: inherit; background: #fff; color: #333; cursor: pointer; }
+  .date-input:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .filter-range-hint { font-size: 0.8125rem; color: #999; align-self: center; }
+
+  /* Stats */
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  .stat-card { background: #fff; border-radius: 16px; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8; min-width: 0; overflow: hidden; }
+  .stat-icon { width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0; background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); display: flex; align-items: center; justify-content: center; }
+  .stat-icon svg { width: 24px; height: 24px; color: #fff; }
+  .stat-success .stat-icon { background: linear-gradient(135deg, #28a745 0%, #34ce57 100%); }
+  .stat-info    .stat-icon { background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%); }
+  .stat-content { display: flex; flex-direction: column; min-width: 0; }
+  .stat-value { font-size: 1.75rem; font-weight: 700; color: #1a1a1a; line-height: 1; }
+  .stat-label { font-size: 0.85rem; color: #666; margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Cards */
+  .m3-card { background: #fff; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e8e8e8; overflow: hidden; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa; gap: 0.75rem; flex-wrap: wrap; }
+  .card-title { display: flex; align-items: center; gap: 0.625rem; font-weight: 600; color: #1a1a1a; font-size: 1rem; }
+  .card-title svg { width: 20px; height: 20px; color: #1e5631; flex-shrink: 0; }
+  .card-badge { font-size: 0.75rem; padding: 0.25rem 0.625rem; background: #e8f5e9; color: #1e5631; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+  .card-content { padding: 1.25rem; }
+
+  /* Table */
+  .m3-table { width: 100%; border-collapse: collapse; }
+  .m3-table th { text-align: left; padding: 0.75rem 1rem; font-weight: 600; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 2px solid #e8e8e8; white-space: nowrap; background: #fafafa; }
+  .m3-table td { padding: 0.75rem 1rem; font-size: 0.875rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+  .m3-table tbody tr:last-child td { border-bottom: none; }
+  .m3-table tfoot td { padding: 0.875rem 1rem; background: #f8f9fa; border-top: 2px solid #e8e8e8; font-size: 0.875rem; }
+  .text-right { text-align: right !important; }
+
+  .status-chip { display: inline-block; font-size: 0.75rem; font-weight: 500; padding: 0.2rem 0.625rem; border-radius: 100px; white-space: nowrap; }
+  .status-chip.success { background: #dcfce7; color: #166534; }
+  .status-chip.warning { background: #fef3c7; color: #92400e; }
+
+  .action-btn { display: flex; align-items: center; gap: 0.625rem; padding: 0.625rem 1.125rem; border-radius: 10px; font-size: 0.9rem; font-weight: 500; text-decoration: none; transition: all 0.2s ease; white-space: nowrap; cursor: pointer; border: none; font-family: inherit; }
+  .action-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .action-btn.primary { background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%); color: #fff; }
+  .action-btn.primary:hover { background: linear-gradient(135deg, #164024 0%, #246339 100%); }
+  .action-btn.secondary { background: #f0f0f0; color: #333; }
+  .action-btn.secondary:hover { background: #e4e4e4; }
+
+  .empty-state-card { background: #fff; border-radius: 16px; border: 1px solid #e8e8e8; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4rem 2rem; gap: 0.75rem; }
+  .empty-state-card svg { width: 48px; height: 48px; color: #ccc; }
+  .empty-state-card h3 { font-size: 1.125rem; font-weight: 600; color: #333; margin: 0; }
+  .empty-state-card p { color: #666; font-size: 0.9rem; margin: 0; }
+
+  @media (max-width: 700px) {
+    .stats-row { grid-template-columns: 1fr 1fr; }
+    .page-header { flex-direction: column; }
+    .filter-form { flex-direction: column; align-items: stretch; }
+    .filter-range-hint { display: none; }
+  }
+  @media (max-width: 480px) { .stats-row { grid-template-columns: 1fr; } }
+</style>
+
+</EnergyLayout>

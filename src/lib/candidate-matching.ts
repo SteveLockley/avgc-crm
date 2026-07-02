@@ -378,7 +378,25 @@ export function mapToCrmItems(
       continue;
     }
 
-    // 4. Unknown — skip non-membership items (food, drink, green fees etc.)
+    // 4. Check if amount = subscription + EGU only (out-of-county home member)
+    const subEguAmount = Math.round((unitAmount - EGU_FEE) * 100) / 100;
+    const subEguMatch = paymentItems.find(p => p.fee === subEguAmount && p.category === 'Subscription');
+    if (subEguMatch) {
+      result.push({ name: subEguMatch.name, qty: absQty, amount: subEguMatch.fee });
+      result.push({ name: 'England Golf', qty: absQty, amount: EGU_FEE });
+      continue;
+    }
+
+    // 5. Description-based fallback for membership-type items not matched by amount
+    //    Catches "Partial Membership" pro-rata payments, non-standard product names, etc.
+    //    These appear in candidates for manual processing rather than being silently skipped.
+    const descLower = item.description.toLowerCase();
+    if (descLower.includes('membership') || descLower.includes('subscription')) {
+      result.push({ name: item.description, qty: absQty, amount: unitAmount });
+      continue;
+    }
+
+    // 6. Unknown — skip non-membership items (food, drink, green fees etc.)
   }
 
   // Merge items with same name

@@ -1,0 +1,100 @@
+---
+import AdminLayout from './AdminLayout.astro';
+
+interface Props {
+  title: string;
+  tab: 'dashboard' | 'tractor-shed' | 'bills' | 'meters';
+}
+
+const { title, tab } = Astro.props;
+
+const tabs = [
+  { id: 'dashboard',     label: 'Dashboard',    href: '/admin/energy' },
+  { id: 'tractor-shed',  label: 'Smart Metering', href: '/admin/energy/smart-meter' },
+  { id: 'bills',         label: 'Bills',         href: '/admin/energy/bills' },
+  { id: 'meters',        label: 'Meters',        href: '/admin/energy/meters' },
+];
+---
+
+<AdminLayout title={`Energy · ${title}`}>
+  <div class="energy-header">
+    <div>
+      <h1 class="energy-title">Energy Monitoring</h1>
+      <p class="energy-sub">Electricity consumption across all meters</p>
+    </div>
+    <a href="/admin/energy/upload" class="upload-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+      Upload CSV
+    </a>
+  </div>
+
+  <div class="tab-bar">
+    {tabs.map(t => (
+      <a href={t.href} class={`tab-btn${tab === t.id ? ' active' : ''}`}>{t.label}</a>
+    ))}
+  </div>
+
+  <div class="tab-content">
+    <slot />
+  </div>
+</AdminLayout>
+
+<style>
+  .energy-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .energy-title { margin: 0; font-size: 1.75rem; font-weight: 600; color: #1a1a1a; }
+  .energy-sub   { margin: 0.25rem 0 0; color: #666; font-size: 0.95rem; }
+
+  .upload-btn {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 1rem; border-radius: 10px;
+    background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+    color: #fff; font-size: 0.875rem; font-weight: 500;
+    text-decoration: none; white-space: nowrap;
+    transition: background 0.2s;
+  }
+  .upload-btn:hover { background: linear-gradient(135deg, #164024 0%, #246339 100%); }
+
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    width: fit-content;
+  }
+
+  .tab-btn {
+    padding: 0.5rem 1.25rem;
+    border-radius: 9px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #666;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .tab-btn:hover { color: #1a1a1a; background: #f4f4f4; }
+  .tab-btn.active {
+    background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(30,86,49,0.3);
+  }
+
+  .tab-content { /* content flows naturally */ }
+
+  @media (max-width: 600px) {
+    .energy-header { flex-direction: column; }
+    .tab-bar { width: 100%; }
+    .tab-btn { flex: 1; text-align: center; padding: 0.5rem 0.5rem; font-size: 0.8125rem; }
+  }
+</style>

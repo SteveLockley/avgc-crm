@@ -168,6 +168,7 @@ export class SageClient {
   private db: any;
   private clientId: string;
   private clientSecret: string;
+  private tokenPromise: Promise<string> | null = null;
 
   constructor(opts: SageClientOptions) {
     this.db = opts.db;
@@ -175,8 +176,29 @@ export class SageClient {
     this.clientSecret = opts.clientSecret;
   }
 
-  private async getToken(): Promise<string> {
-    return getValidToken(this.db, this.clientId, this.clientSecret);
+  private getToken(): Promise<string> {
+    // Cache the promise so parallel calls share one refresh instead of racing
+    if (!this.tokenPromise) {
+      this.tokenPromise = getValidToken(this.db, this.clientId, this.clientSecret);
+    }
+    return this.tokenPromise;
+  }
+
+  async post<T = any>(path: string, body: unknown): Promise<T> {
+    const token = await this.getToken();
+    const res = await fetch(`${SAGE_API_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Sage POST ${path} failed (${res.status}): ${text}`);
+    }
+    return res.json() as Promise<T>;
   }
 
   async get<T = any>(path: string, params?: Record<string, string>): Promise<T> {
@@ -201,7 +223,7 @@ export class SageClient {
     return res.json() as Promise<T>;
   }
 
-  /** Fetch all pages of a paginated endpoint */
+  /** Fetch all pages of a paginated endpoint sequentially */
   async getAll<T = any>(path: string, params?: Record<string, string>): Promise<T[]> {
     const allItems: T[] = [];
     let page = 1;
@@ -224,6 +246,39 @@ export class SageClient {
     }
 
     return allItems;
+  }
+
+  /** Fetch all pages in parallel batches — much faster for large datasets */
+  async getAllParallel<T = any>(path: string, params?: Record<string, string>, batchSize = 10): Promise<T[]> {
+    const perPage = 200;
+    const first = await this.get<SagePaginatedResponse<T>>(path, {
+      ...params,
+      page: '1',
+      items_per_page: String(perPage),
+    });
+
+    const total = first.$total ?? 0;
+    const totalPages = Math.ceil(total / perPage);
+    const items: T[] = [...(first.$items ?? [])];
+
+    if (totalPages <= 1) return items;
+
+    const remaining: number[] = [];
+    for (let p = 2; p <= totalPages; p++) remaining.push(p);
+
+    for (let i = 0; i < remaining.length; i += batchSize) {
+      const batch = remaining.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(p => this.get<SagePaginatedResponse<T>>(path, {
+          ...params,
+          page: String(p),
+          items_per_page: String(perPage),
+        }))
+      );
+      for (const r of results) items.push(...(r.$items ?? []));
+    }
+
+    return items;
   }
 
   // ─── Convenience Methods ─────────────────────────────────────────
@@ -298,6 +353,32 @@ export class SageClient {
 
   async getServices() {
     return this.getAll('/services');
+  }
+
+  async createJournal(journal: {
+    date: string;
+    reference: string;
+    description?: string;
+    journalLines: Array<{
+      ledgerAccountId: string;
+      debit: number;
+      credit: number;
+      details?: string;
+    }>;
+  }): Promise<any> {
+    return this.post('/journals', {
+      journal: {
+        date: journal.date,
+        reference: journal.reference,
+        description: journal.description,
+        journal_lines: journal.journalLines.map(l => ({
+          ledger_account: { id: l.ledgerAccountId },
+          debit: l.debit.toFixed(2),
+          credit: l.credit.toFixed(2),
+          details: l.details ?? '',
+        })),
+      },
+    });
   }
 }
 

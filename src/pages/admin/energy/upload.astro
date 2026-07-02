@@ -1,0 +1,300 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+---
+
+<AdminLayout title="Upload Energy CSV">
+  <div class="page-header">
+    <div class="header-content">
+      <h1>Upload Energy CSV</h1>
+      <p class="subtitle">Import smart meter readings or invoice data</p>
+    </div>
+  </div>
+
+  <div class="upload-layout">
+    <div class="m3-card">
+      <div class="card-header">
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+          <span>File type</span>
+        </div>
+      </div>
+      <div class="card-content">
+        <div class="type-options">
+          <label class="type-option selected" id="opt-smart">
+            <input type="radio" name="type" value="smart-meter" checked />
+            <div class="type-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="type-text">
+              <strong>Smart Meter</strong>
+              <span>UsageReport_kWh.csv</span>
+            </div>
+          </label>
+          <label class="type-option" id="opt-bills">
+            <input type="radio" name="type" value="bills" />
+            <div class="type-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+            </div>
+            <div class="type-text">
+              <strong>Bills</strong>
+              <span>invoice-export.csv</span>
+            </div>
+          </label>
+          <label class="type-option" id="opt-logger">
+            <input type="radio" name="type" value="kitchen-logger" />
+            <div class="type-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+            </div>
+            <div class="type-text">
+              <strong>Kitchen Logger</strong>
+              <span>Kitchen-Month-YYYY.csv</span>
+            </div>
+          </label>
+        </div>
+
+        <div id="meterNameRow" style="display:none;">
+          <label class="form-label" for="meterNameInput">Meter name</label>
+          <input id="meterNameInput" type="text" class="form-input" value="kitchen" placeholder="e.g. kitchen" />
+        </div>
+
+        <label for="fileInput" id="dropzone" class="dropzone">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          <div class="dropzone-text">
+            <strong>Tap to choose a CSV file</strong>
+            <span>or drag and drop here</span>
+          </div>
+          <span id="fileName" class="file-chip" style="display:none;"></span>
+          <input id="fileInput" type="file" accept=".csv" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);" />
+        </label>
+
+        <button id="uploadBtn" disabled class="upload-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Upload
+        </button>
+
+        <div id="status" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div class="help-card">
+      <div class="m3-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>File guide</span>
+          </div>
+        </div>
+        <div class="card-content">
+          <div class="help-item">
+            <strong>Smart Meter</strong>
+            <p>Half-hourly kWh readings exported from your smart meter portal. Each row = one day, with 48 columns for each 30-minute slot.</p>
+          </div>
+          <div class="help-divider"></div>
+          <div class="help-item">
+            <strong>Bills</strong>
+            <p>Invoice export from your energy supplier. Contains meter reads, kWh totals, and cost per invoice period.</p>
+          </div>
+          <div class="help-divider"></div>
+          <div class="help-item">
+            <strong>Kitchen Logger</strong>
+            <p>Hourly CSV export from the kitchen sub-meter logger. One row per hour with a main circuit total and per sub-circuit breakdown. Only circuits with data are imported. Circuit labels can be renamed on the Meters page.</p>
+          </div>
+          <div class="help-divider"></div>
+          <p class="help-note">Re-uploading the same file is safe — duplicate rows are skipped automatically.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</AdminLayout>
+
+<style>
+  .page-header { margin-bottom: 2rem; }
+  .header-content h1 { margin: 0; font-size: 1.75rem; font-weight: 600; color: #1a1a1a; }
+  .subtitle { margin: 0.25rem 0 0; color: #666; font-size: 0.95rem; }
+
+  .upload-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  .m3-card {
+    background: #fff; border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #e8e8e8; overflow: hidden;
+  }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 1rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa;
+  }
+  .card-title { display: flex; align-items: center; gap: 0.625rem; font-weight: 600; color: #1a1a1a; font-size: 1rem; }
+  .card-title svg { width: 20px; height: 20px; color: #1e5631; }
+  .card-content { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+
+  /* Type selector */
+  .type-options { display: flex; flex-direction: column; gap: 0.625rem; }
+  .type-option {
+    display: flex; align-items: center; gap: 0.875rem;
+    padding: 0.875rem 1rem; border-radius: 12px;
+    border: 2px solid #e8e8e8; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .type-option input { display: none; }
+  .type-option.selected { border-color: #1e5631; background: #f0faf3; }
+  .type-icon {
+    width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
+    background: #f0f0f0; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .type-icon svg { width: 20px; height: 20px; color: #666; }
+  .type-option.selected .type-icon { background: #1e5631; }
+  .type-option.selected .type-icon svg { color: #fff; }
+  .type-text { display: flex; flex-direction: column; gap: 2px; }
+  .type-text strong { font-size: 0.9375rem; color: #1a1a1a; }
+  .type-text span { font-size: 0.8125rem; color: #888; }
+
+  /* Dropzone */
+  .dropzone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.75rem; padding: 2.5rem 1.5rem;
+    border: 2px dashed #d0d0d0; border-radius: 12px;
+    cursor: pointer; text-align: center;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  .dropzone svg { color: #aaa; }
+  .dropzone:hover { border-color: #1e5631; background: #f9fdf9; }
+  .dropzone.drag-over { border-color: #1e5631; background: #f0faf3; }
+  .dropzone-text { display: flex; flex-direction: column; gap: 4px; }
+  .dropzone-text strong { font-size: 0.9375rem; color: #333; }
+  .dropzone-text span { font-size: 0.8125rem; color: #888; }
+  .file-chip {
+    font-size: 0.8125rem; font-weight: 500; color: #1e5631;
+    background: #e8f5e9; padding: 0.25rem 0.875rem;
+    border-radius: 100px; border: 1px solid #c8e6c9;
+  }
+
+  /* Upload button */
+  .upload-btn {
+    display: flex; align-items: center; justify-content: center; gap: 0.625rem;
+    width: 100%; padding: 0.875rem 1.5rem;
+    border: none; border-radius: 12px; cursor: pointer;
+    font-size: 0.9375rem; font-weight: 600;
+    background: linear-gradient(135deg, #1e5631 0%, #2d7a45 100%);
+    color: #fff; transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(30, 86, 49, 0.3);
+  }
+  .upload-btn svg { width: 18px; height: 18px; }
+  .upload-btn:hover:not(:disabled) { background: linear-gradient(135deg, #164024 0%, #246339 100%); box-shadow: 0 4px 12px rgba(30, 86, 49, 0.4); }
+  .upload-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+
+  /* Status */
+  .status-success { background: #f0faf3; border: 1px solid #c8e6c9; border-radius: 12px; padding: 1rem; color: #1e5631; }
+  .status-error   { background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 1rem; color: #991b1b; }
+  .status-loading { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 12px; padding: 1rem; color: #075985; }
+  .status-line { display: flex; gap: 0.625rem; align-items: baseline; font-size: 0.9rem; padding: 0.125rem 0; }
+
+  /* Meter name input */
+  .form-label { display: block; font-size: 0.8125rem; font-weight: 600; color: #555; margin-bottom: 0.375rem; }
+  .form-input { width: 100%; padding: 0.625rem 0.875rem; border: 1.5px solid #d8d8d8; border-radius: 10px; font-size: 0.9rem; color: #1a1a1a; background: #fff; box-sizing: border-box; transition: border-color 0.15s; }
+  .form-input:focus { outline: none; border-color: #1e5631; }
+
+  /* Help card */
+  .help-item { display: flex; flex-direction: column; gap: 0.375rem; }
+  .help-item strong { font-size: 0.9rem; color: #1a1a1a; }
+  .help-item p { font-size: 0.85rem; color: #666; line-height: 1.5; margin: 0; }
+  .help-divider { height: 1px; background: #f0f0f0; margin: 0.25rem 0; }
+  .help-note { font-size: 0.8125rem; color: #888; line-height: 1.5; margin: 0; }
+
+  @media (max-width: 860px) {
+    .upload-layout { grid-template-columns: 1fr; }
+    .help-card { order: -1; }
+  }
+</style>
+
+<script>
+  const fileInput      = document.getElementById('fileInput') as HTMLInputElement;
+  const dropzone       = document.getElementById('dropzone')!;
+  const uploadBtn      = document.getElementById('uploadBtn') as HTMLButtonElement;
+  const status         = document.getElementById('status')!;
+  const fileName       = document.getElementById('fileName')!;
+  const optSmart       = document.getElementById('opt-smart')!;
+  const optBills       = document.getElementById('opt-bills')!;
+  const optLogger      = document.getElementById('opt-logger')!;
+  const meterNameRow   = document.getElementById('meterNameRow')!;
+  const meterNameInput = document.getElementById('meterNameInput') as HTMLInputElement;
+
+  let selectedFile: File | null = null;
+
+  document.querySelectorAll<HTMLInputElement>('input[name="type"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      optSmart.classList.toggle('selected', radio.value === 'smart-meter');
+      optBills.classList.toggle('selected', radio.value === 'bills');
+      optLogger.classList.toggle('selected', radio.value === 'kitchen-logger');
+      meterNameRow.style.display = radio.value === 'kitchen-logger' ? 'block' : 'none';
+    });
+  });
+
+  function setFile(file: File) {
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileName.style.display = 'inline-block';
+    uploadBtn.disabled = false;
+    status.style.display = 'none';
+  }
+
+  fileInput.addEventListener('change', () => { if (fileInput.files?.[0]) setFile(fileInput.files[0]); });
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    const file = e.dataTransfer?.files[0];
+    if (file) setFile(file);
+  });
+
+  uploadBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    const type = (document.querySelector<HTMLInputElement>('input[name="type"]:checked'))?.value ?? 'smart-meter';
+
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Uploading…';
+    status.className = 'status-loading';
+    status.style.display = 'block';
+    status.textContent = 'Importing data, please wait…';
+
+    try {
+      const form = new FormData();
+      form.append('file', selectedFile);
+      form.append('type', type);
+      if (type === 'kitchen-logger') form.append('meterName', meterNameInput.value.trim() || 'kitchen');
+      const res  = await fetch('/api/energy/upload', { method: 'POST', body: form });
+      const data = await res.json() as any;
+
+      if (data.error) {
+        status.className = 'status-error';
+        status.innerHTML = `<strong>Error:</strong> ${data.error}`;
+      } else {
+        status.className = 'status-success';
+        const lines = [
+          { label: 'Rows processed',    val: data.rows },
+          data.readings  != null        ? { label: 'Readings imported',   val: data.readings  } : null,
+          data.imported  != null        ? { label: 'Bill lines imported',  val: data.imported  } : null,
+          data.skipped   != null        ? { label: 'Skipped (duplicates)', val: data.skipped   } : null,
+          data.mpan                     ? { label: 'Meter MPAN',           val: data.mpan      } : null,
+          data.meterName                ? { label: 'Meter',                val: data.meterName } : null,
+          data.meters?.length           ? { label: 'Meters found',         val: data.meters.join(', ') } : null,
+          data.circuits?.length         ? { label: 'Circuits found',       val: data.circuits.join(', ') } : null,
+        ].filter(Boolean) as { label: string; val: any }[];
+        status.innerHTML = lines.map(l => `<div class="status-line"><span>✓</span><span><strong>${l.label}:</strong> ${l.val}</span></div>`).join('');
+      }
+    } catch (err) {
+      status.className = 'status-error';
+      status.innerHTML = `<strong>Network error:</strong> ${err}`;
+    }
+
+    uploadBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg> Upload`;
+    uploadBtn.disabled = false;
+  });
+</script>

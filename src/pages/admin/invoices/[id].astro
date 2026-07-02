@@ -1,50 +1,34 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { formatDate, formatCurrency, getFullName, getFullAddress, getInvoiceStatusBadge, formatInvoicePeriod, type Invoice, type InvoiceItem, type Member, type InvoiceSetting } from '../../../lib/db';
-import { generateInvoiceEmail, generateInvoiceSubject } from '../../../lib/email-template';
+import { formatDate, formatCurrency, getFullName, getFullAddress, formatInvoicePeriod, type Invoice, type InvoiceItem, type Member } from '../../../lib/db';
+import { generateInvoiceEmail } from '../../../lib/email-template';
+import { calculateLineItems, loadFeeItems } from '../../../lib/generate-invoice';
 
 const { id } = Astro.params;
 const db = Astro.locals.runtime.env.DB;
 const user = Astro.locals.user;
 
-// Get invoice
 const invoice = await db.prepare(
   `SELECT * FROM invoices WHERE id = ?`
 ).bind(id).first<Invoice>();
+if (!invoice) return Astro.redirect('/admin/invoices');
 
-if (!invoice) {
-  return Astro.redirect('/admin/invoices');
-}
-
-// Get member
 const member = await db.prepare(
   `SELECT * FROM members WHERE id = ?`
 ).bind(invoice.member_id).first<Member>();
+if (!member) return Astro.redirect('/admin/invoices');
 
-if (!member) {
-  return Astro.redirect('/admin/invoices');
-}
-
-// Get invoice items
-const itemsResult = await db.prepare(
-  `SELECT ii.*, pi.name as payment_item_name
-   FROM invoice_items ii
-   LEFT JOIN payment_items pi ON ii.payment_item_id = pi.id
-   WHERE ii.invoice_id = ?
-   ORDER BY ii.id`
-).bind(id).all();
-const items = (itemsResult.results || []) as (InvoiceItem & { payment_item_name?: string })[];
-
-// Get settings for email preview
-const settingsResult = await db.prepare(
-  `SELECT * FROM invoice_settings`
-).all();
+const settingsResult = await db.prepare(`SELECT * FROM invoice_settings`).all();
 const settings: Record<string, string> = {};
-settingsResult.results?.forEach((row: any) => {
-  settings[row.setting_key] = row.setting_value;
-});
+(settingsResult.results || []).forEach((row: any) => { settings[row.setting_key] = row.setting_value; });
 
-// Handle actions
+const paymentItemsResult = await db.prepare(
+  `SELECT id, name, fee, category FROM payment_items WHERE active = 1 ORDER BY category, name`
+).all();
+const allPaymentItems = (paymentItemsResult.results || []) as { id: number; name: string; fee: number; category: string }[];
+const feePaymentItems = allPaymentItems.filter(p => p.category === 'Fee');
+const subPaymentItems = allPaymentItems.filter(p => p.category === 'Subscription');
+
 let error = '';
 let success = '';
 
@@ -52,76 +36,178 @@ if (Astro.request.method === 'POST') {
   const formData = await Astro.request.formData();
   const action = formData.get('action');
 
-  if (action === 'mark_paid') {
-    const paymentMethod = formData.get('payment_method') as string || member.default_payment_method || 'BACS';
+  if (action === 'add_line_item') {
+    const paymentItemId = formData.get('payment_item_id');
+    const description = ((formData.get('description') as string) || '').trim();
+    const unitPrice = parseFloat(formData.get('unit_price') as string);
+    const quantity = parseInt(formData.get('quantity') as string) || 1;
 
+    if (!description || isNaN(unitPrice) || unitPrice < 0) {
+      error = 'Please provide a description and valid price';
+    } else {
+      const lineTotal = parseFloat((unitPrice * quantity).toFixed(2));
+      const pid = paymentItemId ? parseInt(paymentItemId as string) : null;
+
+      await db.prepare(
+        `INSERT INTO invoice_items (invoice_id, payment_item_id, description, quantity, unit_price, line_total)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(id, pid || null, description, quantity, unitPrice, lineTotal).run();
+
+      await db.prepare(
+        `UPDATE invoices SET subtotal = subtotal + ?, total = total + ?, updated_at = datetime('now') WHERE id = ?`
+      ).bind(lineTotal, lineTotal, id).run();
+
+      await db.prepare(
+        `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      ).bind(lineTotal, invoice.member_id).run();
+
+      success = `Added "${description}"`;
+      await db.prepare(
+        `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'add_line_item', 'invoice', ?, ?)`
+      ).bind(user?.email || 'system', id, JSON.stringify({ description, unitPrice, quantity })).run();
+    }
+
+  } else if (action === 'remove_line_item') {
+    const itemId = parseInt(formData.get('item_id') as string);
+    const item = await db.prepare(
+      `SELECT id, line_total FROM invoice_items WHERE id = ? AND invoice_id = ?`
+    ).bind(itemId, id).first<{ id: number; line_total: number }>();
+
+    if (!item) {
+      error = 'Line item not found';
+    } else {
+      await db.prepare(`DELETE FROM invoice_items WHERE id = ?`).bind(itemId).run();
+      await db.prepare(
+        `UPDATE invoices SET subtotal = subtotal - ?, total = total - ?, updated_at = datetime('now') WHERE id = ?`
+      ).bind(item.line_total, item.line_total, id).run();
+      await db.prepare(
+        `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
+      ).bind(item.line_total, invoice.member_id).run();
+      success = 'Line item removed';
+      await db.prepare(
+        `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'remove_line_item', 'invoice', ?, ?)`
+      ).bind(user?.email || 'system', id, JSON.stringify({ itemId })).run();
+    }
+
+  } else if (action === 'link_family_member') {
+    const familyMemberId = parseInt(formData.get('family_member_id') as string);
+    const famMember = await db.prepare(
+      `SELECT m.*,
+              COALESCE(p1.fee, p2.fee, 0) as subscription_fee,
+              COALESCE(p1.id, p2.id) as subscription_item_id
+       FROM members m
+       LEFT JOIN payment_items p1 ON p1.name = m.category AND p1.category = 'Subscription' AND p1.active = 1
+       LEFT JOIN payment_items p2 ON p2.category = 'Subscription' AND p2.active = 1
+         AND p2.name = TRIM(SUBSTR(m.category, 1, CASE WHEN INSTR(m.category, '(') > 0 THEN INSTR(m.category, '(') - 1 ELSE LENGTH(m.category) END))
+       WHERE m.id = ?`
+    ).bind(familyMemberId).first<any>();
+
+    if (!famMember) {
+      error = 'Member not found';
+    } else {
+      const feeItems = await loadFeeItems(db);
+      const isSocial = famMember.category === 'Social';
+      const lineItems = calculateLineItems(famMember, feeItems, isSocial);
+
+      await db.prepare(`UPDATE members SET family_payer_id = ? WHERE id = ?`).bind(invoice.member_id, familyMemberId).run();
+
+      let addedTotal = 0;
+      for (const item of lineItems) {
+        const desc = `${item.description} (${famMember.first_name} ${famMember.surname})`;
+        await db.prepare(
+          `INSERT INTO invoice_items (invoice_id, payment_item_id, description, quantity, unit_price, line_total, linked_member_id)
+           VALUES (?, ?, ?, 1, ?, ?, ?)`
+        ).bind(id, item.paymentItemId, desc, item.unitPrice, item.unitPrice, familyMemberId).run();
+        addedTotal += item.unitPrice;
+      }
+      addedTotal = parseFloat(addedTotal.toFixed(2));
+
+      await db.prepare(
+        `UPDATE invoices SET subtotal = subtotal + ?, total = total + ?, updated_at = datetime('now') WHERE id = ?`
+      ).bind(addedTotal, addedTotal, id).run();
+      await db.prepare(
+        `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+      ).bind(addedTotal, invoice.member_id).run();
+
+      const existingFamInvoice = await db.prepare(
+        `SELECT id, total FROM invoices WHERE member_id = ? AND period_start = ? AND period_end = ? AND status != 'cancelled' LIMIT 1`
+      ).bind(familyMemberId, invoice.period_start, invoice.period_end).first<{ id: number; total: number }>();
+      if (existingFamInvoice) {
+        await db.prepare(`UPDATE invoices SET status = 'cancelled' WHERE id = ?`).bind(existingFamInvoice.id).run();
+        await db.prepare(`UPDATE members SET account_balance = account_balance + ? WHERE id = ?`).bind(existingFamInvoice.total, familyMemberId).run();
+      }
+
+      success = `${famMember.first_name} ${famMember.surname} linked — ${lineItems.length} item(s) added`;
+      await db.prepare(
+        `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'link_family_member', 'invoice', ?, ?)`
+      ).bind(user?.email || 'system', id, JSON.stringify({ familyMemberId, name: `${famMember.first_name} ${famMember.surname}` })).run();
+    }
+
+  } else if (action === 'unlink_family_member') {
+    const familyMemberId = parseInt(formData.get('family_member_id') as string);
+    const famItems = await db.prepare(
+      `SELECT id, line_total FROM invoice_items WHERE invoice_id = ? AND linked_member_id = ?`
+    ).bind(id, familyMemberId).all();
+    const removedTotal = parseFloat(((famItems.results || []) as { line_total: number }[]).reduce((s, i) => s + i.line_total, 0).toFixed(2));
+
+    await db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ? AND linked_member_id = ?`).bind(id, familyMemberId).run();
+    await db.prepare(
+      `UPDATE invoices SET subtotal = subtotal - ?, total = total - ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(removedTotal, removedTotal, id).run();
+    await db.prepare(`UPDATE members SET account_balance = account_balance + ? WHERE id = ?`).bind(removedTotal, invoice.member_id).run();
+    await db.prepare(`UPDATE members SET family_payer_id = NULL WHERE id = ?`).bind(familyMemberId).run();
+
+    const famName = await db.prepare(`SELECT first_name, surname FROM members WHERE id = ?`).bind(familyMemberId).first<{ first_name: string; surname: string }>();
+    success = famName ? `${famName.first_name} ${famName.surname} unlinked` : 'Family member unlinked';
+    await db.prepare(
+      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'unlink_family_member', 'invoice', ?, ?)`
+    ).bind(user?.email || 'system', id, JSON.stringify({ familyMemberId })).run();
+
+  } else if (action === 'mark_paid') {
+    const paymentMethod = formData.get('payment_method') as string || member.default_payment_method || 'BACS';
     await db.prepare(
       `UPDATE invoices SET status = 'paid', updated_at = datetime('now') WHERE id = ?`
     ).bind(id).run();
-
-    // Payment clears debt: balance goes towards zero (positive direction)
     await db.prepare(
       `UPDATE members SET account_balance = account_balance + ?, date_subscription_paid = date('now'), date_renewed = date('now'), date_expires = ?, default_payment_method = ? WHERE id = ?`
     ).bind(invoice.total, invoice.period_end, paymentMethod, invoice.member_id).run();
 
-    // Create payment record
     const paymentResult = await db.prepare(
       `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
        VALUES (?, ?, ?, date('now'), ?, 'subscription', ?, 'Recorded when invoice marked as paid', ?)`
     ).bind(member.id, id, invoice.total, paymentMethod, invoice.invoice_number, user?.email || 'system').run();
 
-    // Create payment line items from invoice items
     const paymentId = paymentResult.meta?.last_row_id;
     if (paymentId) {
-      for (const item of items) {
+      const freshItems = await db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).bind(id).all();
+      for (const item of (freshItems.results || []) as InvoiceItem[]) {
         await db.prepare(
           `INSERT INTO payment_line_items (payment_id, invoice_item_id, payment_item_id, description, amount)
            VALUES (?, ?, ?, ?, ?)`
         ).bind(paymentId, item.id, item.payment_item_id, item.description, item.line_total).run();
       }
     }
-
-    success = `Invoice marked as paid via ${paymentMethod}, payment recorded, renewal date updated, and member balance adjusted`;
-
-    // Refresh invoice data
-    const refreshed = await db.prepare(
-      `SELECT * FROM invoices WHERE id = ?`
-    ).bind(id).first<Invoice>();
-    if (refreshed) Object.assign(invoice, refreshed);
+    success = `Invoice marked as paid via ${paymentMethod}`;
 
   } else if (action === 'cancel') {
-    // Check if this invoice has associated payments (e.g. DD auto-paid invoices)
     const existingPayment = await db.prepare(
       `SELECT id, amount, payment_method FROM payments WHERE invoice_id = ? LIMIT 1`
     ).bind(id).first();
 
-    await db.prepare(
-      `UPDATE invoices SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`
-    ).bind(id).run();
+    await db.prepare(`UPDATE invoices SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`).bind(id).run();
+    await db.prepare(`UPDATE members SET account_balance = account_balance + ? WHERE id = ?`).bind(invoice.total, invoice.member_id).run();
 
-    // Cancel removes the debt from the member's balance
-    await db.prepare(
-      `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
-    ).bind(invoice.total, invoice.member_id).run();
-
-    // If a payment was already recorded (e.g. DD), create a refund payment record
     if (existingPayment) {
       const refundResult = await db.prepare(
         `INSERT INTO payments (member_id, invoice_id, amount, payment_date, payment_method, payment_type, reference, notes, recorded_by)
          VALUES (?, ?, ?, date('now'), ?, 'subscription', ?, 'Refund — invoice cancelled', ?)`
-      ).bind(
-        invoice.member_id, id, -(existingPayment.amount as number),
-        existingPayment.payment_method, `REFUND ${invoice.invoice_number}`,
-        user?.email || 'system'
-      ).run();
+      ).bind(invoice.member_id, id, -(existingPayment.amount as number), existingPayment.payment_method, `REFUND ${invoice.invoice_number}`, user?.email || 'system').run();
 
-      // Create refund payment line items mirroring the original
       const refundPaymentId = refundResult.meta?.last_row_id;
       if (refundPaymentId) {
         const originalLines = await db.prepare(
           `SELECT invoice_item_id, payment_item_id, description, amount FROM payment_line_items WHERE payment_id = ?`
         ).bind(existingPayment.id).all();
-
         for (const line of (originalLines.results || []) as any[]) {
           await db.prepare(
             `INSERT INTO payment_line_items (payment_id, invoice_item_id, payment_item_id, description, amount)
@@ -129,105 +215,70 @@ if (Astro.request.method === 'POST') {
           ).bind(refundPaymentId, line.invoice_item_id, line.payment_item_id, `Refund: ${line.description}`, -line.amount).run();
         }
       }
-
       success = 'Invoice cancelled, payment refund recorded, and member balance adjusted';
     } else {
       success = 'Invoice cancelled and member balance adjusted';
     }
 
-    const refreshed = await db.prepare(
-      `SELECT * FROM invoices WHERE id = ?`
-    ).bind(id).first<Invoice>();
-    if (refreshed) Object.assign(invoice, refreshed);
-
-    // Refresh member data too
-    const refreshedMember = await db.prepare(
-      `SELECT * FROM members WHERE id = ?`
-    ).bind(invoice.member_id).first<Member>();
-    if (refreshedMember) Object.assign(member, refreshedMember);
-
   } else if (action === 'revert_draft') {
-    // Revert restores the debt on the member's balance
-    await db.prepare(
-      `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
-    ).bind(invoice.total, invoice.member_id).run();
-
-    await db.prepare(
-      `UPDATE invoices SET status = 'draft', updated_at = datetime('now') WHERE id = ?`
-    ).bind(id).run();
+    await db.prepare(`UPDATE members SET account_balance = account_balance - ? WHERE id = ?`).bind(invoice.total, invoice.member_id).run();
+    await db.prepare(`UPDATE invoices SET status = 'draft', updated_at = datetime('now') WHERE id = ?`).bind(id).run();
     success = 'Invoice reverted to unpaid and member balance adjusted';
 
-    const refreshed = await db.prepare(
-      `SELECT * FROM invoices WHERE id = ?`
-    ).bind(id).first<Invoice>();
-    if (refreshed) Object.assign(invoice, refreshed);
-
-    const refreshedMember = await db.prepare(
-      `SELECT * FROM members WHERE id = ?`
-    ).bind(invoice.member_id).first<Member>();
-    if (refreshedMember) Object.assign(member, refreshedMember);
-
   } else if (action === 'delete') {
-    // If deleting a non-cancelled invoice, remove the debt from the member's balance
-    if (invoice.status !== 'cancelled') {
-      await db.prepare(
-        `UPDATE members SET account_balance = account_balance + ? WHERE id = ?`
-      ).bind(invoice.total, invoice.member_id).run();
-    }
-
-    // Delete associated payment line items and payments
+    await db.prepare(`DELETE FROM payment_line_items WHERE payment_id IN (SELECT id FROM payments WHERE invoice_id = ?)`).bind(id).run();
+    await db.prepare(`DELETE FROM payments WHERE invoice_id = ?`).bind(id).run();
+    await db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`).bind(id).run();
+    await db.prepare(`DELETE FROM invoices WHERE id = ?`).bind(id).run();
+    await db.prepare(`UPDATE members SET date_renewed = NULL WHERE id = ?`).bind(invoice.member_id).run();
+    // Recalculate balance from remaining draft invoices — immune to all edge cases
+    // (manually marked paid, payment records deleted separately, etc.)
     await db.prepare(
-      `DELETE FROM payment_line_items WHERE payment_id IN (SELECT id FROM payments WHERE invoice_id = ?)`
-    ).bind(id).run();
+      `UPDATE members SET account_balance = -(
+         COALESCE((SELECT SUM(i.total) FROM invoices i WHERE i.member_id = ? AND i.status = 'draft'), 0)
+       ) WHERE id = ?`
+    ).bind(invoice.member_id, invoice.member_id).run();
     await db.prepare(
-      `DELETE FROM payments WHERE invoice_id = ?`
-    ).bind(id).run();
-
-    // Delete invoice items
-    await db.prepare(
-      `DELETE FROM invoice_items WHERE invoice_id = ?`
-    ).bind(id).run();
-
-    // Delete the invoice
-    await db.prepare(
-      `DELETE FROM invoices WHERE id = ?`
-    ).bind(id).run();
-
-    // Nullify the member's renewal date
-    await db.prepare(
-      `UPDATE members SET date_renewed = NULL WHERE id = ?`
-    ).bind(invoice.member_id).run();
-
-    // Log action
-    await db.prepare(
-      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
-       VALUES (?, 'delete_invoice', 'invoice', ?, ?)`
+      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, 'delete_invoice', 'invoice', ?, ?)`
     ).bind(user?.email || 'system', id, JSON.stringify({ invoice_number: invoice.invoice_number })).run();
-
-    // Redirect to invoices list
     return Astro.redirect('/admin/invoices?deleted=1');
   }
 
-  // Log action
-  await db.prepare(
-    `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details)
-     VALUES (?, ?, 'invoice', ?, ?)`
-  ).bind(user?.email || 'system', action, id, JSON.stringify({ invoice_number: invoice.invoice_number })).run();
+  if (action !== 'delete') {
+    await db.prepare(
+      `INSERT INTO audit_log (user_email, action, entity_type, entity_id, details) VALUES (?, ?, 'invoice', ?, ?)`
+    ).bind(user?.email || 'system', action, id, JSON.stringify({ invoice_number: invoice.invoice_number })).run();
+  }
+
+  // Refresh invoice and member after any mutation
+  const refreshedInvoice = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).bind(id).first<Invoice>();
+  if (refreshedInvoice) Object.assign(invoice, refreshedInvoice);
+  const refreshedMember = await db.prepare(`SELECT * FROM members WHERE id = ?`).bind(invoice.member_id).first<Member>();
+  if (refreshedMember) Object.assign(member, refreshedMember);
 }
 
-// Calculate period year
-const periodYear = parseInt(invoice.period_start.substring(0, 4));
+// Load items and linked family after any POST mutations
+const itemsResult = await db.prepare(
+  `SELECT ii.*, pi.name as payment_item_name
+   FROM invoice_items ii
+   LEFT JOIN payment_items pi ON ii.payment_item_id = pi.id
+   WHERE ii.invoice_id = ?
+   ORDER BY ii.id`
+).bind(id).all();
+const items = (itemsResult.results || []) as (InvoiceItem & { payment_item_name?: string; linked_member_id?: number })[];
 
-// Generate email preview
-const emailPreview = generateInvoiceEmail({
-  member,
-  invoice,
-  items,
-  settings,
-});
+const linkedFamilyResult = await db.prepare(
+  `SELECT DISTINCT m.id, m.first_name, m.surname, m.category
+   FROM invoice_items ii
+   JOIN members m ON ii.linked_member_id = m.id
+   WHERE ii.invoice_id = ?`
+).bind(id).all();
+const linkedFamily = (linkedFamilyResult.results || []) as { id: number; first_name: string; surname: string; category: string }[];
 
+const emailPreview = generateInvoiceEmail({ member, invoice, items, settings });
 const statusLabel = invoice.status === 'draft' ? 'UNPAID' : invoice.status.toUpperCase();
 const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status === 'cancelled' ? 'status-cancelled' : 'status-draft';
+const isDraft = invoice.status === 'draft';
 ---
 
 <AdminLayout title={`Invoice ${invoice.invoice_number}`}>
@@ -239,7 +290,6 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
         {error}
       </div>
     )}
-
     {success && (
       <div class="m3-alert m3-alert-success">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -262,20 +312,12 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
         </div>
       </div>
       <div class="header-actions">
-        {invoice.status === 'draft' && (
+        {isDraft && (
           <>
             <form method="POST" class="action-form">
               <input type="hidden" name="action" value="mark_paid" />
               <select name="payment_method" class="method-select">
-                {[
-                  'BACS',
-                  'Clubwise Direct Debit',
-                  'Standing Order',
-                  'Cheque',
-                  'Cash',
-                  'Card',
-                  'Over the Till',
-                ].map(m => (
+                {['BACS','Clubwise Direct Debit','Standing Order','Cheque','Cash','Card','Over the Till'].map(m => (
                   <option value={m} selected={member.default_payment_method === m}>{m}</option>
                 ))}
               </select>
@@ -300,7 +342,7 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
             <button type="submit" class="btn btn-tonal">Revert to Unpaid</button>
           </form>
         )}
-        {(invoice.status === 'draft' || invoice.status === 'cancelled') && (
+        {(isDraft || invoice.status === 'cancelled') && (
           <form method="POST" class="action-form" data-confirm="delete">
             <input type="hidden" name="action" value="delete" />
             <button type="submit" class="btn btn-danger-outline">
@@ -318,14 +360,11 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
 
     <!-- Content Grid -->
     <div class="content-grid">
-      <!-- Main Column -->
       <div class="main-col">
 
-        <!-- Invoice Details Card -->
+        <!-- Invoice Details -->
         <div class="m3-card">
-          <div class="m3-card-header">
-            <h2>Invoice Details</h2>
-          </div>
+          <div class="m3-card-header"><h2>Invoice Details</h2></div>
           <div class="detail-grid">
             <div class="detail-item">
               <span class="detail-label">Invoice Number</span>
@@ -344,14 +383,12 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
               <span class="detail-value detail-value-lg detail-value-green">{formatCurrency(invoice.total)}</span>
             </div>
           </div>
-
           {invoice.sent_at && (
             <div class="sent-info">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               <span>Sent {formatDate(invoice.sent_at)} to <strong>{invoice.sent_to_email}</strong></span>
             </div>
           )}
-
           {invoice.custom_message && (
             <div class="custom-message">
               <span class="detail-label">Custom Message</span>
@@ -360,7 +397,7 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
           )}
         </div>
 
-        <!-- Line Items Card -->
+        <!-- Line Items -->
         <div class="m3-card">
           <div class="m3-card-header">
             <h2>Line Items</h2>
@@ -374,33 +411,130 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
                   <th class="text-center">Qty</th>
                   <th class="text-right">Unit Price</th>
                   <th class="text-right">Total</th>
+                  {isDraft && <th class="text-center no-print"></th>}
                 </tr>
               </thead>
               <tbody>
                 {items.map((item) => (
-                  <tr>
-                    <td>{item.description}</td>
+                  <tr class={item.linked_member_id ? 'linked-item-row' : ''}>
+                    <td>
+                      {item.description}
+                      {item.linked_member_id && <span class="linked-badge">family</span>}
+                    </td>
                     <td class="text-center">{item.quantity}</td>
                     <td class="text-right">{formatCurrency(item.unit_price)}</td>
                     <td class="text-right fw-500">{formatCurrency(item.line_total)}</td>
+                    {isDraft && (
+                      <td class="text-center no-print">
+                        <form method="POST" class="inline-form" data-confirm="remove-item">
+                          <input type="hidden" name="action" value="remove_line_item" />
+                          <input type="hidden" name="item_id" value={item.id} />
+                          <button type="submit" class="icon-btn icon-btn-danger" title="Remove item">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                          </button>
+                        </form>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr class="subtotal-row">
-                  <td colspan="3" class="text-right">Subtotal</td>
+                  <td colspan={isDraft ? 4 : 3} class="text-right">Subtotal</td>
                   <td class="text-right">{formatCurrency(invoice.subtotal)}</td>
                 </tr>
                 <tr class="total-row">
-                  <td colspan="3" class="text-right">Total</td>
+                  <td colspan={isDraft ? 4 : 3} class="text-right">Total</td>
                   <td class="text-right">{formatCurrency(invoice.total)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
+
+          {isDraft && (
+            <div class="add-item-section no-print">
+              <h3 class="add-item-heading">Add Item</h3>
+              <form method="POST" class="add-item-form" id="add-item-form">
+                <input type="hidden" name="action" value="add_line_item" />
+                <div class="add-item-row">
+                  <select name="payment_item_id" id="item-select" class="item-select">
+                    <option value="">Custom item</option>
+                    <optgroup label="— Fees —">
+                      {feePaymentItems.map(pi => (
+                        <option value={pi.id} data-fee={pi.fee} data-name={pi.name}>{pi.name} — {formatCurrency(pi.fee)}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="— Subscriptions —">
+                      {subPaymentItems.map(pi => (
+                        <option value={pi.id} data-fee={pi.fee} data-name={pi.name}>{pi.name} — {formatCurrency(pi.fee)}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                  <input type="text" name="description" id="item-description" class="item-description" placeholder="Description" required />
+                  <input type="number" name="unit_price" id="item-price" class="item-price" placeholder="0.00" min="0" step="0.01" required />
+                  <input type="number" name="quantity" id="item-quantity" class="item-quantity" value="1" min="1" />
+                  <button type="submit" class="btn btn-filled btn-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
 
-        <!-- Email Preview Card -->
+        {isDraft && (
+          <div class="m3-card no-print">
+            <div class="m3-card-header">
+              <h2>Linked Family Members</h2>
+              <span class="item-count">{linkedFamily.length} linked</span>
+            </div>
+
+            {linkedFamily.length > 0 && (
+              <div class="linked-members-list">
+                {linkedFamily.map(fm => (
+                  <div class="linked-member-row">
+                    <div class="linked-member-info">
+                      <a href={`/admin/members/${fm.id}`} class="linked-member-name">{fm.first_name} {fm.surname}</a>
+                      <span class="category-badge">{fm.category}</span>
+                    </div>
+                    <form method="POST" class="inline-form" data-confirm="unlink">
+                      <input type="hidden" name="action" value="unlink_family_member" />
+                      <input type="hidden" name="family_member_id" value={fm.id} />
+                      <button type="submit" class="btn btn-danger-outline btn-sm">Unlink</button>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div class="family-search-section">
+              <p class="family-search-label">Link a member to this invoice — adds their fees and sets them as a family dependant:</p>
+              <div class="family-search-input-row">
+                <input type="text" id="family-search-input" class="family-search-input" placeholder="Search by name…" autocomplete="off" />
+              </div>
+              <div id="family-search-results" class="family-search-results"></div>
+              <form method="POST" id="link-member-form" style="display:none">
+                <input type="hidden" name="action" value="link_family_member" />
+                <input type="hidden" name="family_member_id" id="link-member-id" />
+                <div class="selected-member-preview" id="selected-member-preview">
+                  <div class="selected-member-info">
+                    <span id="selected-member-name" class="selected-name"></span>
+                    <span id="selected-member-category" class="category-badge"></span>
+                    <span id="selected-member-fee" class="selected-fee"></span>
+                  </div>
+                  <button type="submit" class="btn btn-filled btn-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                    Link to Invoice
+                  </button>
+                  <button type="button" class="btn btn-tonal btn-sm" id="clear-selection">Clear</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        <!-- Email Preview -->
         <div class="m3-card">
           <div class="m3-card-header">
             <h2>Email Preview</h2>
@@ -410,29 +544,20 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
             </button>
           </div>
           <div id="email-preview" style="display: none;">
-            <iframe
-              id="email-iframe"
-              class="email-frame"
-              srcdoc={emailPreview}
-            ></iframe>
+            <iframe id="email-iframe" class="email-frame" srcdoc={emailPreview}></iframe>
           </div>
         </div>
       </div>
 
       <!-- Sidebar -->
       <div class="sidebar-col">
-
-        <!-- Member Card -->
         <div class="m3-card">
-          <div class="m3-card-header">
-            <h2>Member</h2>
-          </div>
+          <div class="m3-card-header"><h2>Member</h2></div>
           <div class="member-info">
             <a href={`/admin/members/${member.id}`} class="member-name">{getFullName(member)}</a>
             <span class="member-pin">M{member.pin?.padStart(4, '0')}</span>
             <span class="category-badge">{member.category}</span>
           </div>
-
           <div class="member-contact">
             {member.email && (
               <div class="contact-row">
@@ -447,7 +572,6 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
               </div>
             )}
           </div>
-
           {getFullAddress(member) && (
             <div class="member-address">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
@@ -456,11 +580,8 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
           )}
         </div>
 
-        <!-- Audit Trail Card -->
         <div class="m3-card">
-          <div class="m3-card-header">
-            <h2>Audit Trail</h2>
-          </div>
+          <div class="m3-card-header"><h2>Audit Trail</h2></div>
           <div class="audit-list">
             <div class="audit-row">
               <span class="audit-label">Created</span>
@@ -479,11 +600,8 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
           </div>
         </div>
 
-        <!-- Related Invoices Card -->
         <div class="m3-card">
-          <div class="m3-card-header">
-            <h2>Other Invoices</h2>
-          </div>
+          <div class="m3-card-header"><h2>Other Invoices</h2></div>
           <div id="related-invoices" class="related-invoices">
             <div class="loading-placeholder">Loading...</div>
           </div>
@@ -494,602 +612,239 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
 </AdminLayout>
 
 <style>
-  .detail-page {
-    max-width: 1200px;
-  }
+  .detail-page { max-width: 1200px; }
 
-  /* Alerts */
   .m3-alert {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 1rem 1.25rem;
-    border-radius: 12px;
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1rem 1.25rem; border-radius: 12px; margin-bottom: 1rem; font-size: 0.9rem;
   }
+  .m3-alert svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .m3-alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+  .m3-alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 
-  .m3-alert svg {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-  }
-
-  .m3-alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-
-  .m3-alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
-  }
-
-  /* Page Header */
   .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: white;
-    border-radius: 16px;
-    padding: 1rem 1.5rem;
-    margin-bottom: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    flex-wrap: wrap;
-    gap: 1rem;
+    display: flex; justify-content: space-between; align-items: center;
+    background: white; border-radius: 16px; padding: 1rem 1.5rem;
+    margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    flex-wrap: wrap; gap: 1rem;
   }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
+  .header-left { display: flex; align-items: center; gap: 1rem; }
   .back-btn {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 12px;
-    background: #f0f0f0;
-    color: #555;
-    text-decoration: none;
-    transition: background 0.2s;
-    flex-shrink: 0;
+    width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    border-radius: 12px; background: #f0f0f0; color: #555; text-decoration: none;
+    transition: background 0.2s; flex-shrink: 0;
   }
+  .back-btn:hover { background: #e0e0e0; color: #1e5631; }
+  .back-btn svg { width: 20px; height: 20px; }
+  .header-title-row { display: flex; align-items: center; gap: 0.75rem; }
+  .header-title-row h1 { margin: 0; font-size: 1.35rem; font-weight: 700; color: #1a1a1a; font-family: monospace; }
+  .header-subtitle { margin: 0.15rem 0 0 0; font-size: 0.875rem; color: #666; }
 
-  .back-btn:hover {
-    background: #e0e0e0;
-    color: #1e5631;
-  }
-
-  .back-btn svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .header-title-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .header-title-row h1 {
-    margin: 0;
-    font-size: 1.35rem;
-    font-weight: 700;
-    color: #1a1a1a;
-    font-family: monospace;
-  }
-
-  .header-subtitle {
-    margin: 0.15rem 0 0 0;
-    font-size: 0.875rem;
-    color: #666;
-  }
-
-  /* Status Pills */
   .status-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.3rem 0.85rem;
-    border-radius: 100px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    display: inline-flex; align-items: center; padding: 0.3rem 0.85rem;
+    border-radius: 100px; font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
   }
+  .status-draft { background: #fff3e0; color: #e65100; }
+  .status-paid { background: #e8f5e9; color: #2e7d32; }
+  .status-cancelled { background: #ffebee; color: #c62828; }
 
-  .status-draft {
-    background: #fff3e0;
-    color: #e65100;
-  }
-
-  .status-paid {
-    background: #e8f5e9;
-    color: #2e7d32;
-  }
-
-  .status-cancelled {
-    background: #ffebee;
-    color: #c62828;
-  }
-
-  /* Header Actions */
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .action-form {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
+  .header-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .action-form { display: inline-flex; align-items: center; gap: 0.25rem; }
+  .inline-form { display: inline-flex; }
   .method-select {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 10px;
-    font-size: 0.85rem;
-    background: white;
-    cursor: pointer;
+    padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 10px;
+    font-size: 0.85rem; background: white; cursor: pointer;
   }
+  .method-select:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
 
-  .method-select:focus {
-    outline: none;
-    border-color: #1e5631;
-    box-shadow: 0 0 0 3px rgba(30,86,49,0.1);
-  }
-
-  /* Buttons */
   .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.5rem 1rem;
-    border-radius: 10px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    border: none;
-    text-decoration: none;
-    transition: all 0.2s;
-    white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 0.375rem;
+    padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.85rem; font-weight: 500;
+    cursor: pointer; border: none; text-decoration: none; transition: all 0.2s; white-space: nowrap;
   }
+  .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .btn-filled { background: #1e5631; color: white; }
+  .btn-filled:hover { background: #164424; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+  .btn-tonal { background: #e8f5e9; color: #1e5631; }
+  .btn-tonal:hover { background: #dcfce7; }
+  .btn-danger-outline { background: transparent; color: #c62828; border: 1px solid #ef9a9a; }
+  .btn-danger-outline:hover { background: #ffebee; }
+  .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
 
-  .btn svg {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
+  .icon-btn {
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; cursor: pointer; border: none; transition: all 0.2s;
   }
+  .icon-btn svg { width: 15px; height: 15px; }
+  .icon-btn-danger { background: transparent; color: #c62828; }
+  .icon-btn-danger:hover { background: #ffebee; }
 
-  .btn-filled {
-    background: #1e5631;
-    color: white;
-  }
-
-  .btn-filled:hover {
-    background: #164424;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  }
-
-  .btn-tonal {
-    background: #e8f5e9;
-    color: #1e5631;
-  }
-
-  .btn-tonal:hover {
-    background: #dcfce7;
-  }
-
-  .btn-danger-outline {
-    background: transparent;
-    color: #c62828;
-    border: 1px solid #ef9a9a;
-  }
-
-  .btn-danger-outline:hover {
-    background: #ffebee;
-  }
-
-  .btn-sm {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.8rem;
-  }
-
-  /* Content Grid */
   .content-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 1.25rem;
-    align-items: start;
+    display: grid; grid-template-columns: 2fr 1fr; gap: 1.25rem; align-items: start;
   }
+  @media (max-width: 900px) { .content-grid { grid-template-columns: 1fr; } }
+  .sidebar-col { display: flex; flex-direction: column; gap: 1.25rem; }
+  .main-col { display: flex; flex-direction: column; gap: 1.25rem; }
 
-  @media (max-width: 900px) {
-    .content-grid {
-      grid-template-columns: 1fr;
-    }
-  }
+  .m3-card { background: white; border-radius: 16px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .m3-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+  .m3-card-header h2 { margin: 0; font-size: 1rem; font-weight: 600; color: #333; }
+  .item-count { font-size: 0.8rem; color: #888; }
 
-  .sidebar-col {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
+  .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
+  @media (max-width: 600px) { .detail-grid { grid-template-columns: 1fr; } }
+  .detail-item { display: flex; flex-direction: column; gap: 0.25rem; }
+  .detail-label { font-size: 0.75rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #888; }
+  .detail-value { font-size: 0.95rem; color: #1a1a1a; }
+  .detail-value-lg { font-size: 1.15rem; font-weight: 600; }
+  .detail-value-green { color: #1e5631; }
 
-  .main-col {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-
-  /* M3 Cards */
-  .m3-card {
-    background: white;
-    border-radius: 16px;
-    padding: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  }
-
-  .m3-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-  }
-
-  .m3-card-header h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #333;
-  }
-
-  .item-count {
-    font-size: 0.8rem;
-    color: #888;
-  }
-
-  /* Detail Grid */
-  .detail-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1.25rem;
-  }
-
-  @media (max-width: 600px) {
-    .detail-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .detail-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .detail-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #888;
-  }
-
-  .detail-value {
-    font-size: 0.95rem;
-    color: #1a1a1a;
-  }
-
-  .detail-value-lg {
-    font-size: 1.15rem;
-    font-weight: 600;
-  }
-
-  .detail-value-green {
-    color: #1e5631;
-  }
-
-  /* Sent info bar */
   .sent-info {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-top: 1.25rem;
-    padding: 0.75rem 1rem;
-    background: #f0f7ff;
-    border-radius: 10px;
-    font-size: 0.85rem;
-    color: #1565c0;
+    display: flex; align-items: center; gap: 0.625rem; margin-top: 1.25rem;
+    padding: 0.75rem 1rem; background: #f0f7ff; border-radius: 10px; font-size: 0.85rem; color: #1565c0;
   }
+  .sent-info svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .custom-message { margin-top: 1.25rem; padding: 0.85rem 1rem; background: #f0fdf4; border-radius: 10px; border-left: 3px solid #1e5631; }
+  .custom-message p { margin: 0.35rem 0 0 0; font-size: 0.9rem; color: #333; }
 
-  .sent-info svg {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  /* Custom message */
-  .custom-message {
-    margin-top: 1.25rem;
-    padding: 0.85rem 1rem;
-    background: #f0fdf4;
-    border-radius: 10px;
-    border-left: 3px solid #1e5631;
-  }
-
-  .custom-message p {
-    margin: 0.35rem 0 0 0;
-    font-size: 0.9rem;
-    color: #333;
-  }
-
-  /* Table */
-  .table-wrapper {
-    margin: -0.25rem -1.25rem -1.25rem;
-    border-radius: 0 0 16px 16px;
-    overflow: hidden;
-  }
-
-  .m3-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
+  .table-wrapper { margin: -0.25rem -1.25rem 0; overflow: hidden; }
+  .m3-table { width: 100%; border-collapse: collapse; }
   .m3-table th {
-    text-align: left;
-    padding: 0.75rem 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: #888;
-    background: #fafafa;
-    border-bottom: 1px solid #eee;
+    text-align: left; padding: 0.75rem 1rem; font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #888; background: #fafafa; border-bottom: 1px solid #eee;
   }
-
-  .m3-table td {
-    padding: 0.75rem 1rem;
-    font-size: 0.9rem;
-    color: #333;
-    border-bottom: 1px solid #f0f0f0;
-  }
-
-  .m3-table tbody tr:hover {
-    background: #f8faf8;
-  }
-
+  .m3-table td { padding: 0.75rem 1rem; font-size: 0.9rem; color: #333; border-bottom: 1px solid #f0f0f0; }
+  .m3-table tbody tr:hover { background: #f8faf8; }
+  .linked-item-row td { background: #fafff5; }
   .text-center { text-align: center; }
   .text-right { text-align: right; }
   .fw-500 { font-weight: 500; }
+  .subtotal-row td { background: #fafafa; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid #eee; }
+  .total-row td { background: #1e5631; color: white; font-weight: 700; font-size: 1.05rem; padding: 0.85rem 1rem; border-radius: 0 0 0 0; }
 
-  .subtotal-row td {
-    background: #fafafa;
-    font-weight: 600;
-    font-size: 0.9rem;
-    border-bottom: 1px solid #eee;
+  .linked-badge {
+    display: inline-flex; align-items: center; margin-left: 0.5rem;
+    padding: 0.1rem 0.45rem; background: #e8f5e9; color: #1e5631;
+    border-radius: 100px; font-size: 0.7rem; font-weight: 600;
   }
 
-  .total-row td {
-    background: #1e5631;
-    color: white;
-    font-weight: 700;
-    font-size: 1.05rem;
-    padding: 0.85rem 1rem;
+  /* Add Item Section */
+  .add-item-section {
+    padding: 1rem 1.25rem; border-top: 1px solid #f0f0f0; background: #fafff5; border-radius: 0 0 16px 16px;
+  }
+  .add-item-heading { margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
+  .add-item-form { display: flex; flex-direction: column; gap: 0.5rem; }
+  .add-item-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .item-select {
+    flex: 2; min-width: 160px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 0.85rem; background: white; cursor: pointer;
+  }
+  .item-select:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-description {
+    flex: 3; min-width: 140px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem;
+  }
+  .item-description:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-price {
+    width: 90px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; text-align: right;
+  }
+  .item-price:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .item-quantity {
+    width: 60px; padding: 0.45rem 0.65rem; border: 1px solid #ddd; border-radius: 8px; font-size: 0.85rem; text-align: center;
+  }
+  .item-quantity:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+
+  /* Linked Family Members */
+  .linked-members-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .linked-member-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.65rem 0.85rem; background: #f0fdf4; border-radius: 10px; border: 1px solid #d1fae5;
+  }
+  .linked-member-info { display: flex; align-items: center; gap: 0.5rem; }
+  .linked-member-name { font-weight: 600; color: #1e5631; text-decoration: none; font-size: 0.9rem; }
+  .linked-member-name:hover { text-decoration: underline; }
+
+  .family-search-section { border-top: 1px solid #f0f0f0; padding-top: 1rem; }
+  .family-search-label { margin: 0 0 0.75rem; font-size: 0.85rem; color: #666; }
+  .family-search-input-row { display: flex; gap: 0.5rem; }
+  .family-search-input {
+    flex: 1; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 10px;
+    font-size: 0.9rem;
+  }
+  .family-search-input:focus { outline: none; border-color: #1e5631; box-shadow: 0 0 0 3px rgba(30,86,49,0.1); }
+  .family-search-results { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; }
+  .search-result-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 0.85rem; border: 1px solid #e5e7eb; border-radius: 10px;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .search-result-row:hover { background: #f0fdf4; border-color: #1e5631; }
+  .search-result-info { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+  .search-result-fee { font-size: 0.8rem; color: #888; }
+
+  .selected-member-preview {
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    margin-top: 0.75rem; padding: 0.75rem 1rem; background: #f0fdf4;
+    border-radius: 10px; border: 1px solid #d1fae5;
+  }
+  .selected-member-info { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
+  .selected-name { font-weight: 600; color: #1a1a1a; font-size: 0.9rem; }
+  .selected-fee { font-size: 0.85rem; color: #1e5631; font-weight: 500; }
+
+  .category-badge {
+    display: inline-flex; align-self: flex-start; padding: 0.2rem 0.65rem;
+    background: #e8f5e9; color: #1e5631; border-radius: 100px; font-size: 0.75rem; font-weight: 600;
   }
 
   /* Email Preview */
-  .email-frame {
-    width: 100%;
-    height: 600px;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    display: block;
-  }
+  .email-frame { width: 100%; height: 600px; border: 1px solid #e5e7eb; border-radius: 12px; display: block; }
 
   /* Member Card */
-  .member-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin-bottom: 1rem;
-  }
+  .member-info { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem; }
+  .member-name { font-size: 1.1rem; font-weight: 600; color: #1e5631; text-decoration: none; }
+  .member-name:hover { text-decoration: underline; }
+  .member-pin { font-size: 0.8rem; color: #888; font-family: monospace; }
+  .member-contact { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+  .contact-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #555; }
+  .contact-row svg { width: 16px; height: 16px; color: #999; flex-shrink: 0; }
+  .member-address { display: flex; gap: 0.5rem; padding-top: 0.75rem; border-top: 1px solid #f0f0f0; font-size: 0.85rem; color: #555; line-height: 1.5; }
+  .member-address svg { width: 16px; height: 16px; color: #999; flex-shrink: 0; margin-top: 2px; }
 
-  .member-name {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #1e5631;
-    text-decoration: none;
-  }
-
-  .member-name:hover {
-    text-decoration: underline;
-  }
-
-  .member-pin {
-    font-size: 0.8rem;
-    color: #888;
-    font-family: monospace;
-  }
-
-  .category-badge {
-    display: inline-flex;
-    align-self: flex-start;
-    padding: 0.2rem 0.65rem;
-    background: #e8f5e9;
-    color: #1e5631;
-    border-radius: 100px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .member-contact {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-
-  .contact-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    color: #555;
-  }
-
-  .contact-row svg {
-    width: 16px;
-    height: 16px;
-    color: #999;
-    flex-shrink: 0;
-  }
-
-  .member-address {
-    display: flex;
-    gap: 0.5rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid #f0f0f0;
-    font-size: 0.85rem;
-    color: #555;
-    line-height: 1.5;
-  }
-
-  .member-address svg {
-    width: 16px;
-    height: 16px;
-    color: #999;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-
-  /* Audit Trail */
-  .audit-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.625rem;
-  }
-
-  .audit-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.85rem;
-  }
-
-  .audit-label {
-    color: #888;
-  }
-
-  .audit-value {
-    color: #333;
-    font-weight: 500;
-  }
+  /* Audit */
+  .audit-list { display: flex; flex-direction: column; gap: 0.625rem; }
+  .audit-row { display: flex; justify-content: space-between; font-size: 0.85rem; }
+  .audit-label { color: #888; }
+  .audit-value { color: #333; font-weight: 500; }
 
   /* Related Invoices */
-  .related-invoices {
-    font-size: 0.85rem;
-  }
+  .related-invoices { font-size: 0.85rem; }
+  .loading-placeholder { color: #888; }
+  :global(.related-item) { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #f0f0f0; }
+  :global(.related-item:last-child) { border-bottom: none; }
+  :global(.related-item a) { color: #1e5631; text-decoration: none; font-weight: 500; font-family: monospace; }
+  :global(.related-item a:hover) { text-decoration: underline; }
+  :global(.related-status) { display: inline-flex; padding: 0.15rem 0.5rem; border-radius: 100px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
+  :global(.rs-paid) { background: #e8f5e9; color: #2e7d32; }
+  :global(.rs-cancelled) { background: #ffebee; color: #c62828; }
+  :global(.rs-draft) { background: #fff3e0; color: #e65100; }
 
-  .loading-placeholder {
-    color: #888;
-  }
-
-  :global(.related-item) {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #f0f0f0;
-  }
-
-  :global(.related-item:last-child) {
-    border-bottom: none;
-  }
-
-  :global(.related-item a) {
-    color: #1e5631;
-    text-decoration: none;
-    font-weight: 500;
-    font-family: monospace;
-  }
-
-  :global(.related-item a:hover) {
-    text-decoration: underline;
-  }
-
-  :global(.related-status) {
-    display: inline-flex;
-    padding: 0.15rem 0.5rem;
-    border-radius: 100px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  :global(.rs-paid) {
-    background: #e8f5e9;
-    color: #2e7d32;
-  }
-
-  :global(.rs-cancelled) {
-    background: #ffebee;
-    color: #c62828;
-  }
-
-  :global(.rs-draft) {
-    background: #fff3e0;
-    color: #e65100;
-  }
-
-  /* Print */
   @media print {
-    .page-header,
-    .m3-alert,
-    .btn,
-    .action-form,
-    .header-actions {
-      display: none !important;
-    }
-
-    .m3-card {
-      box-shadow: none;
-      border: 1px solid #ddd;
-      break-inside: avoid;
-    }
-
-    .content-grid {
-      grid-template-columns: 1fr 1fr;
-    }
+    .no-print, .page-header, .m3-alert, .btn, .action-form, .header-actions { display: none !important; }
+    .m3-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+    .content-grid { grid-template-columns: 1fr 1fr; }
   }
-
-  /* Responsive */
   @media (max-width: 600px) {
-    .page-header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .header-actions {
-      width: 100%;
-      justify-content: flex-end;
-    }
+    .page-header { flex-direction: column; align-items: flex-start; }
+    .header-actions { width: 100%; justify-content: flex-end; }
+    .add-item-row { flex-direction: column; align-items: stretch; }
+    .item-select, .item-description, .item-price, .item-quantity { width: 100%; }
   }
 </style>
 
-<script define:vars={{ memberId: member.id, currentInvoiceId: invoice.id }}>
-  // Toggle email preview
+<script define:vars={{ memberId: member.id, currentInvoiceId: invoice.id, invoiceMemberId: invoice.member_id }}>
   window.toggleEmailPreview = function() {
     const preview = document.getElementById('email-preview');
-    if (preview) {
-      preview.style.display = preview.style.display === 'none' ? 'block' : 'none';
-    }
+    if (preview) preview.style.display = preview.style.display === 'none' ? 'block' : 'none';
   };
 
   // Load related invoices
@@ -1098,54 +853,123 @@ const statusClass = invoice.status === 'paid' ? 'status-paid' : invoice.status =
     .then(data => {
       const container = document.getElementById('related-invoices');
       if (!container) return;
-
       if (!data.invoices || data.invoices.length === 0) {
-        container.innerHTML = '<p style="color: #888; margin: 0;">No other invoices</p>';
+        container.innerHTML = '<p style="color:#888;margin:0;">No other invoices</p>';
         return;
       }
-
       container.innerHTML = data.invoices.map(inv => {
-        const statusClass = inv.status === 'paid' ? 'rs-paid' : inv.status === 'cancelled' ? 'rs-cancelled' : 'rs-draft';
-        const statusLabel = inv.status === 'draft' ? 'unpaid' : inv.status;
-        return `<div class="related-item">
-          <a href="/admin/invoices/${inv.id}">${inv.invoice_number}</a>
-          <span class="related-status ${statusClass}">${statusLabel}</span>
-        </div>`;
+        const sc = inv.status === 'paid' ? 'rs-paid' : inv.status === 'cancelled' ? 'rs-cancelled' : 'rs-draft';
+        const sl = inv.status === 'draft' ? 'unpaid' : inv.status;
+        return `<div class="related-item"><a href="/admin/invoices/${inv.id}">${inv.invoice_number}</a><span class="related-status ${sc}">${sl}</span></div>`;
       }).join('');
     })
     .catch(() => {
-      const container = document.getElementById('related-invoices');
-      if (container) container.innerHTML = '<p style="color: #888; margin: 0;">Could not load</p>';
+      const c = document.getElementById('related-invoices');
+      if (c) c.innerHTML = '<p style="color:#888;margin:0;">Could not load</p>';
     });
 
-  // M3 confirmation dialogs for forms
+  // Add item: auto-fill description and price from selected payment item
+  const itemSelect = document.getElementById('item-select');
+  const itemDesc = document.getElementById('item-description');
+  const itemPrice = document.getElementById('item-price');
+  if (itemSelect && itemDesc && itemPrice) {
+    itemSelect.addEventListener('change', function() {
+      const opt = this.options[this.selectedIndex];
+      const fee = opt.dataset.fee;
+      const name = opt.dataset.name;
+      if (name) {
+        itemDesc.value = name;
+        itemPrice.value = fee || '';
+      } else {
+        itemDesc.value = '';
+        itemPrice.value = '';
+      }
+      itemDesc.focus();
+    });
+  }
+
+  // Family member search
+  const familySearchInput = document.getElementById('family-search-input');
+  const familySearchResults = document.getElementById('family-search-results');
+  const linkMemberForm = document.getElementById('link-member-form');
+  const linkMemberId = document.getElementById('link-member-id');
+  const selectedPreview = document.getElementById('selected-member-preview');
+  const selectedName = document.getElementById('selected-member-name');
+  const selectedCategory = document.getElementById('selected-member-category');
+  const selectedFee = document.getElementById('selected-member-fee');
+  const clearSelection = document.getElementById('clear-selection');
+
+  let searchTimer = null;
+
+  function formatCurrencyJS(amount) {
+    return '£' + parseFloat(amount).toFixed(2);
+  }
+
+  function selectMember(id, name, category, fee) {
+    linkMemberId.value = id;
+    selectedName.textContent = name;
+    selectedCategory.textContent = category;
+    selectedFee.textContent = fee > 0 ? formatCurrencyJS(fee) + ' subscription' : 'No subscription fee';
+    linkMemberForm.style.display = 'block';
+    familySearchResults.innerHTML = '';
+    familySearchInput.value = name;
+  }
+
+  if (clearSelection) {
+    clearSelection.addEventListener('click', () => {
+      linkMemberForm.style.display = 'none';
+      familySearchInput.value = '';
+      familySearchResults.innerHTML = '';
+    });
+  }
+
+  if (familySearchInput) {
+    familySearchInput.addEventListener('input', function() {
+      clearTimeout(searchTimer);
+      const q = this.value.trim();
+      if (q.length < 2) { familySearchResults.innerHTML = ''; return; }
+      searchTimer = setTimeout(() => {
+        fetch(`/api/member-search?q=${encodeURIComponent(q)}&exclude=${invoiceMemberId}&exclude_linked=1`)
+          .then(r => r.json())
+          .then(data => {
+            if (!data.members || data.members.length === 0) {
+              familySearchResults.innerHTML = '<p style="color:#888;font-size:0.85rem;margin:0.25rem 0;">No members found</p>';
+              return;
+            }
+            familySearchResults.innerHTML = data.members.map(m => `
+              <div class="search-result-row" onclick="selectMember(${m.id}, '${m.first_name} ${m.surname}', '${m.category}', ${m.subscription_fee})">
+                <div class="search-result-info">
+                  <strong>${m.first_name} ${m.surname}</strong>
+                  <span style="background:#e8f5e9;color:#1e5631;padding:0.1rem 0.45rem;border-radius:100px;font-size:0.7rem;font-weight:600;">${m.category}</span>
+                </div>
+                <span class="search-result-fee">${m.subscription_fee > 0 ? formatCurrencyJS(m.subscription_fee) : 'No fee'}</span>
+              </div>`).join('');
+          })
+          .catch(() => { familySearchResults.innerHTML = '<p style="color:#888;font-size:0.85rem;">Search failed</p>'; });
+      }, 300);
+    });
+  }
+
+  window.selectMember = selectMember;
+
+  // Confirmation dialogs
   document.querySelectorAll('form[data-confirm]').forEach(form => {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const confirmType = form.dataset.confirm;
-
       let confirmed = false;
+
       if (confirmType === 'cancel') {
-        confirmed = await m3Confirm('Are you sure you want to cancel this invoice?', {
-          title: 'Cancel Invoice?',
-          type: 'warning',
-          confirmText: 'Cancel Invoice',
-          cancelText: 'Keep It',
-          danger: true
-        });
+        confirmed = await m3Confirm('Are you sure you want to cancel this invoice?', { title: 'Cancel Invoice?', type: 'warning', confirmText: 'Cancel Invoice', cancelText: 'Keep It', danger: true });
       } else if (confirmType === 'delete') {
-        confirmed = await m3Confirm('This will permanently delete this invoice. This cannot be undone.', {
-          title: 'Delete Invoice?',
-          type: 'delete',
-          confirmText: 'Delete',
-          cancelText: 'Keep It',
-          danger: true
-        });
+        confirmed = await m3Confirm('This will permanently delete this invoice. This cannot be undone.', { title: 'Delete Invoice?', type: 'delete', confirmText: 'Delete', cancelText: 'Keep It', danger: true });
+      } else if (confirmType === 'remove-item') {
+        confirmed = await m3Confirm('Remove this line item from the invoice?', { title: 'Remove Item?', type: 'warning', confirmText: 'Remove', cancelText: 'Keep It', danger: true });
+      } else if (confirmType === 'unlink') {
+        confirmed = await m3Confirm('Unlink this family member? Their items will be removed from the invoice.', { title: 'Unlink Member?', type: 'warning', confirmText: 'Unlink', cancelText: 'Keep Linked', danger: true });
       }
 
-      if (confirmed) {
-        form.submit();
-      }
+      if (confirmed) form.submit();
     });
   });
 </script>

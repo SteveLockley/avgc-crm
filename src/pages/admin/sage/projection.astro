@@ -1,0 +1,480 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { createSageClient } from '@/lib/sage';
+
+const env = Astro.locals.runtime?.env;
+
+// Fixed calendar-year date ranges.
+// NOTE: YTD_END/LAST_SP_END must be advanced manually each month to the end
+// of the last fully-completed month — this is not computed dynamically.
+const YTD_START    = '2026-01-01';
+const YTD_END      = '2026-06-30';
+const LAST_START   = '2025-01-01';
+const LAST_END     = '2025-12-31';
+const LAST_SP_END  = '2025-06-30'; // same period last year
+
+let error = '';
+let tbYTD:      any[] = [];
+let tbLastFull: any[] = [];
+let tbLastSP:   any[] = [];
+let crmMembershipTotal = 0;  // full-year calendar-year spread
+let crmPrev = 0;             // full 2025-26 membership year total (Apr 2025 – Mar 2026, from Sage)
+let crmCurr = 0;             // 2026-27 membership year CRM invoice total
+
+function accountType(displayedAs: string): 'income' | 'expense' | null {
+  const m = displayedAs?.match(/\((\d+)\)\s*$/);
+  if (!m) return null;
+  const code = parseInt(m[1]);
+  if (code >= 4000 && code < 5000) return 'income';
+  if (code >= 5000 && code < 9000) return 'expense';
+  return null;
+}
+
+function isMembershipAccount(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.includes('subscription') || lower.includes('membership') || lower.includes('member sub');
+}
+
+function buildMap(items: any[], type: 'income' | 'expense'): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const item of items) {
+    if (accountType(item.displayed_as) !== type) continue;
+    const credit = parseFloat(item.credit) || 0;
+    const debit  = parseFloat(item.debit)  || 0;
+    const value  = type === 'income' ? credit - debit : debit - credit;
+    if (value !== 0) map.set(item.displayed_as, value);
+  }
+  return map;
+}
+
+if (env?.DB && env?.SAGE_CLIENT_ID && env?.SAGE_CLIENT_SECRET) {
+  try {
+    const client = createSageClient(env);
+
+    const [tbYTDRaw, tbLastFullRaw, tbLastSPRaw, tbMbrYearRaw, crmRow] = await Promise.all([
+      client.getTrialBalance(YTD_START, YTD_END)           as Promise<any>,
+      client.getTrialBalance(LAST_START, LAST_END)         as Promise<any>,
+      client.getTrialBalance(LAST_START, LAST_SP_END)      as Promise<any>,
+      // Full 2025-26 membership year from Sage (Apr 2025 – Mar 2026)
+      client.getTrialBalance('2025-04-01', '2026-03-31')   as Promise<any>,
+      env.DB.prepare(
+        `SELECT COALESCE(SUM(total), 0) AS curr_total
+         FROM invoices WHERE period_start = '2026-04-01' AND status != 'cancelled'`
+      ).first() as Promise<any>,
+    ]);
+
+    tbYTD      = tbYTDRaw?.ledger_accounts     ?? [];
+    tbLastFull = tbLastFullRaw?.ledger_accounts ?? [];
+    tbLastSP   = tbLastSPRaw?.ledger_accounts   ?? [];
+
+    // crmPrev = total membership income for the full 2025-26 year (Sage)
+    const tbMbrYear: any[] = tbMbrYearRaw?.ledger_accounts ?? [];
+    crmPrev = tbMbrYear
+      .filter(a => accountType(a.displayed_as) === 'income' && isMembershipAccount(a.displayed_as))
+      .reduce((s, a) => s + ((parseFloat(a.credit) || 0) - (parseFloat(a.debit) || 0)), 0);
+
+    crmCurr = parseFloat(crmRow?.curr_total) || 0;
+
+    // Jan–Mar 2026 = 25% of 2025-26 year; Apr–Dec 2026 = 75% of 2026-27 CRM total
+    crmMembershipTotal = (crmPrev * 3 / 12) + (crmCurr * 9 / 12);
+
+  } catch (e: any) {
+    error = e.message?.includes('NO_SAGE_CONNECTION') ? 'Not connected to Sage.' : e.message;
+  }
+}
+
+// Build account maps for each trial balance
+const incYTD      = buildMap(tbYTD,      'income');
+const incLastFull = buildMap(tbLastFull, 'income');
+const incLastSP   = buildMap(tbLastSP,   'income');
+const expYTD      = buildMap(tbYTD,      'expense');
+const expLastFull = buildMap(tbLastFull, 'expense');
+const expLastSP   = buildMap(tbLastSP,   'expense');
+
+// Projection: actual YTD + last year's remaining months (Jul–Dec).
+// If YTD already meets or exceeds all of last year, don't add more — just use YTD.
+function project(ytd: number, lastFull: number, lastSP: number): number {
+  if (ytd >= lastFull) return ytd;
+  return ytd + (lastFull - lastSP);
+}
+
+// Collect all account names for each section
+const allIncomeNames  = [...new Set([...incYTD.keys(), ...incLastFull.keys()])];
+const allExpenseNames = [...new Set([...expYTD.keys(), ...expLastFull.keys()])];
+
+// Jan–Jun spread: 25% of 2025-26 year (Jan–Mar) + 3/12 of 2026-27 CRM (Apr–Jun)
+const crmYTDSpread = (crmPrev * 3 / 12) + (crmCurr * 3 / 12);
+
+// Build projection rows
+interface Row {
+  name: string;
+  ytd: number;         // value shown in Jan–Jun column (Sage actual, or CRM spread for membership)
+  lastFull: number;
+  lastSP: number;
+  projected: number;
+  isMembershipOverride: boolean;
+  basis: string;
+}
+
+function rowBasis(ytd: number, lastFull: number, lastSP: number, isOverride: boolean): string {
+  if (isOverride)                    return 'CRM spread: 3/12 of 2025–26 + 9/12 of 2026–27';
+  if (ytd > 0 && ytd >= lastFull)    return 'Jan–Jun actual only (exceeds prior year)';
+  if (ytd > 0 && lastFull > 0)       return 'Jan–Jun actual + Jul–Dec 2025';
+  if (ytd > 0)                       return 'Jan–Jun actual only';
+  if (lastFull > 0)                  return 'Prior year (no 2026 data yet)';
+  return '—';
+}
+
+function makeRows(names: string[], ytdMap: Map<string, number>, lfMap: Map<string, number>, spMap: Map<string, number>, isIncomeSection: boolean): Row[] {
+  return names.map(name => {
+    const ytdSage  = ytdMap.get(name)  ?? 0;
+    const lastFull = lfMap.get(name)   ?? 0;
+    const lastSP   = spMap.get(name)   ?? 0;
+    const isOverride = isIncomeSection && isMembershipAccount(name);
+    // For membership, replace both YTD and projected with CRM spread figures
+    const ytd        = isOverride ? crmYTDSpread  : ytdSage;
+    const projected  = isOverride ? crmMembershipTotal : project(ytdSage, lastFull, lastSP);
+    const basis      = rowBasis(ytdSage, lastFull, lastSP, isOverride);
+    return { name, ytd, lastFull, lastSP, projected, isMembershipOverride: isOverride, basis };
+  }).sort((a, b) => b.lastFull - a.lastFull);
+}
+
+const incomeRows  = makeRows(allIncomeNames,  incYTD, incLastFull, incLastSP, true);
+const expenseRows = makeRows(allExpenseNames, expYTD, expLastFull, expLastSP, false);
+
+const totalIncYTD  = incomeRows.reduce((s, r) => s + r.ytd,       0);
+const totalIncProj = incomeRows.reduce((s, r) => s + r.projected, 0);
+const totalIncLast = incomeRows.reduce((s, r) => s + r.lastFull,  0);
+const totalExpYTD  = expenseRows.reduce((s, r) => s + r.ytd,      0);
+const totalExpProj = expenseRows.reduce((s, r) => s + r.projected,0);
+const totalExpLast = expenseRows.reduce((s, r) => s + r.lastFull, 0);
+
+const surplusYTD  = totalIncYTD  - totalExpYTD;
+const surplusProj = totalIncProj - totalExpProj;
+const surplusLast = totalIncLast - totalExpLast;
+
+function fmt(n: number) {
+  return Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pctChg(curr: number, prev: number) {
+  if (!prev) return null;
+  return Math.round(((curr - prev) / Math.abs(prev)) * 100);
+}
+---
+
+<AdminLayout title="Year-End Projection 2026">
+
+  {error && <div class="alert alert-error">{error}</div>}
+
+  {!error && (
+    <>
+      <div class="proj-header">
+        <h2 class="proj-title">Year-End Projection — Jan to Dec 2026</h2>
+      </div>
+
+      <div class="proj-method-banner">
+        <strong>Factors used in this projection:</strong>
+        <ul class="proj-factors-list">
+          <li><strong>Actuals window:</strong> Sage trial balance, {YTD_START} to {YTD_END} (6 months) — update these dates each month as the year progresses.</li>
+          <li><strong>Standard accounts:</strong> projected = Jan–Jun 2026 actual + (last year full total − last year Jan–Jun). i.e. this year's actual plus whatever last year added on top in Jul–Dec.</li>
+          <li><strong>Cap rule:</strong> if an account's Jan–Jun actual already meets or exceeds all of last year's total, the projection is capped at the actual — no further amount is added (flagged "exceeds prior year" in the basis column below).</li>
+          <li><strong>Membership subscriptions (overridden, not trial-balance-based):</strong> Jan–Mar modelled at 25% of the 2025–26 Sage membership year (£{fmt(crmPrev)} × 3/12 = £{fmt(crmPrev * 3 / 12)}); Apr–Jun at 25% of the 2026–27 CRM invoiced total (£{fmt(crmCurr)} × 3/12 = £{fmt(crmCurr * 3 / 12)}) — giving a Jan–Jun figure of <strong>£{fmt(crmYTDSpread)}</strong>. Full-year projection extends this to Jan–Mar 25% + Apr–Dec 75% of the CRM total = <strong>£{fmt(crmMembershipTotal)}</strong>. Not spread evenly across all 12 months, since renewal invoices land as an April lump sum.</li>
+          <li><strong>Data sources:</strong> Sage Business Cloud Accounting trial balance (income/expense accounts) + CRM `invoices` table for the current membership year total (status ≠ cancelled).</li>
+        </ul>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="proj-summary">
+
+        <div class="proj-section">
+          <div class="proj-section-label">Jan–Jun 2026 Actual</div>
+          <div class="proj-metrics">
+            {[
+              { label: 'Income',      value: totalIncYTD,  color: 'success' },
+              { label: 'Expenditure', value: totalExpYTD,  color: 'danger'  },
+              { label: surplusYTD  >= 0 ? 'Surplus' : 'Deficit', value: surplusYTD,  color: surplusYTD  >= 0 ? 'success' : 'danger' },
+            ].map(({ label, value, color }) => (
+              <div class="proj-metric-card">
+                <div class={`proj-metric-value proj-metric-value--${color}`}>£{fmt(value)}</div>
+                <div class="proj-metric-label">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div class="proj-section">
+          <div class="proj-section-label">Full Year Projection</div>
+          <div class="proj-metrics">
+            {[
+              { label: 'Income',      value: totalIncProj, prev: totalIncLast, color: 'success' },
+              { label: 'Expenditure', value: totalExpProj, prev: totalExpLast, color: 'danger'  },
+              { label: surplusProj >= 0 ? 'Surplus' : 'Deficit', value: surplusProj, prev: surplusLast, color: surplusProj >= 0 ? 'success' : 'danger' },
+            ].map(({ label, value, prev, color }) => {
+              const d = pctChg(value, prev);
+              return (
+                <div class="proj-metric-card proj-metric-card--projected">
+                  <div class={`proj-metric-value proj-metric-value--${color}`}>£{fmt(value)}</div>
+                  <div class="proj-metric-label">{label}</div>
+                  {d !== null && (
+                    <div class={`proj-metric-delta proj-metric-delta--${d >= 0 ? 'up' : 'down'}`}>
+                      {d >= 0 ? '▲' : '▼'} {Math.abs(d)}% vs last yr
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div class="proj-section">
+          <div class="proj-section-label">Full Year 2025 Actual</div>
+          <div class="proj-metrics">
+            {[
+              { label: 'Income',      value: totalIncLast, color: 'success' },
+              { label: 'Expenditure', value: totalExpLast, color: 'danger'  },
+              { label: surplusLast >= 0 ? 'Surplus' : 'Deficit', value: surplusLast, color: surplusLast >= 0 ? 'success' : 'danger' },
+            ].map(({ label, value, color }) => (
+              <div class="proj-metric-card proj-metric-card--muted">
+                <div class={`proj-metric-value proj-metric-value--${color}`}>£{fmt(value)}</div>
+                <div class="proj-metric-label">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Breakdown tables -->
+      <div class="proj-breakdown">
+
+        <div class="card" style="margin:0">
+          <div class="card-header"><span class="card-title">Income by Account</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th class="text-right">Jan–Jun 2026</th>
+                  <th class="text-right proj-col">Projected 2026</th>
+                  <th class="text-right text-muted">Full 2025</th>
+                  <th class="proj-basis-col">Projection basis</th>
+                </tr>
+              </thead>
+              <tbody>
+                {incomeRows.map(row => (
+                  <tr class={row.isMembershipOverride ? 'row-override' : ''}>
+                    <td class="proj-account-name">
+                      {row.name}
+                      {row.isMembershipOverride && <span class="override-badge">CRM</span>}
+                    </td>
+                    <td class="text-right mono">{row.ytd ? `£${fmt(row.ytd)}` : '—'}</td>
+                    <td class="text-right mono proj-col">£{fmt(row.projected)}</td>
+                    <td class="text-right mono text-muted">{row.lastFull ? `£${fmt(row.lastFull)}` : '—'}</td>
+                    <td class="proj-basis-col proj-basis-text">{row.basis}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr class="proj-total-row">
+                  <td>Total</td>
+                  <td class="text-right mono">£{fmt(totalIncYTD)}</td>
+                  <td class="text-right mono proj-col">£{fmt(totalIncProj)}</td>
+                  <td class="text-right mono text-muted">£{fmt(totalIncLast)}</td>
+                  <td class="proj-basis-col"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin:0">
+          <div class="card-header"><span class="card-title">Expenditure by Account</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th class="text-right">Jan–Jun 2026</th>
+                  <th class="text-right proj-col">Projected 2026</th>
+                  <th class="text-right text-muted">Full 2025</th>
+                  <th class="proj-basis-col">Projection basis</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expenseRows.map(row => (
+                  <tr>
+                    <td class="proj-account-name">{row.name}</td>
+                    <td class="text-right mono">{row.ytd ? `£${fmt(row.ytd)}` : '—'}</td>
+                    <td class="text-right mono proj-col">£{fmt(row.projected)}</td>
+                    <td class="text-right mono text-muted">{row.lastFull ? `£${fmt(row.lastFull)}` : '—'}</td>
+                    <td class="proj-basis-col proj-basis-text">{row.basis}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr class="proj-total-row">
+                  <td>Total</td>
+                  <td class="text-right mono">£{fmt(totalExpYTD)}</td>
+                  <td class="text-right mono proj-col">£{fmt(totalExpProj)}</td>
+                  <td class="text-right mono text-muted">£{fmt(totalExpLast)}</td>
+                  <td class="proj-basis-col"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Surplus summary -->
+      <div class="card proj-surplus-card">
+        <div class="proj-surplus-row">
+          <span class="proj-surplus-label">Projected Surplus / Deficit</span>
+          <span class={`proj-surplus-value ${surplusProj >= 0 ? 'proj-surplus-value--pos' : 'proj-surplus-value--neg'}`}>
+            {surplusProj < 0 ? '−' : ''}£{fmt(Math.abs(surplusProj))}
+          </span>
+        </div>
+        <div class="proj-surplus-sub">
+          Based on £{fmt(totalIncProj)} income − £{fmt(totalExpProj)} expenditure
+          &nbsp;·&nbsp; 2025 actual surplus was £{fmt(Math.abs(surplusLast))}
+          {(() => { const d = pctChg(surplusProj, surplusLast); return d !== null ? <span class={`proj-metric-delta proj-metric-delta--${d >= 0 ? 'up' : 'down'}`}>&nbsp;({d >= 0 ? '▲' : '▼'}{Math.abs(d)}%)</span> : null; })()}
+        </div>
+      </div>
+    </>
+  )}
+
+  <style>
+    .proj-header { margin-bottom: 1.25rem; }
+    .proj-title  { font-size: 1.125rem; font-weight: 600; margin: 0; }
+
+    .proj-method-banner {
+      background: #f0f7f3;
+      border: 1px solid #b8d9bf;
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      font-size: 0.8rem;
+      color: var(--text);
+      margin-bottom: 1.25rem;
+      line-height: 1.5;
+    }
+    .proj-factors-list {
+      margin: 0.5rem 0 0;
+      padding-left: 1.25rem;
+    }
+    .proj-factors-list li {
+      margin-bottom: 0.4rem;
+    }
+    .proj-factors-list li:last-child {
+      margin-bottom: 0;
+    }
+
+    .proj-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .proj-section {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+    .proj-section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-light);
+      margin-bottom: 0.75rem;
+    }
+    .proj-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.625rem;
+    }
+    .proj-metric-card {
+      background: #f8faf9;
+      border-radius: 10px;
+      padding: 0.75rem 0.625rem;
+      border: 1px solid #e8ede9;
+    }
+    .proj-metric-card--projected {
+      background: #f5fbf6;
+      border: 1.5px dashed #9cc4a0;
+    }
+    .proj-metric-card--muted {
+      background: #fafafa;
+      border-color: #ebebeb;
+    }
+    .proj-metric-value {
+      font-size: clamp(0.9rem, 2.5vw, 1.25rem);
+      font-weight: 700;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+    .proj-metric-value--success { color: var(--success); }
+    .proj-metric-value--danger  { color: var(--danger);  }
+    .proj-metric-label { font-size: 0.7rem; color: var(--text-light); margin-top: 0.2rem; }
+    .proj-metric-delta { font-size: 0.65rem; margin-top: 0.2rem; font-weight: 600; }
+    .proj-metric-delta--up   { color: var(--success); }
+    .proj-metric-delta--down { color: var(--danger);  }
+
+    @media (min-width: 860px) {
+      .proj-summary { flex-direction: row; align-items: flex-start; }
+      .proj-section  { flex: 1; }
+      .proj-metric-value { font-size: 1.25rem; }
+    }
+
+    .proj-breakdown {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (min-width: 860px) {
+      .proj-breakdown { grid-template-columns: 1fr 1fr; }
+    }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .proj-account-name { min-width: 10rem; }
+    .proj-col { color: var(--primary); font-style: italic; white-space: nowrap; }
+    .proj-total-row { font-weight: 700; border-top: 2px solid var(--border); }
+
+    .proj-basis-col  { width: 13rem; }
+    .proj-basis-text { font-size: 0.7rem; color: var(--text-light); font-style: italic; }
+
+    .row-override { background: #f5fbf6; }
+    .override-badge {
+      display: inline-block;
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 4px;
+      padding: 1px 5px;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+
+    .proj-surplus-card { margin-bottom: 0; }
+    .proj-surplus-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .proj-surplus-label { font-weight: 600; font-size: 0.9rem; }
+    .proj-surplus-value { font-size: 1.5rem; font-weight: 700; }
+    .proj-surplus-value--pos { color: var(--success); }
+    .proj-surplus-value--neg { color: var(--danger);  }
+    .proj-surplus-sub {
+      font-size: 0.75rem;
+      color: var(--text-light);
+      margin-top: 0.5rem;
+    }
+  </style>
+
+</AdminLayout>

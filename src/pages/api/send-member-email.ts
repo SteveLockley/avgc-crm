@@ -8,6 +8,11 @@
 import type { APIRoute } from 'astro';
 import { sendEmail, isValidEmail } from '../../lib/email';
 
+interface AttachmentLink {
+  name: string;
+  url: string;
+}
+
 const BATCH_SIZE = 40;
 const DELAY_MS = 200;
 
@@ -23,8 +28,27 @@ function processPlaceholders(text: string): string {
   return text;
 }
 
-function generateEmailHtml(body: string): string {
+function generateEmailHtml(body: string, attachmentLinks?: AttachmentLink[]): string {
   body = processPlaceholders(body);
+
+  let attachmentsHtml = '';
+  if (attachmentLinks && attachmentLinks.length > 0) {
+    const links = attachmentLinks.map(a =>
+      `<tr><td style="padding: 4px 0;">
+        <a href="${a.url}" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:#f0f7f0;border:1px solid #c8dcc8;border-radius:6px;color:#1e5631;font-size:13px;font-weight:500;text-decoration:none;">
+          <span style="font-size:16px;">📄</span> ${a.name}
+        </a>
+      </td></tr>`
+    ).join('');
+    attachmentsHtml = `
+          <tr>
+            <td style="padding: 0 30px 20px 30px;">
+              <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #555;">Attachments:</p>
+              <table role="presentation" cellspacing="0" cellpadding="0">${links}</table>
+            </td>
+          </tr>`;
+  }
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -45,7 +69,7 @@ function generateEmailHtml(body: string): string {
             <td style="padding: 30px;">
               <div style="font-size: 15px; line-height: 1.6; color: #333;">${body.replace(/\n/g, '<br>')}</div>
             </td>
-          </tr>
+          </tr>${attachmentsHtml}
           <tr>
             <td style="background-color: #f8f9fa; padding: 20px 30px; border-radius: 0 0 8px 8px; border-top: 1px solid #e0e0e0;">
               <p style="margin: 0; font-size: 13px; color: #666;"><strong>Alnmouth Village Golf Club</strong></p>
@@ -87,7 +111,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // === TEST MODE ===
   if (action === 'test') {
-    const { subject, body: emailBody, testEmail } = body;
+    const { subject, body: emailBody, testEmail, attachmentLinks } = body;
     if (!subject || !emailBody || !testEmail) {
       return new Response(JSON.stringify({ error: 'subject, body, and testEmail are required' }), { status: 400 });
     }
@@ -100,7 +124,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const result = await sendEmail({
       to: testEmail,
       subject: `[TEST] ${subject}`,
-      html: generateEmailHtml(personalizedBody),
+      html: generateEmailHtml(personalizedBody, attachmentLinks as AttachmentLink[] | undefined),
     }, emailEnv);
 
     if (!result.success) {
@@ -136,7 +160,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // === SEND BATCH ===
   // When testEmail is provided, all emails are redirected to that address (dry run)
-  const { subject, body: emailBody, memberIds, testEmail } = body;
+  const { subject, body: emailBody, memberIds, testEmail, attachmentLinks } = body;
   if (!subject || !emailBody) {
     return new Response(JSON.stringify({ error: 'subject and body are required' }), { status: 400 });
   }
@@ -180,7 +204,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const result = await sendEmail({
       to: sendTo,
       subject: sendSubject,
-      html: generateEmailHtml(personalizedBody),
+      html: generateEmailHtml(personalizedBody, attachmentLinks as AttachmentLink[] | undefined),
     }, emailEnv);
 
     if (result.success) {

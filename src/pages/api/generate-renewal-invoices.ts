@@ -256,6 +256,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       }
 
+      // For non-DD (draft) invoices: debit the member's balance as outstanding
+      if (!isDD) {
+        await env.DB.prepare(
+          `UPDATE members SET account_balance = account_balance - ? WHERE id = ?`
+        ).bind(total, member.id).run();
+      }
+
       // For DD invoices: create payment record + payment line items + set renewal date
       if (isDD) {
         await env.DB.prepare(

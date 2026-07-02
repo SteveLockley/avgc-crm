@@ -12,12 +12,13 @@ let stats = {
   documents: 0,
   greenFees: 0,
   proFees: 0,
-  socialPosts: 0
+  socialPosts: 0,
+  resultPdfs: 0,
 };
 
 try {
   if (db) {
-    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount, proFeesCount, socialCount] = await Promise.all([
+    const [pagesCount, newsCount, faqCount, galleryCount, docsCount, feesCount, proFeesCount, socialCount, resultPdfsCount] = await Promise.all([
       db.prepare('SELECT COUNT(*) as count FROM website_pages').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_news').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM website_faq').first<{count: number}>(),
@@ -25,7 +26,8 @@ try {
       db.prepare('SELECT COUNT(*) as count FROM member_documents').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM green_fees').first<{count: number}>(),
       db.prepare('SELECT COUNT(*) as count FROM pro_lesson_fees').first<{count: number}>().catch(() => ({ count: 0 })),
-      db.prepare('SELECT COUNT(*) as count FROM social_posts').first<{count: number}>().catch(() => ({ count: 0 }))
+      db.prepare('SELECT COUNT(*) as count FROM social_posts').first<{count: number}>().catch(() => ({ count: 0 })),
+      db.prepare('SELECT COUNT(*) as count FROM result_pdfs').first<{count: number}>().catch(() => ({ count: 0 })),
     ]);
     stats = {
       pages: pagesCount?.count || 0,
@@ -35,7 +37,8 @@ try {
       documents: docsCount?.count || 0,
       greenFees: feesCount?.count || 0,
       proFees: (proFeesCount as any)?.count || 0,
-      socialPosts: socialCount?.count || 0
+      socialPosts: socialCount?.count || 0,
+      resultPdfs: (resultPdfsCount as any)?.count || 0,
     };
   }
 } catch (e) {
@@ -122,6 +125,14 @@ const contentSections = [
     icon: 'map-pin',
     count: null,
     countLabel: ''
+  },
+  {
+    title: 'Result Sheets',
+    description: 'Upload PDF result sheets to display as links on the public Results page',
+    href: '/admin/content/results',
+    icon: 'trophy',
+    count: stats.resultPdfs,
+    countLabel: 'sheets'
   }
 ];
 
@@ -136,7 +147,8 @@ const icons: Record<string, string> = {
   'share': '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
   'map-pin': '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
   'arrow-right': '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
-  'flag': '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'
+  'flag': '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+  'trophy': '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>'
 };
 ---
 

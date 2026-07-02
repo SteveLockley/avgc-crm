@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../../layouts/AdminLayout.astro';
-import { isGoogleConfigured, getGoogleMode } from '../../../lib/google-business';
+import { isGoogleConfigured, getGoogleMode, updateGoogleBusinessHours } from '../../../lib/google-business';
 import { getHoursBySeason, getCurrentSeason, getSeasonLabel, type Season } from '../../../lib/opening-hours';
 
 const env = Astro.locals.runtime?.env;
@@ -48,8 +48,31 @@ if (Astro.request.method === 'POST') {
           ).bind(period, day, openTime, closeTime, isClosed, day).run();
         }
       }
-      hoursMessage = `${period} hours updated successfully`;
+      hoursMessage = `${period} hours saved`;
       hoursMessageType = 'success';
+
+      // Push to Google automatically after saving
+      if (isGoogleConfigured(env)) {
+        try {
+          const updatedHours = await getHoursBySeason(db, period);
+          const pushResult = await updateGoogleBusinessHours(updatedHours, env);
+          if (pushResult.success) {
+            hoursMessage += ' and pushed to Google';
+            await db?.prepare(
+              `INSERT INTO google_sync_log (action, season, status, error_message) VALUES (?, ?, ?, ?)`
+            ).bind('push_hours', period, 'success', null).run();
+          } else {
+            hoursMessage += ` (saved to database, but Google push failed: ${pushResult.error})`;
+            hoursMessageType = 'error';
+            await db?.prepare(
+              `INSERT INTO google_sync_log (action, season, status, error_message) VALUES (?, ?, ?, ?)`
+            ).bind('push_hours', period, 'error', pushResult.error || null).run();
+          }
+        } catch (pushErr: any) {
+          hoursMessage += ` (saved to database, but Google push failed: ${pushErr.message})`;
+          hoursMessageType = 'error';
+        }
+      }
     }
   } catch (e: any) {
     hoursMessage = e.message || 'Failed to update opening hours';

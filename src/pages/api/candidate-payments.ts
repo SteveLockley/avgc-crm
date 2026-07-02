@@ -70,6 +70,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         return await handleAddCoPayer(db, body);
       case 'remove-co-payer':
         return await handleRemoveCoPayer(db, body);
+      case 'override-member':
+        return await handleOverrideMember(db, body);
       default:
         return json({ error: 'Unknown action' }, 400);
     }
@@ -142,28 +144,38 @@ async function createPaymentLineItems(
 async function handleSync(db: any, env: any, body: any) {
   let { session } = await ensureSession(db, env);
 
-  // Get latest sale_date from candidate_payments or default to 01/02/{year}
-  const latest = await db.prepare(
-    `SELECT MAX(sale_date) as last_date FROM candidate_payments`
-  ).first<{ last_date: string | null }>();
-
   const now = new Date();
   const year = now.getFullYear();
   let startDate: string;
   let startTime = '00:00';
 
-  if (latest?.last_date) {
-    // Stored as "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD"
-    const [datePart, timePart] = latest.last_date.split(' ');
-    const parts = datePart.split('-');
-    if (parts.length === 3 && !isNaN(Number(parts[0]))) {
+  // fromDate override: ISO date string (YYYY-MM-DD) for a full retrospective sync
+  if (body.fromDate) {
+    const parts = body.fromDate.split('-');
+    if (parts.length === 3) {
       startDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
-      if (timePart) startTime = timePart.substring(0, 5); // HH:MM
     } else {
       startDate = `01/02/${year}`;
     }
   } else {
-    startDate = `01/02/${year}`;
+    // Get latest sale_date from candidate_payments or default to 01/02/{year}
+    const latest = await db.prepare(
+      `SELECT MAX(sale_date) as last_date FROM candidate_payments`
+    ).first<{ last_date: string | null }>();
+
+    if (latest?.last_date) {
+      // Stored as "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD"
+      const [datePart, timePart] = latest.last_date.split(' ');
+      const parts = datePart.split('-');
+      if (parts.length === 3 && !isNaN(Number(parts[0]))) {
+        startDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        if (timePart) startTime = timePart.substring(0, 5); // HH:MM
+      } else {
+        startDate = `01/02/${year}`;
+      }
+    } else {
+      startDate = `01/02/${year}`;
+    }
   }
 
   const endDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
@@ -223,6 +235,12 @@ async function handleSync(db: any, env: any, body: any) {
       continue;
     }
 
+    // Skip refunds (negative total)
+    if (receipt.total < 0) {
+      skipped++;
+      continue;
+    }
+
     // Map TouchOffice items to CRM payment item names and filter to membership items
     const crmItems = mapToCrmItems(receipt.lineItems, paymentItems);
 
@@ -232,13 +250,18 @@ async function handleSync(db: any, env: any, body: any) {
       continue;
     }
 
+    // Use only the membership portion of the receipt — ignore food, beer, green fees etc.
+    const membershipAmount = Math.round(
+      crmItems.reduce((sum, item) => sum + item.amount * item.qty, 0) * 100
+    ) / 100;
+
     // Match member
     const matchResult = await matchMember(db, receipt.memberName, receipt.discountCard);
 
-    // Check invoice match using the full sale amount and compare line items
+    // Check invoice match using membership amount only
     let invoiceMatch = { matches: false, invoiceId: null as number | null, invoiceTotal: null as number | null, invoiceStatus: null as string | null, outstandingItems: [] as any[], extraItems: [] as any[] };
     if (matchResult.memberId) {
-      invoiceMatch = await checkInvoiceMatch(db, matchResult.memberId, receipt.total, crmItems);
+      invoiceMatch = await checkInvoiceMatch(db, matchResult.memberId, membershipAmount, crmItems);
     }
 
     // Convert sale date from "DD/MM/YYYY - HH:MM:SS" to YYYY-MM-DD HH:MM:SS for storage
@@ -249,7 +272,6 @@ async function handleSync(db: any, env: any, body: any) {
       ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}${timeStr ? ' ' + timeStr.trim() : ''}`
       : sale.date;
 
-    // Insert — store membership items only, but keep full amount for payment matching
     await db.prepare(
       `INSERT INTO candidate_payments
         (sale_id, sale_date, amount, member_name, discount_card, payment_type,
@@ -260,7 +282,7 @@ async function handleSync(db: any, env: any, body: any) {
     ).bind(
       sale.saleId,
       saleDate,
-      receipt.total,
+      membershipAmount,
       receipt.memberName,
       receipt.discountCard,
       receipt.paymentType,
@@ -428,6 +450,24 @@ async function handleProcess(db: any, body: any, locals: any) {
     await db.prepare(
       `UPDATE members SET account_balance = account_balance + ?, date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
     ).bind(fi.total, famInv?.period_start || null, famInv?.period_end || null, candidate.sale_date, fi.memberId).run();
+  }
+
+  // Also update dates for family members whose items are embedded in the payer's invoice
+  // via linked_member_id (batch-generated invoices consolidate family items this way)
+  if (targetInvoiceId) {
+    const inv = await db.prepare(
+      `SELECT period_start, period_end FROM invoices WHERE id = ?`
+    ).bind(targetInvoiceId).first<{ period_start: string; period_end: string }>();
+    if (inv) {
+      const linkedResult = await db.prepare(
+        `SELECT DISTINCT linked_member_id FROM invoice_items WHERE invoice_id = ? AND linked_member_id IS NOT NULL`
+      ).bind(targetInvoiceId).all();
+      for (const row of (linkedResult.results || []) as any[]) {
+        await db.prepare(
+          `UPDATE members SET date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+        ).bind(inv.period_start, inv.period_end, candidate.sale_date, row.linked_member_id).run();
+      }
+    }
   }
 
   // Payment clears payer's debt (by payer's own invoice total, not full payment)
@@ -817,6 +857,23 @@ async function handleProcessAll(db: any, locals: any) {
       ).bind(fi.total, famInv?.period_start || null, famInv?.period_end || null, candidate.sale_date, fi.memberId).run();
     }
 
+    // Also update dates for family members embedded in the payer's invoice via linked_member_id
+    if (targetInvoiceId) {
+      const inv2 = await db.prepare(
+        `SELECT period_start, period_end FROM invoices WHERE id = ?`
+      ).bind(targetInvoiceId).first<{ period_start: string; period_end: string }>();
+      if (inv2) {
+        const linkedResult = await db.prepare(
+          `SELECT DISTINCT linked_member_id FROM invoice_items WHERE invoice_id = ? AND linked_member_id IS NOT NULL`
+        ).bind(targetInvoiceId).all();
+        for (const row of (linkedResult.results || []) as any[]) {
+          await db.prepare(
+            `UPDATE members SET date_renewed = ?, date_expires = ?, date_subscription_paid = ? WHERE id = ?`
+          ).bind(inv2.period_start, inv2.period_end, candidate.sale_date, row.linked_member_id).run();
+        }
+      }
+    }
+
     // Payment clears payer's debt (their own invoice portion)
     const payerTotal = candidate.amount - familyInvoices.reduce((sum: number, fi: any) => sum + fi.total, 0);
     await db.prepare(
@@ -1167,6 +1224,48 @@ async function handleImportBacs(db: any, body: any) {
   const coalesced = await coalesceCandidates(db);
 
   return json({ success: true, total: records.length, new: newCount, matched, skipped, duplicates, coalesced });
+}
+
+/**
+ * Override the auto-matched member on a candidate payment.
+ * Re-runs invoice matching against the new member.
+ */
+async function handleOverrideMember(db: any, body: any) {
+  const { candidateId, memberId } = body;
+  if (!candidateId || !memberId) return json({ error: 'Missing candidateId or memberId' }, 400);
+
+  const candidate = await db.prepare(
+    `SELECT * FROM candidate_payments WHERE id = ? AND processed = 0`
+  ).bind(candidateId).first<any>();
+  if (!candidate) return json({ error: 'Candidate not found or already processed' }, 404);
+
+  const member = await db.prepare(
+    `SELECT id, first_name, surname FROM members WHERE id = ?`
+  ).bind(memberId).first<any>();
+  if (!member) return json({ error: 'Member not found' }, 404);
+
+  const crmItems = candidate.line_items ? JSON.parse(candidate.line_items) : [];
+  const invoiceMatch = await checkInvoiceMatch(db, memberId, candidate.amount, crmItems);
+
+  await db.prepare(
+    `UPDATE candidate_payments
+     SET matched_member_id = ?, match_status = 'matched',
+         matched_invoice_id = ?, amount_matches_invoice = ?,
+         invoice_total = ?, outstanding_items = ?, extra_items = ?,
+         family_invoices = ?
+     WHERE id = ?`
+  ).bind(
+    memberId,
+    invoiceMatch.invoiceId,
+    invoiceMatch.matches ? 1 : 0,
+    invoiceMatch.invoiceTotal,
+    invoiceMatch.outstandingItems.length > 0 ? JSON.stringify(invoiceMatch.outstandingItems) : null,
+    invoiceMatch.extraItems.length > 0 ? JSON.stringify(invoiceMatch.extraItems) : null,
+    invoiceMatch.familyInvoices ? JSON.stringify(invoiceMatch.familyInvoices) : null,
+    candidateId,
+  ).run();
+
+  return json({ success: true, memberId, memberName: `${member.first_name} ${member.surname}` });
 }
 
 function json(data: any, status = 200) {
