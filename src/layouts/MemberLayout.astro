@@ -1,14 +1,20 @@
 ---
+interface NavItem { href: string; label: string; icon: string }
+
 interface Props {
   title: string;
   description?: string;
+  /** Sidebar heading under the AVGC logo. */
+  areaLabel?: string;
+  /** Replaces the member navigation (used by the committee portal). */
+  nav?: NavItem[];
 }
 
-const { title, description } = Astro.props;
+const { title, description, areaLabel = 'Members Area', nav } = Astro.props;
 const member = Astro.locals.member;
 const isAdmin = !!Astro.locals.user;
 
-const navItems = [
+const memberNav: NavItem[] = [
   { href: '/members', label: 'Dashboard', icon: 'home' },
   { href: '/members/my-golf', label: 'My Golf', icon: 'golf' },
   { href: '/members/book', label: 'Book Tee Time', icon: 'calendar' },
@@ -18,6 +24,13 @@ const navItems = [
   { href: '/members/documents', label: 'Documents', icon: 'folder' },
   { href: '/members/account', label: 'My Account', icon: 'user' },
 ];
+
+// Committee members get a way into the committee portal from the members area.
+if (member?.isCommittee) {
+  memberNav.splice(memberNav.length - 1, 0, { href: '/committee', label: 'Committee', icon: 'briefcase' });
+}
+
+const navItems: NavItem[] = nav ?? memberNav;
 
 const currentPath = Astro.url.pathname;
 
@@ -34,6 +47,9 @@ const icons: Record<string, string> = {
   menu: '<line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>',
   close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  briefcase: '<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+  'file-text': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+  pound: '<path d="M18 7c0-2.2-1.8-4-4-4s-4 1.8-4 4v6a4 4 0 0 1-2 3.5"/><path d="M6 20h12"/><path d="M7 12h8"/>',
 };
 ---
 
@@ -72,7 +88,7 @@ const icons: Record<string, string> = {
       <div class="sidebar-header">
         <a href="/" class="logo">
           <span class="logo-text">AVGC</span>
-          <span class="logo-subtitle">Members Area</span>
+          <span class="logo-subtitle">{areaLabel}</span>
         </a>
       </div>
 

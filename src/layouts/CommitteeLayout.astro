@@ -1,0 +1,23 @@
+---
+// Committee portal shell. Reuses the members-area chrome with its own
+// navigation; access is gated in src/middleware.ts on members.is_committee.
+import MemberLayout from './MemberLayout.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description } = Astro.props;
+
+const committeeNav = [
+  { href: '/committee', label: 'Committee Home', icon: 'briefcase' },
+  { href: '/committee/documents', label: 'Documents', icon: 'folder' },
+  { href: '/committee/income-expenditure', label: 'Income & Expenditure', icon: 'pound' },
+  { href: '/members', label: 'Back to Members Area', icon: 'home' },
+];
+---
+
+<MemberLayout title={title} description={description} areaLabel="Committee Portal" nav={committeeNav}>
+  <slot />
+</MemberLayout>

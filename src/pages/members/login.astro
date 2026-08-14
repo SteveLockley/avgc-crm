@@ -1,9 +1,14 @@
 ---
 import PublicLayout from '../../layouts/PublicLayout.astro';
 
+// Where to land after signing in. Internal paths only, so this cannot be used
+// as an open redirect.
+const nextParam = Astro.url.searchParams.get('next') || '';
+const nextPath = /^\/[A-Za-z0-9/_-]*$/.test(nextParam) ? nextParam : '/members';
+
 // Admins authenticated via Cloudflare Access bypass member login
 if (Astro.locals.user) {
-  return Astro.redirect('/members');
+  return Astro.redirect(nextPath);
 }
 
 // Check if already logged in as member
@@ -15,7 +20,7 @@ if (sessionToken) {
       `SELECT member_id FROM member_sessions WHERE session_token = ? AND expires_at > datetime('now')`
     ).bind(sessionToken).first();
     if (session) {
-      return Astro.redirect('/members');
+      return Astro.redirect(nextPath);
     }
   }
 }
@@ -215,6 +220,10 @@ const resetSuccess = Astro.url.searchParams.get('reset') === 'success';
   </div>
 
   <script is:inline>
+    // Where to land after a successful sign-in. Internal paths only.
+    const nextRaw = new URLSearchParams(window.location.search).get('next') || '';
+    const LOGIN_NEXT = /^\/[A-Za-z0-9/_-]*$/.test(nextRaw) ? nextRaw : '/members';
+
     const loginForm = document.getElementById('login-form');
     const registerForm = document.getElementById('register-form');
     const forgotForm = document.getElementById('forgot-form');
@@ -291,7 +300,7 @@ const resetSuccess = Astro.url.searchParams.get('reset') === 'success';
         });
         const data = await res.json();
         if (data.success) {
-          window.location.href = '/members';
+          window.location.href = LOGIN_NEXT;
         } else {
           showAlert(data.error || 'Login failed.', 'error');
           btn.disabled = false;

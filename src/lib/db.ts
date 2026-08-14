@@ -50,6 +50,7 @@ export interface Member {
   account_id: string | null;
   direct_debit_member_id: string | null;
   family_payer_id: number | null;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }

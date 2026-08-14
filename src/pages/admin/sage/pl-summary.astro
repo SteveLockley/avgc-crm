@@ -62,12 +62,12 @@ const data: PLReportData | null = reportRow ? JSON.parse(reportRow.data) : null;
 const previewHtml = data ? renderPLReportHtml(data) : '';
 ---
 
-<AdminLayout title="Monthly P&L Summary">
+<AdminLayout title="Income & Expenditure (Cash Based)">
 
   {dbError && <div class="alert alert-error">{dbError}</div>}
 
   <div class="pls-header">
-    <h2 class="pls-title">Monthly P&amp;L Summary</h2>
+    <h2 class="pls-title">Income &amp; Expenditure (Cash Based)</h2>
     <select id="month-select" class="form-input pls-month-select" onchange="location.href='?month='+this.value">
       {monthOptions.map(m => (
         <option value={m} selected={m === month}>{monthLabel(m)}</option>
@@ -101,7 +101,7 @@ const previewHtml = data ? renderPLReportHtml(data) : '';
               )}
             </p>
             <div id="send-status"></div>
-            <iframe id="preview-frame" class="pls-preview" srcdoc={previewHtml} title="P&L report preview"></iframe>
+            <iframe id="preview-frame" class="pls-preview" srcdoc={previewHtml} title="Income & Expenditure report preview"></iframe>
           </>
         ) : (
           <p class="pls-empty">No report has been generated for {monthLabel(month)} yet. Click "Generate Report" to pull the figures from Sage.</p>
@@ -251,7 +251,7 @@ const previewHtml = data ? renderPLReportHtml(data) : '';
     sendBtn?.addEventListener('click', async () => {
       const month = (sendBtn as HTMLElement).dataset.month!;
       const statusEl = document.getElementById('send-status')!;
-      if (!confirm('Send this P&L report to all active recipients now?')) return;
+      if (!confirm('Send this Income & Expenditure report to all active recipients now?')) return;
       (sendBtn as HTMLButtonElement).disabled = true;
       statusEl.textContent = 'Sending…';
       statusEl.className = '';

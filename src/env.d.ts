@@ -33,6 +33,7 @@ declare namespace App {
       firstName: string;
       surname: string;
       email: string;
+      isCommittee?: boolean;
     };
   }
 }

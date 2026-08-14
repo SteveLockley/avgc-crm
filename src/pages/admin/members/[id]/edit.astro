@@ -1,12 +1,16 @@
 ---
 import AdminLayout from '../../../../layouts/AdminLayout.astro';
 import { FEE_TEMPLATES, ZERO_COST_SUBSCRIPTIONS, PAYMENT_METHODS } from '../../../../lib/db';
+import { setCommitteeMembership } from '../../../../lib/permissions';
+import { pushMemberToGroup } from '../../../../lib/committee-sync';
 
 const { id } = Astro.params;
-const db = Astro.locals.runtime.env.DB;
+const env = Astro.locals.runtime.env;
+const db = env.DB;
 const isNew = id === 'new';
 
 let error = '';
+let committeeWarning = '';
 
 // For edit mode, load existing member
 let member: Record<string, any> = {};
@@ -165,7 +169,36 @@ if (Astro.request.method === 'POST') {
          VALUES (?, 'update', 'member', ?, ?)`
       ).bind(Astro.locals.user?.email || 'system', id, JSON.stringify(data)).run();
 
-      return Astro.redirect(`/admin/members/${id}`);
+      // Committee flag: a checkbox is absent from the form data when unticked.
+      const wantsCommittee = formData.get('is_committee') === '1';
+      if (wantsCommittee !== (member.is_committee === 1)) {
+        const memberId = Number(id);
+        const actor = Astro.locals.user?.email || 'system';
+        await setCommitteeMembership(db, memberId, wantsCommittee, { source: 'manual', by: actor });
+
+        const push = await pushMemberToGroup(
+          db,
+          env,
+          {
+            id: memberId,
+            email: (data.email ?? member.email) as string | null,
+            first_name: (data.first_name ?? member.first_name) as string,
+            surname: (data.surname ?? member.surname) as string,
+          },
+          wantsCommittee,
+          actor
+        );
+
+        if (push.warning) {
+          // Stay on the page so the warning is seen; the CRM flag is already saved.
+          member = { ...member, ...data, is_committee: wantsCommittee ? 1 : 0 };
+          committeeWarning = push.warning;
+        }
+      }
+
+      if (!committeeWarning) {
+        return Astro.redirect(`/admin/members/${id}`);
+      }
     }
   } catch (e: any) {
     error = `Failed to ${isNew ? 'create' : 'update'} member: ${e.message}`;
@@ -535,6 +568,26 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
             </div>
           </div>
 
+          <!-- Permissions -->
+          {!isNew && (
+            <div class="m3-card">
+              <h2>Permissions</h2>
+
+              <label class="checkbox-field">
+                <input type="checkbox" name="is_committee" value="1" checked={member.is_committee === 1} />
+                <span>
+                  <strong>Committee member</strong>
+                  <small>
+                    Gives access to the committee portal — all member documents and the Income &amp; Expenditure
+                    figures. Saving also adds or removes this member in committee@alnmouthvillage.golf.
+                  </small>
+                </span>
+              </label>
+
+              {committeeWarning && <p class="committee-warning">{committeeWarning}</p>}
+            </div>
+          )}
+
           <!-- Notes -->
           {!isNew && (
             <div class="m3-card">
@@ -685,6 +738,44 @@ const cancelUrl = isNew ? '/admin/members' : `/admin/members/${id}`;
 
     .field:last-child {
       margin-bottom: 0;
+    }
+
+    .checkbox-field {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      cursor: pointer;
+    }
+
+    .checkbox-field input {
+      width: 18px;
+      height: 18px;
+      margin-top: 0.15rem;
+      flex-shrink: 0;
+    }
+
+    .checkbox-field strong {
+      display: block;
+      font-size: 0.9rem;
+    }
+
+    .checkbox-field small {
+      display: block;
+      color: #666;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      margin-top: 0.15rem;
+    }
+
+    .committee-warning {
+      margin: 0.85rem 0 0;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 0.7rem 0.85rem;
+      font-size: 0.82rem;
+      color: #856404;
+      line-height: 1.45;
     }
 
     .field label {

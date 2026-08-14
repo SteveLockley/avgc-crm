@@ -81,7 +81,7 @@ export async function authenticateWithPassword(
   db: D1Database
 ): Promise<AuthResult> {
   const member = await db.prepare(
-    `SELECT id, password_hash FROM members WHERE LOWER(email) = LOWER(?)`
+    `SELECT id, password_hash FROM members WHERE LOWER(email) = LOWER(?) AND deleted_at IS NULL`
   ).bind(email).first<{ id: number; password_hash: string | null }>();
 
   if (!member || !member.password_hash) {
@@ -121,7 +121,7 @@ export async function requestRegistration(
   baseUrl: string
 ): Promise<AuthResult> {
   const member = await db.prepare(
-    `SELECT id, first_name, surname, email, password_hash FROM members WHERE LOWER(email) = LOWER(?)`
+    `SELECT id, first_name, surname, email, password_hash FROM members WHERE LOWER(email) = LOWER(?) AND deleted_at IS NULL`
   ).bind(email).first<{ id: number; first_name: string; surname: string; email: string; password_hash: string | null }>();
 
   if (!member) {
@@ -265,7 +265,7 @@ export async function requestPasswordReset(
   baseUrl: string
 ): Promise<AuthResult> {
   const member = await db.prepare(
-    `SELECT id, first_name, surname, email FROM members WHERE LOWER(email) = LOWER(?)`
+    `SELECT id, first_name, surname, email FROM members WHERE LOWER(email) = LOWER(?) AND deleted_at IS NULL`
   ).bind(email).first<{ id: number; first_name: string; surname: string; email: string }>();
 
   if (!member) {
@@ -422,7 +422,7 @@ export async function validateSession(
     `SELECT ms.*, m.id as member_id, m.first_name, m.surname, m.email
      FROM member_sessions ms
      JOIN members m ON ms.member_id = m.id
-     WHERE ms.session_token = ? AND ms.expires_at > datetime('now')`
+     WHERE ms.session_token = ? AND ms.expires_at > datetime('now') AND m.deleted_at IS NULL`
   ).bind(sessionToken).first<{
     member_id: number;
     first_name: string;

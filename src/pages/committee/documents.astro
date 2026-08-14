@@ -1,0 +1,120 @@
+---
+import CommitteeLayout from '../../layouts/CommitteeLayout.astro';
+
+// The committee sees every member document, including any held back from the
+// membership (published = 0), which the members-area page filters out.
+const db = Astro.locals.runtime?.env?.DB;
+
+type Doc = {
+  id: number;
+  category: string;
+  title: string;
+  description: string | null;
+  document_url: string;
+  document_date: string;
+  published: number;
+};
+
+let documents: Doc[] = [];
+let loadError = '';
+
+if (db) {
+  try {
+    const rows = await db.prepare(
+      `SELECT id, category, title, description, document_url, document_date, published
+         FROM member_documents
+        ORDER BY category, document_date DESC`
+    ).all<Doc>();
+    documents = rows.results || [];
+  } catch (e: any) {
+    loadError = `Could not load documents: ${e.message}`;
+  }
+}
+
+const categories = [...new Set(documents.map(d => d.category))].sort((a, b) => {
+  const order = ['AGM', 'Committee', 'General'];
+  const ai = order.indexOf(a), bi = order.indexOf(b);
+  return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || a.localeCompare(b);
+});
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+---
+
+<CommitteeLayout title="Documents">
+  {loadError && <div class="alert">{loadError}</div>}
+
+  {!loadError && documents.length === 0 && (
+    <p class="empty">There are no member documents yet.</p>
+  )}
+
+  {categories.map(cat => (
+    <section class="doc-section">
+      <h2>{cat}</h2>
+      <ul class="doc-list">
+        {documents.filter(d => d.category === cat).map(doc => (
+          <li>
+            <a href={doc.document_url} target="_blank" rel="noopener">
+              <span class="doc-title">
+                {doc.title}
+                {doc.published === 0 && <span class="badge">Not published to members</span>}
+              </span>
+              <span class="doc-meta">
+                {formatDate(doc.document_date)}
+                {doc.description && <> &middot; {doc.description}</>}
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))}
+</CommitteeLayout>
+
+<style>
+  .alert {
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    color: #842029;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.25rem;
+  }
+  .empty { color: #666; }
+  .doc-section { margin-bottom: 2rem; }
+  .doc-section h2 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #666;
+    margin-bottom: 0.75rem;
+  }
+  .doc-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
+  .doc-list a {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    text-decoration: none;
+    color: inherit;
+  }
+  .doc-list a:hover { border-color: #1e5631; }
+  .doc-title { font-weight: 600; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .doc-meta { color: #666; font-size: 0.85rem; }
+  .badge {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+</style>

@@ -65,7 +65,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     const data = JSON.parse(row.data);
     const html = renderPLReportHtml(data);
-    const subject = `AVGC Profit & Loss Summary — ${data.periodLabel}`;
+    const subject = `AVGC Income & Expenditure (Cash Based) — ${data.periodLabel}`;
 
     const results = await Promise.all(
       recipients.map(to => sendEmail({ to, subject, html }, env))

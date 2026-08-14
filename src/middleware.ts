@@ -32,6 +32,11 @@ const adminPrefixes = [
   '/admin',
 ];
 
+// Committee portal (member session plus the committee flag)
+const committeePrefixes = [
+  '/committee',
+];
+
 function isPublicRoute(pathname: string): boolean {
   // Exact match
   if (publicRoutes.includes(pathname)) {
@@ -51,6 +56,51 @@ function isMemberRoute(pathname: string): boolean {
 
 function isAdminRoute(pathname: string): boolean {
   return adminPrefixes.some(prefix => pathname.startsWith(prefix));
+}
+
+function isCommitteeRoute(pathname: string): boolean {
+  return committeePrefixes.some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'));
+}
+
+type SessionStatus = 'ok' | 'none' | 'invalid' | 'error';
+
+// Resolve a member session and attach the member (with committee flag) to locals.
+async function loadMemberSession(context: any): Promise<SessionStatus> {
+  const sessionToken = context.cookies.get('avgc_member_session')?.value;
+  if (!sessionToken) return 'none';
+
+  try {
+    const db = context.locals.runtime?.env?.DB;
+    if (!db) return 'error';
+
+    const session = await db.prepare(
+      `SELECT ms.session_token, m.id as member_id, m.first_name, m.surname, m.email, m.is_committee
+         FROM member_sessions ms
+         JOIN members m ON ms.member_id = m.id
+        WHERE ms.session_token = ? AND ms.expires_at > datetime('now') AND m.deleted_at IS NULL`
+    ).bind(sessionToken).first();
+
+    if (!session) {
+      context.cookies.delete('avgc_member_session', { path: '/' });
+      return 'invalid';
+    }
+
+    await db.prepare(
+      `UPDATE member_sessions SET last_used = datetime('now') WHERE session_token = ?`
+    ).bind(sessionToken).run();
+
+    context.locals.member = {
+      id: session.member_id,
+      firstName: session.first_name,
+      surname: session.surname,
+      email: session.email,
+      isCommittee: session.is_committee === 1,
+    };
+    return 'ok';
+  } catch (e) {
+    console.error('Error validating member session:', e);
+    return 'error';
+  }
 }
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -142,6 +192,27 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
+  // Committee portal - member session plus the committee flag (admins bypass)
+  if (isCommitteeRoute(pathname)) {
+    if (context.locals.user) {
+      await loadMemberSession(context); // admins see it too; load member data if they have a session
+      return next();
+    }
+
+    const status = await loadMemberSession(context);
+    if (status === 'none' || status === 'invalid') {
+      return context.redirect('/members/login?next=' + encodeURIComponent(pathname));
+    }
+    if (status === 'error') {
+      return new Response('The committee portal is temporarily unavailable.', { status: 503 });
+    }
+    if (!context.locals.member?.isCommittee) {
+      return context.redirect('/members');
+    }
+
+    return next();
+  }
+
   // Member protected routes - check session (admins bypass)
   if (isMemberRoute(pathname)) {
     // Admins authenticated via Cloudflare Access can access member pages directly
@@ -149,48 +220,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
       return next();
     }
 
-    const sessionToken = context.cookies.get('avgc_member_session')?.value;
-
-    if (!sessionToken) {
-      // Redirect to login
+    const status = await loadMemberSession(context);
+    if (status === 'none' || status === 'invalid') {
       return context.redirect('/members/login');
     }
 
-    // Validate session
-    try {
-      const db = context.locals.runtime?.env?.DB;
-      if (db) {
-        const session = await db.prepare(
-          `SELECT ms.*, m.id as member_id, m.first_name, m.surname, m.email
-           FROM member_sessions ms
-           JOIN members m ON ms.member_id = m.id
-           WHERE ms.session_token = ? AND ms.expires_at > datetime('now')`
-        ).bind(sessionToken).first();
-
-        if (!session) {
-          // Invalid or expired session
-          context.cookies.delete('avgc_member_session', { path: '/' });
-          return context.redirect('/members/login');
-        }
-
-        // Update last_used timestamp
-        await db.prepare(
-          `UPDATE member_sessions SET last_used = datetime('now') WHERE session_token = ?`
-        ).bind(sessionToken).run();
-
-        // Add member to locals
-        context.locals.member = {
-          id: session.member_id,
-          firstName: session.first_name,
-          surname: session.surname,
-          email: session.email,
-        };
-      }
-    } catch (e) {
-      // Database error - allow access but no member data
-      console.error('Error validating member session:', e);
-    }
-
+    // Database error - allow access but no member data (unchanged behaviour)
     return next();
   }
 

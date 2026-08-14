@@ -27,7 +27,8 @@ export const GET: APIRoute = async ({ request, locals }) => {
            CASE WHEN INSTR(m.category, '(') > 0
                 THEN INSTR(m.category, '(') - 1
                 ELSE LENGTH(m.category) END))
-     WHERE (m.first_name LIKE ? OR m.surname LIKE ? OR (m.first_name || ' ' || m.surname) LIKE ?)
+     WHERE m.deleted_at IS NULL
+       AND (m.first_name LIKE ? OR m.surname LIKE ? OR (m.first_name || ' ' || m.surname) LIKE ?)
        AND (? IS NULL OR m.id != ?)
        AND (? = 0 OR m.family_payer_id IS NULL)
      ORDER BY m.surname, m.first_name

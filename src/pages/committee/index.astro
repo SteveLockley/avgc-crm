@@ -1,0 +1,112 @@
+---
+import CommitteeLayout from '../../layouts/CommitteeLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+const member = Astro.locals.member;
+
+let documentCount = 0;
+let latestReport: { period_end: string; generated_at: string } | null = null;
+
+if (db) {
+  try {
+    const [docs, report] = await Promise.all([
+      db.prepare(`SELECT COUNT(*) AS n FROM member_documents`).first<{ n: number }>(),
+      db.prepare(
+        `SELECT period_end, generated_at FROM pl_reports ORDER BY period_end DESC LIMIT 1`
+      ).first<{ period_end: string; generated_at: string }>(),
+    ]);
+    documentCount = docs?.n || 0;
+    latestReport = report || null;
+  } catch (e) {
+    console.error('Committee dashboard query failed:', e);
+  }
+}
+
+function monthLabel(periodEnd: string): string {
+  const d = new Date(periodEnd + 'T00:00:00Z');
+  return d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+const cards = [
+  {
+    href: '/committee/documents',
+    title: 'Documents',
+    icon: 'folder',
+    body: `All ${documentCount} member document${documentCount === 1 ? '' : 's'} — AGM and committee minutes, policies and general papers, including any not yet published to the wider membership.`,
+  },
+  {
+    href: '/committee/income-expenditure',
+    title: 'Income & Expenditure (Cash Based)',
+    icon: 'pound',
+    body: latestReport
+      ? `Monthly figures from the club's accounts. Latest: ${monthLabel(latestReport.period_end)}.`
+      : "Monthly figures from the club's accounts. No report has been generated yet.",
+  },
+];
+
+const icons: Record<string, string> = {
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  pound: '<path d="M18 7c0-2.2-1.8-4-4-4s-4 1.8-4 4v6a4 4 0 0 1-2 3.5"/><path d="M6 20h12"/><path d="M7 12h8"/>',
+};
+---
+
+<CommitteeLayout title="Committee Portal">
+  <p class="intro">
+    Welcome{member?.firstName ? `, ${member.firstName}` : ''}. This area is restricted to members of the club committee.
+    Everything here is confidential to the committee unless it has been published to the membership.
+  </p>
+
+  <div class="cards">
+    {cards.map(card => (
+      <a href={card.href} class="card-link">
+        <span class="card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <Fragment set:html={icons[card.icon]} />
+          </svg>
+        </span>
+        <span class="card-body">
+          <span class="card-title">{card.title}</span>
+          <span class="card-text">{card.body}</span>
+        </span>
+      </a>
+    ))}
+  </div>
+</CommitteeLayout>
+
+<style>
+  .intro {
+    max-width: 60ch;
+    color: #444;
+    margin-bottom: 1.75rem;
+    line-height: 1.6;
+  }
+  .cards {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .card-link {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1.25rem;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .card-link:hover {
+    border-color: #1e5631;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  }
+  .card-icon svg {
+    width: 26px;
+    height: 26px;
+    color: #1e5631;
+  }
+  .card-body { display: flex; flex-direction: column; gap: 0.35rem; }
+  .card-title { font-weight: 600; font-size: 1.05rem; }
+  .card-text { color: #666; font-size: 0.9rem; line-height: 1.5; }
+</style>

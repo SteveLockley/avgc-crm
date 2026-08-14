@@ -1,0 +1,141 @@
+---
+import CommitteeLayout from '../../layouts/CommitteeLayout.astro';
+import { renderPLReportHtml } from '@/lib/pl-report-html';
+import type { PLReportData } from '@/lib/pl-report';
+import { CAPABILITIES, memberHasCapability } from '@/lib/permissions';
+
+// Read-only view of the reports generated in the CRM. Committee members can see
+// the figures but cannot generate or send them — that stays with admins, since
+// generating pulls from Sage under the club's OAuth connection.
+const db = Astro.locals.runtime?.env?.DB;
+const member = Astro.locals.member;
+const isAdmin = !!Astro.locals.user;
+
+// Middleware gates the whole /committee area on the flag; this is the
+// capability check for this page specifically.
+if (db && member && !isAdmin) {
+  const allowed = await memberHasCapability(db, member.id, CAPABILITIES.FINANCE_INCOME_EXPENDITURE);
+  if (!allowed) return Astro.redirect('/committee');
+}
+
+type ReportRow = { period_end: string; data: string; generated_at: string };
+
+let reports: Array<{ period_end: string; generated_at: string }> = [];
+let selected: ReportRow | null = null;
+let loadError = '';
+
+if (db) {
+  try {
+    const list = await db.prepare(
+      `SELECT period_end, generated_at FROM pl_reports ORDER BY period_end DESC LIMIT 36`
+    ).all<{ period_end: string; generated_at: string }>();
+    reports = list.results || [];
+
+    const requested = Astro.url.searchParams.get('period') || '';
+    const periodEnd = reports.some(r => r.period_end === requested) ? requested : reports[0]?.period_end;
+
+    if (periodEnd) {
+      selected = await db.prepare(
+        `SELECT period_end, data, generated_at FROM pl_reports WHERE period_end = ?`
+      ).bind(periodEnd).first<ReportRow>();
+    }
+  } catch (e: any) {
+    loadError = `Could not load the figures: ${e.message}`;
+  }
+}
+
+const data: PLReportData | null = selected ? JSON.parse(selected.data) : null;
+const reportHtml = data ? renderPLReportHtml(data) : '';
+
+function monthLabel(periodEnd: string): string {
+  const d = new Date(periodEnd + 'T00:00:00Z');
+  return isNaN(d.getTime())
+    ? periodEnd
+    : d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+function generatedLabel(ts: string): string {
+  const d = new Date(ts + 'Z');
+  return isNaN(d.getTime()) ? ts : d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+---
+
+<CommitteeLayout title="Income & Expenditure (Cash Based)">
+  {loadError && <div class="alert">{loadError}</div>}
+
+  {!loadError && reports.length === 0 && (
+    <p class="empty">No figures have been published yet.</p>
+  )}
+
+  {reports.length > 0 && (
+    <div class="ie-bar">
+      <label for="period-select">Month</label>
+      <select id="period-select" onchange="location.href='?period='+this.value">
+        {reports.map(r => (
+          <option value={r.period_end} selected={r.period_end === selected?.period_end}>
+            {monthLabel(r.period_end)}
+          </option>
+        ))}
+      </select>
+      {selected && <span class="ie-meta">Prepared {generatedLabel(selected.generated_at)}</span>}
+    </div>
+  )}
+
+  {data && (
+    <div class="ie-report">
+      <iframe srcdoc={reportHtml} title="Income & Expenditure (Cash Based)"></iframe>
+    </div>
+  )}
+
+  <p class="ie-note">
+    These figures are prepared on a cash basis from the club's accounting records and are for
+    committee use. They are management figures, not audited accounts.
+  </p>
+</CommitteeLayout>
+
+<style>
+  .alert {
+    background: #fdecea;
+    border: 1px solid #f5c6cb;
+    color: #842029;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1.25rem;
+  }
+  .empty { color: #666; }
+  .ie-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .ie-bar label { font-weight: 600; font-size: 0.9rem; }
+  .ie-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d0d0d0;
+    border-radius: 6px;
+    background: #fff;
+    font: inherit;
+  }
+  .ie-meta { color: #666; font-size: 0.85rem; }
+  .ie-report {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .ie-report iframe {
+    width: 100%;
+    height: 1100px;
+    border: 0;
+    display: block;
+  }
+  .ie-note {
+    margin-top: 1rem;
+    color: #666;
+    font-size: 0.85rem;
+    max-width: 60ch;
+    line-height: 1.5;
+  }
+</style>

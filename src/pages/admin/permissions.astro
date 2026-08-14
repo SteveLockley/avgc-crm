@@ -1,0 +1,257 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { CAPABILITY_LABELS, COMMITTEE_GROUP_KEY, getGroupByKey, listCommitteeMembers } from '@/lib/permissions';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let group: any = null;
+let capabilities: string[] = [];
+let members: any[] = [];
+let syncLog: any[] = [];
+let loadError = '';
+
+if (db) {
+  try {
+    group = await getGroupByKey(db, COMMITTEE_GROUP_KEY);
+    if (group) {
+      const caps = await db.prepare(
+        `SELECT capability FROM permission_group_capabilities WHERE group_id = ? ORDER BY capability`
+      ).bind(group.id).all<{ capability: string }>();
+      capabilities = (caps.results || []).map(c => c.capability);
+      members = await listCommitteeMembers(db);
+    }
+    const log = await db.prepare(
+      `SELECT direction, run_at, run_by, added, removed, unmatched, ok, detail
+         FROM permission_sync_log ORDER BY id DESC LIMIT 10`
+    ).all();
+    syncLog = log.results || [];
+  } catch (e: any) {
+    loadError = e.message;
+  }
+}
+
+function ts(value: string): string {
+  const d = new Date(value + 'Z');
+  return isNaN(d.getTime()) ? value : d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+---
+
+<AdminLayout title="Permissions">
+  {loadError && <div class="alert alert-error">{loadError}</div>}
+  {!loadError && !group && (
+    <div class="alert alert-error">
+      The committee permission group is missing. Run migration 063_permission_groups.sql.
+    </div>
+  )}
+
+  {group && (
+    <>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">{group.name}</span>
+          <button id="sync-btn" class="btn btn-secondary btn-sm">Sync from {group.mail_group}</button>
+        </div>
+
+        <p class="perm-desc">{group.description}</p>
+
+        <h3 class="perm-subhead">Capabilities</h3>
+        <ul class="cap-list">
+          {capabilities.map(c => (
+            <li><code>{c}</code> <span>{CAPABILITY_LABELS[c] || ''}</span></li>
+          ))}
+        </ul>
+
+        <div id="sync-status"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Members ({members.length})</span>
+        </div>
+
+        <div class="add-row">
+          <input type="text" id="member-search" class="form-input" placeholder="Add a member by name&hellip;" autocomplete="off" />
+          <div id="search-results" class="search-results"></div>
+        </div>
+
+        {members.length === 0 ? (
+          <p class="perm-empty">Nobody is in this group yet. Sync from the mail group, or add members by name above.</p>
+        ) : (
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Source</th>
+                <th>Added</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map(m => (
+                <tr>
+                  <td><a href={`/admin/members/${m.id}`}>{m.first_name} {m.surname}</a></td>
+                  <td>{m.email || <span class="muted">no email</span>}</td>
+                  <td>
+                    <span class={`badge ${m.source === 'sync' ? 'badge-info' : 'badge-warning'}`}>
+                      {m.source === 'sync' ? 'Mail group' : 'Added by hand'}
+                    </span>
+                  </td>
+                  <td class="muted">{ts(m.added_at)}{m.added_by ? ` · ${m.added_by}` : ''}</td>
+                  <td><button class="btn btn-sm btn-danger remove-btn" data-id={m.id} data-name={`${m.first_name} ${m.surname}`}>Remove</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Recent sync activity</span></div>
+        {syncLog.length === 0 ? (
+          <p class="perm-empty">No syncs have run yet.</p>
+        ) : (
+          <table class="table">
+            <thead>
+              <tr><th>When</th><th>Direction</th><th>Added</th><th>Removed</th><th>Unmatched</th><th>By</th></tr>
+            </thead>
+            <tbody>
+              {syncLog.map(l => (
+                <tr class={l.ok ? '' : 'row-warn'}>
+                  <td>{ts(l.run_at)}</td>
+                  <td>{l.direction === 'pull' ? 'Group → CRM' : 'CRM → Group'}</td>
+                  <td>{l.added}</td>
+                  <td>{l.removed}</td>
+                  <td>{l.unmatched}</td>
+                  <td class="muted">{l.run_by || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
+  )}
+</AdminLayout>
+
+<script is:inline>
+  const statusBox = document.getElementById('sync-status');
+
+  function status(html, kind) {
+    statusBox.innerHTML = `<div class="alert alert-${kind}">${html}</div>`;
+  }
+
+  async function post(body) {
+    const res = await fetch('/api/admin/permissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { ok: res.ok, data: await res.json() };
+  }
+
+  document.getElementById('sync-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = 'Syncing…';
+    try {
+      const { data } = await post({ action: 'sync-committee' });
+      if (!data.ok) {
+        status(`Sync failed: ${data.error || 'unknown error'}`, 'error');
+      } else {
+        const parts = [
+          `${data.added.length} added`,
+          `${data.removed.length} removed`,
+          `${data.unchanged} unchanged`,
+        ];
+        let html = `<strong>Sync complete.</strong> ${parts.join(', ')}.`;
+        if (data.unmatched.length) {
+          html += `<br><strong>${data.unmatched.length} address(es) in the mail group matched no member record:</strong> `
+            + data.unmatched.map(u => `${u.displayName || ''} &lt;${u.email}&gt;`).join(', ');
+        }
+        if (data.manualKept.length) {
+          html += `<br>${data.manualKept.length} member(s) added by hand were kept: `
+            + data.manualKept.map(m => m.name).join(', ');
+        }
+        status(html, data.unmatched.length ? 'warning' : 'success');
+        setTimeout(() => location.reload(), 2500);
+      }
+    } catch (err) {
+      status(`Sync failed: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+
+  document.querySelectorAll('.remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.dataset.name;
+      if (!confirm(`Remove ${name} from the committee? They will also be removed from the committee mail group.`)) return;
+      btn.disabled = true;
+      const { data } = await post({ action: 'set-committee', memberId: Number(btn.dataset.id), value: false });
+      if (data.warning) {
+        status(data.warning, 'warning');
+        setTimeout(() => location.reload(), 3000);
+      } else {
+        location.reload();
+      }
+    });
+  });
+
+  // Add member by name
+  const search = document.getElementById('member-search');
+  const results = document.getElementById('search-results');
+  let searchTimer;
+
+  search?.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = search.value.trim();
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    searchTimer = setTimeout(async () => {
+      const res = await fetch(`/api/member-search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      results.innerHTML = (data.members || [])
+        .map(m => `<button type="button" class="search-hit" data-id="${m.id}">${m.first_name} ${m.surname}</button>`)
+        .join('') || '<span class="search-none">No matches</span>';
+      results.querySelectorAll('.search-hit').forEach(hit => {
+        hit.addEventListener('click', async () => {
+          hit.disabled = true;
+          const { data } = await post({ action: 'set-committee', memberId: Number(hit.dataset.id), value: true });
+          if (data.warning) {
+            status(data.warning, 'warning');
+            setTimeout(() => location.reload(), 3000);
+          } else {
+            location.reload();
+          }
+        });
+      });
+    }, 250);
+  });
+</script>
+
+<style>
+  .perm-desc { color: #555; margin: 0 0 1rem; max-width: 70ch; }
+  .perm-subhead { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin: 0 0 0.5rem; }
+  .cap-list { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: 0.35rem; }
+  .cap-list li { display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap; }
+  .cap-list code { background: #f1f3f4; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.82rem; }
+  .cap-list span { color: #666; font-size: 0.88rem; }
+  .perm-empty { color: #666; }
+  .muted { color: #888; font-size: 0.85rem; }
+  .row-warn td { background: #fff8e1; }
+  .add-row { position: relative; margin-bottom: 1rem; max-width: 380px; }
+  .search-results { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.35rem; }
+  .search-hit {
+    text-align: left;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 0.45rem 0.7rem;
+    cursor: pointer;
+    font: inherit;
+  }
+  .search-hit:hover { border-color: #1e5631; background: #f4f9f5; }
+  .search-none { color: #888; font-size: 0.85rem; }
+</style>

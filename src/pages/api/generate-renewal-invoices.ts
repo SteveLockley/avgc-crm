@@ -165,6 +165,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        AND inv.period_start = ? AND inv.period_end = ?
        AND inv.status != 'cancelled'
      WHERE se.email_type = ? AND se.year = ? AND se.status = 'sent'
+       AND m.deleted_at IS NULL
        AND inv.id IS NULL
      GROUP BY m.id
      ORDER BY m.surname, m.first_name`
@@ -184,6 +185,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
          AND inv.period_start = ? AND inv.period_end = ?
          AND inv.status != 'cancelled'
        WHERE m.family_payer_id IS NOT NULL
+         AND m.deleted_at IS NULL
          AND inv.id IS NULL
        GROUP BY m.id
        ORDER BY m.surname, m.first_name`

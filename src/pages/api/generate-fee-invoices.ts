@@ -101,7 +101,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const members = await env.DB.prepare(
     `SELECT m.id, m.first_name, m.surname, m.email, m.category, m.default_payment_method
      FROM members m
-     WHERE ${config.memberFilter}
+     WHERE m.deleted_at IS NULL AND ${config.memberFilter}
        AND m.id NOT IN (
          SELECT DISTINCT i.member_id
          FROM invoices i

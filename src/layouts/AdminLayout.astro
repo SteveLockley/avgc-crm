@@ -22,7 +22,7 @@ const navItems = [
   ]},
   { href: '/admin/sage/pl-summary', label: 'Finance', icon: 'pound-sign', children: [
     // Hidden: { href: '/admin/sage/dashboard', label: 'Financial Overview', icon: 'pie-chart' },
-    { href: '/admin/sage/pl-summary', label: 'Monthly P&L Summary', icon: 'file-text' },
+    { href: '/admin/sage/pl-summary', label: 'Income & Expenditure (Cash Based)', icon: 'file-text' },
     // Hidden: { href: '/admin/sage/projection', label: 'Year-End Projection', icon: 'trending-up' },
     { href: '/admin/sage/sales-import', label: 'POS Sales Import', icon: 'upload-cloud' },
     { href: '/admin/sage/trial-balance', label: 'Trial Balance', icon: 'balance-scale' },
@@ -31,6 +31,7 @@ const navItems = [
   ]},
   { href: '/admin/statistics', label: 'Statistics', icon: 'bar-chart-2' },
   { href: '/admin/energy', label: 'Energy', icon: 'zap' },
+  { href: '/admin/permissions', label: 'Permissions', icon: 'shield' },
   { href: '/admin/database', label: 'Database', icon: 'database' },
   { href: '/admin/content', label: 'Website', icon: 'globe' },
 ];
@@ -986,6 +987,7 @@ const isItemActive = (item: any) => {
             {item.icon === 'bar-chart-2' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>}
             {item.icon === 'database' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}
             {item.icon === 'globe' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
+            {item.icon === 'shield' && <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}
             <span>{item.label}</span>
           </a>
         ))}

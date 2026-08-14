@@ -11,6 +11,7 @@ export const GET: APIRoute = async ({ locals }) => {
      FROM members
      WHERE age_group = 'Senior'
        AND gender = 'M'
+       AND deleted_at IS NULL
      ORDER BY surname, first_name`
   ).all();
 

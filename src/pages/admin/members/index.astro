@@ -80,6 +80,13 @@ if (filter === 'expiring') {
   whereClause += ` AND (date_expires >= date('now') OR date_expires IS NULL)`;
 }
 
+// Deleted members are hidden from every other view; only the "Deleted" filter shows them
+if (filter === 'deleted') {
+  whereClause += ` AND deleted_at IS NOT NULL`;
+} else {
+  whereClause += ` AND deleted_at IS NULL`;
+}
+
 if (emailSent) {
   whereClause += ` AND id IN (SELECT DISTINCT member_id FROM sent_emails WHERE email_type = ? AND status = 'sent')`;
   params.push(emailSent);
@@ -100,7 +107,7 @@ const totalPages = Math.ceil(totalCount / perPage);
 // Get members
 const members = await db.prepare(
   `SELECT id, surname, first_name, email, category, home_away, handicap_index,
-          date_expires, date_joined, account_balance, subscription_template, notes
+          date_expires, date_joined, account_balance, subscription_template, notes, deleted_at
    FROM members
    WHERE ${whereClause}
    ORDER BY ${actualSortColumn} ${actualSortDir}, surname ASC, first_name ASC
@@ -254,6 +261,7 @@ function getSortIndicator(column: string): string {
             <option value="active" selected={filter === 'active'}>Active</option>
             <option value="expiring" selected={filter === 'expiring'}>Expiring Soon</option>
             <option value="expired" selected={filter === 'expired'}>Expired</option>
+            <option value="deleted" selected={filter === 'deleted'}>Deleted</option>
           </select>
         </div>
 
@@ -388,12 +396,21 @@ function getSortIndicator(column: string): string {
                       <line x1="12" y1="17" x2="12" y2="21"/>
                     </svg>
                   </button>
-                  <button type="button" class="action-btn danger" onclick={`deleteMember(${member.id}, '${member.surname}, ${member.first_name}')`} title="Delete">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="3 6 5 6 21 6"/>
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                  </button>
+                  {member.deleted_at ? (
+                    <button type="button" class="action-btn" onclick={`restoreMember(${member.id}, '${member.surname}, ${member.first_name}')`} title="Restore">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12a9 9 0 1 0 3-6.7"/>
+                        <polyline points="3 4 3 9 8 9"/>
+                      </svg>
+                    </button>
+                  ) : (
+                    <button type="button" class="action-btn danger" onclick={`deleteMember(${member.id}, '${member.surname}, ${member.first_name}')`} title="Delete">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -1166,7 +1183,7 @@ function getSortIndicator(column: string): string {
   <script is:inline>
     async function deleteMember(id, name) {
       const confirmed = await m3Confirm(
-        `This will permanently delete ${name} and all their payments, invoices, and subscription history.`,
+        `Delete ${name}? Their payments, invoices, and subscription history are kept for accounting records, but they'll be hidden from the member list. You can restore them later from the Deleted filter.`,
         {
           title: 'Delete Member?',
           type: 'delete',
@@ -1189,6 +1206,32 @@ function getSortIndicator(column: string): string {
         }
       } catch (error) {
         await m3Alert('Delete failed: ' + error.message, { title: 'Error', type: 'error' });
+      }
+    }
+
+    async function restoreMember(id, name) {
+      const confirmed = await m3Confirm(
+        `Restore ${name} to active members?`,
+        { title: 'Restore Member?', confirmText: 'Restore', cancelText: 'Cancel' }
+      );
+
+      if (!confirmed) return;
+
+      try {
+        const response = await fetch(`/api/members/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'restore' })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          location.reload();
+        } else {
+          await m3Alert('Restore failed: ' + (data.error || 'Unknown error'), { title: 'Error', type: 'error' });
+        }
+      } catch (error) {
+        await m3Alert('Restore failed: ' + error.message, { title: 'Error', type: 'error' });
       }
     }
 

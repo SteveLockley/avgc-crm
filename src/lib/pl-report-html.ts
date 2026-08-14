@@ -87,7 +87,7 @@ export function renderPLReportHtml(data: PLReportData): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AVGC Profit and Loss — ${data.periodLabel}</title>
+  <title>AVGC Income &amp; Expenditure (Cash Based) — ${data.periodLabel}</title>
 </head>
 <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background-color:#f4f4f4;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f4;">
@@ -97,7 +97,7 @@ export function renderPLReportHtml(data: PLReportData): string {
           <tr>
             <td style="background-color:${GREEN};padding:22px 28px;">
               <h1 style="margin:0;color:#ffffff;font-size:19px;font-weight:600;">Alnmouth Village Golf Club</h1>
-              <p style="margin:4px 0 0 0;color:#d7e8da;font-size:13px;">Profit &amp; Loss Summary &middot; ${data.periodLabel}</p>
+              <p style="margin:4px 0 0 0;color:#d7e8da;font-size:13px;">Income &amp; Expenditure (Cash Based) &middot; ${data.periodLabel}</p>
             </td>
           </tr>
           <tr>

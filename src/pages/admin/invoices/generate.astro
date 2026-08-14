@@ -39,7 +39,7 @@ if (queryMemberId && Astro.request.method === 'GET') {
   const memberId = parseInt(queryMemberId);
   if (!isNaN(memberId)) {
     const result = await db.prepare(
-      `SELECT * FROM members WHERE id = ? AND family_payer_id IS NULL AND id NOT IN (
+      `SELECT * FROM members WHERE id = ? AND deleted_at IS NULL AND family_payer_id IS NULL AND id NOT IN (
         SELECT member_id FROM invoices
         WHERE period_start = ? AND period_end = ? AND status != 'cancelled'
       )`
@@ -69,6 +69,7 @@ if (isWinterMode && Astro.request.method === 'GET' && !queryMemberId) {
   const result = await db.prepare(
     `SELECT * FROM members
      WHERE category = 'Winter'
+     AND deleted_at IS NULL
      AND family_payer_id IS NULL
      AND id NOT IN (
        SELECT member_id FROM invoices
@@ -95,7 +96,7 @@ if (Astro.request.method === 'POST') {
     const category = formData.get('category');
     const memberIds = formData.get('member_ids');
 
-    let whereClause = '1=1';
+    let whereClause = 'deleted_at IS NULL';
     const params: any[] = [];
 
     // Filter by selection mode
@@ -163,7 +164,7 @@ if (Astro.request.method === 'POST') {
           `SELECT m.*, p.fee as subscription_fee, p.id as subscription_item_id
            FROM members m
            LEFT JOIN payment_items p ON p.name = m.category AND p.category = 'Subscription' AND p.active = 1
-           WHERE m.id IN (${memberIds.map(() => '?').join(',')})`
+           WHERE m.deleted_at IS NULL AND m.id IN (${memberIds.map(() => '?').join(',')})`
         ).bind(...memberIds).all();
         const members = (membersResult.results || []) as any[];
 

@@ -185,7 +185,7 @@ export async function computePLReport(
     wages: line('Wages', t.wages, l.wages),
     otherExpenses: line('Other Expenses', t.otherExpenses, l.otherExpenses),
     totalExpenses: line('Total Expenses', t.totalExpenses, l.totalExpenses),
-    netProfit: line('Net Profit /(Loss)', t.netProfit, l.netProfit),
+    netProfit: line('Surplus /(Deficit)', t.netProfit, l.netProfit),
     clubhouse: {
       sales: line('Clubhouse Sales', t.clubhouseSales, l.clubhouseSales),
       purchases: line('Clubhouse Purchases', t.costOfSales, l.costOfSales),

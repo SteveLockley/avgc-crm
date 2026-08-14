@@ -52,7 +52,7 @@ export async function matchMember(
   // Query members by surname (exact) and first_name (starts with)
   const results = await db.prepare(
     `SELECT id, first_name, surname, discount_card FROM members
-     WHERE LOWER(surname) = LOWER(?) AND LOWER(first_name) LIKE LOWER(?)`
+     WHERE deleted_at IS NULL AND LOWER(surname) = LOWER(?) AND LOWER(first_name) LIKE LOWER(?)`
   ).bind(surname, `${firstName}%`).all();
 
   const members = results.results || [];
