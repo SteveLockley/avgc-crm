@@ -63,7 +63,8 @@ export function renderPLReportHtml(data: PLReportData): string {
     row(data.wages, 'expense') +
     row(data.otherExpenses, 'expense') +
     row(data.totalExpenses, 'expense', { bold: true, shaded: true }) +
-    row(data.netProfit, 'net', { bold: true, shaded: true });
+    // Snapshots generated before the rename carry the old label, so force it here.
+    row({ ...data.netProfit, label: 'Surplus /(Deficit)' }, 'net', { bold: true, shaded: true });
 
   const clubhouseRows =
     row(data.clubhouse.sales, 'income') +
