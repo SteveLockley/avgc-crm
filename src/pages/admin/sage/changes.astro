@@ -1,0 +1,235 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let connections: any[] = [];
+let sets: any[] = [];
+let loadError = '';
+
+if (db) {
+  try {
+    const c = await db.prepare(
+      `SELECT role, sage_business_name, sage_business_id, updated_at FROM sage_tokens ORDER BY role`
+    ).all();
+    connections = c.results || [];
+
+    const s = await db.prepare(
+      `SELECT cs.*,
+              (SELECT COUNT(*) FROM sage_change c WHERE c.change_set_id = cs.id) AS total,
+              (SELECT COUNT(*) FROM sage_change c WHERE c.change_set_id = cs.id AND c.status = 'approved') AS approved,
+              (SELECT COUNT(*) FROM sage_change c WHERE c.change_set_id = cs.id AND c.status = 'applied') AS applied
+         FROM sage_change_set cs ORDER BY cs.id DESC LIMIT 25`
+    ).all();
+    sets = s.results || [];
+  } catch (e: any) {
+    loadError = e.message.includes('no such table')
+      ? 'Run migration 064_sage_change_sets.sql to create the change-set tables.'
+      : e.message;
+  }
+}
+
+const selectedId = Number(Astro.url.searchParams.get('set') || 0) || (sets[0]?.id ?? 0);
+let selected: any = null;
+let changes: any[] = [];
+
+if (db && selectedId) {
+  try {
+    selected = await db.prepare('SELECT * FROM sage_change_set WHERE id = ?').bind(selectedId).first();
+    const rows = await db.prepare(
+      'SELECT * FROM sage_change WHERE change_set_id = ? ORDER BY id'
+    ).bind(selectedId).all();
+    changes = rows.results || [];
+  } catch { /* handled by loadError */ }
+}
+
+const live = connections.find(c => c.role === 'live');
+const test = connections.find(c => c.role === 'test');
+
+function ts(v: string | null) {
+  if (!v) return '—';
+  const d = new Date(v + 'Z');
+  return isNaN(d.getTime()) ? v : d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+---
+
+<AdminLayout title="Sage Changes">
+  {loadError && <div class="alert alert-error">{loadError}</div>}
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Connected businesses</span></div>
+    <table class="table">
+      <thead><tr><th>Role</th><th>Business</th><th>Connected</th><th></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-danger">Live</span></td>
+          <td>{live ? live.sage_business_name : <span class="muted">not connected</span>}</td>
+          <td class="muted">{ts(live?.updated_at)}</td>
+          <td><a class="btn btn-sm btn-secondary" href="/api/sage/authorize?role=live">{live ? 'Reconnect' : 'Connect'}</a></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-info">Test</span></td>
+          <td>{test ? test.sage_business_name : <span class="muted">not connected</span>}</td>
+          <td class="muted">{ts(test?.updated_at)}</td>
+          <td><a class="btn btn-sm btn-secondary" href="/api/sage/authorize?role=test">{test ? 'Reconnect' : 'Connect trial business'}</a></td>
+        </tr>
+      </tbody>
+    </table>
+    {!test && (
+      <p class="hint">
+        Create a trial business at <a href="https://developer.sage.com/" target="_blank" rel="noopener">developer.sage.com</a>,
+        then connect it here. Changes must be applied to the test business before the live one is allowed.
+      </p>
+    )}
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Change sets</span>
+      <button id="propose-btn" class="btn btn-sm btn-secondary">Propose phase 1 — TotalEnergies</button>
+    </div>
+    {sets.length === 0 ? (
+      <p class="muted">No change sets yet.</p>
+    ) : (
+      <table class="table">
+        <thead><tr><th>#</th><th>Name</th><th>Status</th><th>Changes</th><th>Created</th></tr></thead>
+        <tbody>
+          {sets.map(s => (
+            <tr class={s.id === selectedId ? 'row-selected' : ''}>
+              <td>{s.id}</td>
+              <td><a href={`?set=${s.id}`}>{s.name}</a></td>
+              <td><span class={`badge badge-${s.status === 'applied' ? 'success' : s.status === 'failed' ? 'danger' : 'warning'}`}>{s.status}</span></td>
+              <td class="muted">{s.applied}/{s.approved} approved of {s.total}</td>
+              <td class="muted">{ts(s.created_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </div>
+
+  {selected && (
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">#{selected.id} — {selected.name}</span>
+        <div class="actions">
+          <button class="btn btn-sm btn-secondary act" data-act="approve">Approve all</button>
+          <button class="btn btn-sm btn-secondary act" data-act="dry-run" data-role="test">Dry run (test)</button>
+          <button class="btn btn-sm btn-primary act" data-act="apply" data-role="test">Apply to test</button>
+          <button class="btn btn-sm btn-danger act" data-act="apply" data-role="live">Apply to LIVE</button>
+          <button class="btn btn-sm btn-secondary act" data-act="rollback">Roll back</button>
+        </div>
+      </div>
+
+      <p class="muted">{selected.description}</p>
+      <div id="status"></div>
+
+      {changes.map(c => {
+        const payload = JSON.parse(c.payload_json);
+        return (
+          <div class="change">
+            <div class="change-head">
+              <span class={`badge badge-${c.status === 'applied' ? 'success' : c.status === 'approved' ? 'info' : c.status === 'failed' ? 'danger' : 'warning'}`}>{c.status}</span>
+              <strong>{c.action}</strong>
+              <span>{c.label}</span>
+              {c.sage_id && <code class="sid">{c.sage_id}</code>}
+            </div>
+            {c.error && <div class="alert alert-error">{c.error}</div>}
+            <table class="table diff">
+              <thead><tr><th>Field</th><th>Current in Sage</th><th>Proposed</th></tr></thead>
+              <tbody>
+                {Object.entries(payload).map(([k, v]) => (
+                  <tr>
+                    <td class="fname">{k}</td>
+                    <td class="muted">{c.before_json ? String((JSON.parse(c.before_json)[k] ?? '—')).slice(0, 120) : (c.action === 'create' ? '— (new record)' : '—')}</td>
+                    <td class="newval">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  )}
+</AdminLayout>
+
+<script is:inline define:vars={{ selectedId }}>
+  const statusEl = document.getElementById('status');
+  function show(html, kind) {
+    statusEl.innerHTML = `<div class="alert alert-${kind}">${html}</div>`;
+  }
+
+  async function post(body) {
+    const res = await fetch('/api/sage/changes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  document.getElementById('propose-btn')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    const d = await post({ action: 'propose-totalenergies' });
+    if (d.error) { alert(d.error); e.currentTarget.disabled = false; return; }
+    location.href = `?set=${d.setId}`;
+  });
+
+  document.querySelectorAll('.act').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const act = btn.dataset.act;
+      const role = btn.dataset.role;
+      const body = { action: act, setId: selectedId, role };
+
+      if (act === 'apply' && role === 'live') {
+        const typed = prompt('This writes to the club’s real Sage accounts.\nType APPLY TO LIVE to continue.');
+        if (typed !== 'APPLY TO LIVE') return;
+        body.confirm = typed;
+      }
+      if (act === 'rollback' && !confirm('Roll back every applied change in this set?')) return;
+
+      btn.disabled = true;
+      show('Working…', 'info');
+      try {
+        const d = await post(body);
+        if (d.error) { show(d.error, 'error'); return; }
+
+        if (act === 'dry-run') {
+          const lines = [`<strong>Dry run against ${d.role}:</strong> ${d.checked} change(s) checked.`];
+          if (d.problems.length) {
+            lines.push('<strong>Problems:</strong><ul>' + d.problems.map(p => `<li>${p.label}: ${p.problem}</li>`).join('') + '</ul>');
+          } else {
+            lines.push('No problems found.');
+          }
+          show(lines.join('<br>'), d.ok ? 'success' : 'warning');
+        } else if (act === 'apply') {
+          show(`Applied ${d.applied}, failed ${d.failed} on ${d.role}. Snapshots: ${d.snapshotBefore} before, ${d.snapshotAfter} after.`
+            + (d.errors?.length ? '<br>' + d.errors.map(x => `${x.label}: ${x.error}`).join('<br>') : ''),
+            d.ok ? 'success' : 'error');
+          setTimeout(() => location.reload(), 2500);
+        } else if (act === 'rollback') {
+          show(`Rolled back ${d.restored}.<br>` + (d.notes || []).join('<br>'), 'success');
+          setTimeout(() => location.reload(), 2500);
+        } else {
+          location.reload();
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+</script>
+
+<style>
+  .muted { color: #888; }
+  .hint { color: #666; font-size: 0.88rem; margin: 0.5rem 0 0; }
+  .row-selected td { background: #f4f8f5; }
+  .actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .change { border: 1px solid #e0e0e0; border-radius: 8px; padding: 0.9rem; margin-bottom: 1rem; }
+  .change-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
+  .sid { background: #f1f3f4; padding: 0.05rem 0.35rem; border-radius: 4px; font-size: 0.75rem; }
+  .diff { font-size: 0.85rem; }
+  .fname { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+  .newval { white-space: pre-wrap; }
+</style>

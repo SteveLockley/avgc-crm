@@ -119,10 +119,22 @@ export async function refreshAccessToken(
 
 // ─── Token Management ────────────────────────────────────────────────
 
-export async function getValidToken(db: any, clientId: string, clientSecret: string): Promise<string> {
-  const row = await db.prepare('SELECT * FROM sage_tokens ORDER BY id LIMIT 1').first() as any;
+/** Which connected Sage business to talk to: the club's real accounts, or a trial business. */
+export type SageRole = 'live' | 'test';
+
+export async function getValidToken(
+  db: any,
+  clientId: string,
+  clientSecret: string,
+  role: SageRole = 'live',
+): Promise<string> {
+  // Rows predating migration 064 default to 'live', so the live lookup still
+  // finds a connection made before roles existed.
+  const row = await db.prepare(
+    'SELECT * FROM sage_tokens WHERE role = ? ORDER BY id LIMIT 1'
+  ).bind(role).first() as any;
   if (!row) {
-    throw new Error('NO_SAGE_CONNECTION');
+    throw new Error(role === 'live' ? 'NO_SAGE_CONNECTION' : 'NO_SAGE_TEST_CONNECTION');
   }
 
   // Check if access token is still valid (with 60s buffer)
@@ -162,6 +174,13 @@ export interface SageClientOptions {
   db: any;
   clientId: string;
   clientSecret: string;
+  /** Which connected business to use. Defaults to the club's live accounts. */
+  role?: SageRole;
+  /**
+   * Writes are refused unless this is true. The change-set engine turns it on
+   * for a single apply run; nothing else should.
+   */
+  allowWrites?: boolean;
 }
 
 export class SageClient {
@@ -169,36 +188,64 @@ export class SageClient {
   private clientId: string;
   private clientSecret: string;
   private tokenPromise: Promise<string> | null = null;
+  readonly role: SageRole;
+  private allowWrites: boolean;
 
   constructor(opts: SageClientOptions) {
     this.db = opts.db;
     this.clientId = opts.clientId;
     this.clientSecret = opts.clientSecret;
+    this.role = opts.role ?? 'live';
+    this.allowWrites = opts.allowWrites ?? false;
   }
 
   private getToken(): Promise<string> {
     // Cache the promise so parallel calls share one refresh instead of racing
     if (!this.tokenPromise) {
-      this.tokenPromise = getValidToken(this.db, this.clientId, this.clientSecret);
+      this.tokenPromise = getValidToken(this.db, this.clientId, this.clientSecret, this.role);
     }
     return this.tokenPromise;
   }
 
-  async post<T = any>(path: string, body: unknown): Promise<T> {
+  private assertWritable(method: string, path: string): void {
+    if (!this.allowWrites) {
+      throw new Error(
+        `Sage writes are disabled for this client (${method} ${path} on the ${this.role} business). ` +
+        'Writes only run through the change-set engine.'
+      );
+    }
+  }
+
+  private async write<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
+    this.assertWritable(method, path);
     const token = await this.getToken();
     const res = await fetch(`${SAGE_API_BASE}${path}`, {
-      method: 'POST',
+      method,
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Sage POST ${path} failed (${res.status}): ${text}`);
+      throw new Error(`Sage ${method} ${path} failed (${res.status}): ${text}`);
     }
-    return res.json() as Promise<T>;
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
+  async post<T = any>(path: string, body: unknown): Promise<T> {
+    return this.write<T>('POST', path, body);
+  }
+
+  async put<T = any>(path: string, body: unknown): Promise<T> {
+    return this.write<T>('PUT', path, body);
+  }
+
+  async delete<T = any>(path: string): Promise<T> {
+    return this.write<T>('DELETE', path);
   }
 
   async get<T = any>(path: string, params?: Record<string, string>): Promise<T> {
@@ -384,10 +431,15 @@ export class SageClient {
 
 // ─── Helper: Create SageClient from Astro locals ────────────────────
 
-export function createSageClient(env: Env): SageClient {
+export function createSageClient(
+  env: Env,
+  opts: { role?: SageRole; allowWrites?: boolean } = {},
+): SageClient {
   return new SageClient({
     db: env.DB,
     clientId: env.SAGE_CLIENT_ID,
     clientSecret: env.SAGE_CLIENT_SECRET,
+    role: opts.role,
+    allowWrites: opts.allowWrites,
   });
 }

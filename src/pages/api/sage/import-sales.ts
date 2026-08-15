@@ -179,7 +179,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   let sageJournalId: string;
   try {
-    const client = createSageClient(env);
+    // Existing sanctioned write path: posts the daily takings journal.
+    const client = createSageClient(env, { allowWrites: true });
     const result = await client.createJournal({
       date,
       reference: `TO-${date}`,

@@ -16,6 +16,9 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
   const code = rawCodeMatch ? decodeURIComponent(rawCodeMatch[1]) : null;
   const error = url.searchParams.get('error');
 
+  // authorize.ts prefixes the state with the target role.
+  const role = (url.searchParams.get('state') || '').startsWith('test.') ? 'test' : 'live';
+
   if (error) {
     return new Response(`Sage authorization failed: ${error}`, { status: 400 });
   }
@@ -45,9 +48,22 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
     const biz = businesses[0] || {};
 
     // Upsert the token row
+    // Guard against connecting the live business into the test slot (or the
+    // reverse), which would point rehearsal writes at the club's real accounts.
+    const clash = await db.prepare(
+      'SELECT role, sage_business_name FROM sage_tokens WHERE sage_business_id = ?'
+    ).bind(biz.id || 'default').first() as any;
+    if (clash && clash.role !== role) {
+      return new Response(
+        `This business ("${clash.sage_business_name}") is already connected as the ${clash.role} business. ` +
+        `Connect a different business as ${role}, or disconnect the existing one first.`,
+        { status: 409 },
+      );
+    }
+
     await db.prepare(`
-      INSERT INTO sage_tokens (sage_business_id, sage_business_name, access_token, refresh_token, token_expires_at, refresh_token_expires_at, resource_owner_id, scope)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'readonly')
+      INSERT INTO sage_tokens (sage_business_id, sage_business_name, access_token, refresh_token, token_expires_at, refresh_token_expires_at, resource_owner_id, scope, role)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'readonly', ?)
       ON CONFLICT(sage_business_id) DO UPDATE SET
         sage_business_name = excluded.sage_business_name,
         access_token = excluded.access_token,
@@ -55,6 +71,7 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
         token_expires_at = excluded.token_expires_at,
         refresh_token_expires_at = excluded.refresh_token_expires_at,
         resource_owner_id = excluded.resource_owner_id,
+        role = excluded.role,
         updated_at = datetime('now')
     `).bind(
       biz.id || 'default',
@@ -64,15 +81,16 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
       tokens.token_expires_at,
       tokens.refresh_token_expires_at,
       tokens.resource_owner_id || null,
+      role,
     ).run();
 
     // Log the connection
     await db.prepare(`
       INSERT INTO audit_log (action, entity_type, entity_id, details)
       VALUES ('sage_connected', 'sage_business', ?, ?)
-    `).bind(biz.id || 'default', JSON.stringify({ name: biz.displayed_as })).run();
+    `).bind(biz.id || 'default', JSON.stringify({ name: biz.displayed_as, role })).run();
 
-    return redirect('/admin/sage');
+    return redirect(role === 'test' ? '/admin/sage/changes' : '/admin/sage');
   } catch (err: any) {
     return new Response(`Token exchange failed: ${err.message}`, { status: 500 });
   }
