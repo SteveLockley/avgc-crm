@@ -19,41 +19,78 @@ function money(n: number, style: 'income' | 'expense' | 'net'): string {
   return fmt(n);
 }
 
-function varianceChip(pct: number | null, style: 'income' | 'expense' | 'net'): string {
-  if (pct === null) return '<span style="color:#999;">–</span>';
-  const goodDirection = style === 'expense' ? pct < 0 : pct > 0;
-  const color = pct === 0 ? MUTED : (goodDirection ? GREEN : RED);
-  const arrow = pct === 0 ? '' : (pct > 0 ? '▲ ' : '▼ ');
-  return `<span style="color:${color};font-weight:600;">${arrow}${Math.abs(pct)}%</span>`;
-}
-
+// Last year first, then this year. No variance column.
 function row(l: PLLine, style: 'income' | 'expense' | 'net', opts: { bold?: boolean; shaded?: boolean } = {}): string {
   const weight = opts.bold ? '700' : '400';
   const bg = opts.shaded ? '#f4f8f5' : '#fff';
   return `
     <tr style="background:${bg};">
       <td style="padding:7px 12px;font-weight:${weight};border-bottom:1px solid ${BORDER};">${l.label}</td>
-      <td style="padding:7px 12px;text-align:right;font-weight:${weight};font-variant-numeric:tabular-nums;border-bottom:1px solid ${BORDER};">${money(l.thisYear, style)}</td>
       <td style="padding:7px 12px;text-align:right;color:${MUTED};font-variant-numeric:tabular-nums;border-bottom:1px solid ${BORDER};">${money(l.lastYear, style)}</td>
-      <td style="padding:7px 12px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid ${BORDER};">${varianceChip(l.variancePct, style)}</td>
+      <td style="padding:7px 12px;text-align:right;font-weight:${weight};font-variant-numeric:tabular-nums;border-bottom:1px solid ${BORDER};">${money(l.thisYear, style)}</td>
     </tr>`;
 }
 
+function sectionHeading(text: string): string {
+  return `<h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin:14px 0 4px 0;">${text}</h2>`;
+}
+
 function sectionTable(title: string, rows: string, headerRow = true): string {
+  const th = (text: string, align: 'left' | 'right') =>
+    `<td style="padding:6px 12px;text-align:${align};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">${text}</td>`;
   return `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;color:#222;margin-bottom:20px;">
-      ${headerRow ? `
-      <tr>
-        <td style="padding:6px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">${title}</td>
-        <td style="padding:6px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">This Year</td>
-        <td style="padding:6px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">Last Year</td>
-        <td style="padding:6px 12px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">Variance</td>
-      </tr>` : ''}
+      ${headerRow ? `<tr>${th(title, 'left')}${th('Last Year', 'right')}${th('This Year', 'right')}</tr>` : ''}
       ${rows}
     </table>`;
 }
 
-export function renderPLReportHtml(data: PLReportData): string {
+/**
+ * Snapshots saved before the Membership/Other split have no `membership` or
+ * `other` sections. Derive them from the summary figures so historic reports
+ * still render, and still tie back to the summary.
+ */
+function withSections(data: PLReportData): PLReportData {
+  if (data.membership && data.other) return data;
+
+  const derive = (label: string, thisYear: number, lastYear: number): PLLine => ({
+    label,
+    thisYear,
+    lastYear,
+    variancePct: lastYear ? Math.round(((thisYear - lastYear) / Math.abs(lastYear)) * 100) : null,
+  });
+
+  const utilities = data.other?.utilities ?? data.otherCosts?.utilities
+    ?? derive('Utilities', 0, 0);
+  const overheads = data.other?.otherOverheads ?? data.otherCosts?.otherOverheads
+    ?? derive('Other Overheads', 0, 0);
+  const otherIncome = data.income.otherIncome;
+
+  return {
+    ...data,
+    // Older snapshots left the section subtotals unlabelled.
+    clubhouse: { ...data.clubhouse, subtotal: { ...data.clubhouse.subtotal, label: data.clubhouse.subtotal.label || 'Clubhouse Total' } },
+    course: { ...data.course, subtotal: { ...data.course.subtotal, label: data.course.subtotal.label || 'Course Total' } },
+    membership: data.membership ?? {
+      subscriptions: { ...data.income.membership, label: 'Members Subscriptions' },
+      subtotal: derive('Membership Total', data.income.membership.thisYear, data.income.membership.lastYear),
+    },
+    other: data.other ?? {
+      otherIncome,
+      utilities,
+      otherOverheads: overheads,
+      subtotal: derive(
+        'Other Total',
+        otherIncome.thisYear - utilities.thisYear - overheads.thisYear,
+        otherIncome.lastYear - utilities.lastYear - overheads.lastYear
+      ),
+    },
+  };
+}
+
+export function renderPLReportHtml(input: PLReportData): string {
+  const data = withSections(input);
+
   const summaryRows =
     row(data.income.clubhouseSales, 'income') +
     row(data.income.membership, 'income') +
@@ -72,14 +109,20 @@ export function renderPLReportHtml(data: PLReportData): string {
     row(data.clubhouse.wages, 'expense') +
     row(data.clubhouse.subtotal, 'net', { bold: true, shaded: true });
 
+  const membershipRows =
+    row(data.membership.subscriptions, 'income') +
+    row(data.membership.subtotal, 'net', { bold: true, shaded: true });
+
   const courseRows =
     row(data.course.wages, 'expense') +
     row(data.course.maintenance, 'expense') +
     row(data.course.subtotal, 'net', { bold: true, shaded: true });
 
-  const otherCostsRows =
-    row(data.otherCosts.utilities, 'expense') +
-    row(data.otherCosts.otherOverheads, 'expense');
+  const otherRows =
+    row(data.other.otherIncome, 'income') +
+    row(data.other.utilities, 'expense') +
+    row(data.other.otherOverheads, 'expense') +
+    row(data.other.subtotal, 'net', { bold: true, shaded: true });
 
   const runDate = new Date(data.runDate).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -108,12 +151,17 @@ export function renderPLReportHtml(data: PLReportData): string {
           </tr>
           <tr>
             <td style="padding:0 28px 8px 28px;">
-              <h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin:14px 0 4px 0;">Clubhouse</h2>
+              ${sectionHeading('Clubhouse')}
               ${sectionTable('', clubhouseRows, false)}
-              <h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin:14px 0 4px 0;">Course</h2>
+              ${sectionHeading('Membership')}
+              ${sectionTable('', membershipRows, false)}
+              ${sectionHeading('Course')}
               ${sectionTable('', courseRows, false)}
-              <h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin:14px 0 4px 0;">Other Costs</h2>
-              ${sectionTable('', otherCostsRows, false)}
+              ${sectionHeading('Other')}
+              ${sectionTable('', otherRows, false)}
+              <p style="margin:0 0 8px 12px;font-size:11px;color:${MUTED};">
+                Clubhouse + Membership + Course + Other = Surplus /(Deficit) above.
+              </p>
             </td>
           </tr>
           <tr>

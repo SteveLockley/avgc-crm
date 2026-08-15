@@ -1,7 +1,8 @@
-// Monthly Profit & Loss summary report — derived from Sage trial balance.
-// Mirrors the structure of the club's existing "AVGC Profit and Loss" PDF:
-// a top summary (Income / Cost of Sales / Wages / Other Expenses / Net Profit)
-// plus Clubhouse, Course and Other Costs department breakdowns.
+// Monthly Income & Expenditure (cash based) summary — derived from Sage trial balance.
+// A top summary (Income / Cost of Sales / Wages / Other Expenses / Surplus) plus
+// four department sections: Clubhouse, Membership, Course and Other. Every income
+// and expense line belongs to exactly one section, so the four section subtotals
+// add up to the summary's Surplus /(Deficit).
 
 import { createSageClient } from './sage';
 
@@ -33,12 +34,23 @@ export interface PLReportData {
     wages: PLLine;
     subtotal: PLLine;
   };
+  membership: {
+    subscriptions: PLLine;
+    subtotal: PLLine;
+  };
   course: {
     wages: PLLine;
     maintenance: PLLine;
     subtotal: PLLine;
   };
-  otherCosts: {
+  other: {
+    otherIncome: PLLine;
+    utilities: PLLine;
+    otherOverheads: PLLine;
+    subtotal: PLLine;
+  };
+  /** Shape used by snapshots generated before the Membership/Other split. */
+  otherCosts?: {
     utilities: PLLine;
     otherOverheads: PLLine;
   };
@@ -158,13 +170,18 @@ export async function computePLReport(
 
     const clubhouseWages   = sumByCodes(items, new Set([7000]), 'expense');
     const courseWages      = sumByCodes(items, new Set([7010]), 'expense');
-    const clubhouseSubtotal = clubhouseSales - costOfSales - clubhouseWages;
-    const courseSubtotal    = -(courseWages + courseMaint);
+    // Section subtotals. Between them these cover every income and expense line
+    // exactly once, so clubhouse + membership + course + other === netProfit.
+    const clubhouseSubtotal  = clubhouseSales - costOfSales - clubhouseWages;
+    const membershipSubtotal = membership;
+    const courseSubtotal     = -(courseWages + courseMaint);
+    const otherSubtotal      = otherIncome - utilities - otherOverheads;
 
     return {
       clubhouseSales, membership, otherIncome, totalIncome,
       costOfSales, wages, otherExpenses, totalExpenses, netProfit,
-      clubhouseWages, courseWages, clubhouseSubtotal, courseSubtotal, courseMaint, utilities, otherOverheads,
+      clubhouseWages, courseWages, courseMaint, utilities, otherOverheads,
+      clubhouseSubtotal, membershipSubtotal, courseSubtotal, otherSubtotal,
     };
   }
 
@@ -190,16 +207,22 @@ export async function computePLReport(
       sales: line('Clubhouse Sales', t.clubhouseSales, l.clubhouseSales),
       purchases: line('Clubhouse Purchases', t.costOfSales, l.costOfSales),
       wages: line('Clubhouse Wages', t.clubhouseWages, l.clubhouseWages),
-      subtotal: line('', t.clubhouseSubtotal, l.clubhouseSubtotal),
+      subtotal: line('Clubhouse Total', t.clubhouseSubtotal, l.clubhouseSubtotal),
+    },
+    membership: {
+      subscriptions: line('Members Subscriptions', t.membership, l.membership),
+      subtotal: line('Membership Total', t.membershipSubtotal, l.membershipSubtotal),
     },
     course: {
       wages: line('Course Wages', t.courseWages, l.courseWages),
       maintenance: line('Course Maintenance', t.courseMaint, l.courseMaint),
-      subtotal: line('', t.courseSubtotal, l.courseSubtotal),
+      subtotal: line('Course Total', t.courseSubtotal, l.courseSubtotal),
     },
-    otherCosts: {
+    other: {
+      otherIncome: line('Other Income', t.otherIncome, l.otherIncome),
       utilities: line('Utilities', t.utilities, l.utilities),
       otherOverheads: line('Other Overheads', t.otherOverheads, l.otherOverheads),
+      subtotal: line('Other Total', t.otherSubtotal, l.otherSubtotal),
     },
   };
 }
