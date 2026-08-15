@@ -35,13 +35,22 @@ function sectionHeading(text: string): string {
   return `<h2 style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:${MUTED};margin:14px 0 4px 0;">${text}</h2>`;
 }
 
+const th = (text: string, align: 'left' | 'right') =>
+  `<td style="padding:6px 12px;text-align:${align};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">${text}</td>`;
+
 function sectionTable(title: string, rows: string, headerRow = true): string {
-  const th = (text: string, align: 'left' | 'right') =>
-    `<td style="padding:6px 12px;text-align:${align};font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${MUTED};">${text}</td>`;
   return `
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;color:#222;margin-bottom:20px;">
       ${headerRow ? `<tr>${th(title, 'left')}${th('Last Year', 'right')}${th('This Year', 'right')}</tr>` : ''}
       ${rows}
+    </table>`;
+}
+
+/** Title plus column labels, styled like the Summary header, with no rows beneath it. */
+function bandHeading(title: string): string {
+  return `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:6px 0 0 0;border-bottom:1px solid ${BORDER};">
+      <tr>${th(title, 'left')}${th('Last Year', 'right')}${th('This Year', 'right')}</tr>
     </table>`;
 }
 
@@ -151,6 +160,7 @@ export function renderPLReportHtml(input: PLReportData): string {
           </tr>
           <tr>
             <td style="padding:0 28px 8px 28px;">
+              ${bandHeading('Breakdown by Business Area')}
               ${sectionHeading('Clubhouse')}
               ${sectionTable('', clubhouseRows, false)}
               ${sectionHeading('Membership')}
