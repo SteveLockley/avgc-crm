@@ -1,0 +1,199 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let invoices: any[] = [];
+let logRows: any[] = [];
+let suppliers: any[] = [];
+let loadError = '';
+
+if (db) {
+  try {
+    const inv = await db.prepare(
+      `SELECT id, supplier_name, invoice_number, invoice_date, due_date, net_amount, vat_amount,
+              gross_amount, account_reference, status, confidence, parse_warnings, parser,
+              file_name, source, created_at, reviewed_by
+         FROM supplier_invoices
+        ORDER BY (status = 'needs_review') DESC, COALESCE(invoice_date, created_at) DESC
+        LIMIT 100`
+    ).all();
+    invoices = inv.results || [];
+
+    const lg = await db.prepare(
+      `SELECT run_at, source, file_name, outcome, detail FROM invoice_ingestion_log
+        ORDER BY id DESC LIMIT 15`
+    ).all();
+    logRows = lg.results || [];
+
+    const sup = await db.prepare(
+      `SELECT supplier_key, display_name, parser, default_ledger_code FROM invoice_suppliers WHERE active = 1 ORDER BY display_name`
+    ).all();
+    suppliers = sup.results || [];
+  } catch (e: any) {
+    loadError = e.message.includes('no such table')
+      ? 'Run migration 065_supplier_invoices.sql to create the invoice tables.'
+      : e.message;
+  }
+}
+
+const needsReview = invoices.filter(i => i.status === 'needs_review').length;
+
+function money(v: number | null) {
+  return v === null || v === undefined ? '—' : v.toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+}
+function ts(v: string | null) {
+  if (!v) return '—';
+  const d = new Date(v.includes('T') ? v : v + 'Z');
+  return isNaN(d.getTime()) ? v : d.toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
+}
+---
+
+<AdminLayout title="Incoming Invoices">
+  {loadError && <div class="alert alert-error">{loadError}</div>}
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Upload a supplier PDF</span>
+      {needsReview > 0 && <span class="badge badge-warning">{needsReview} need review</span>}
+    </div>
+    <p class="hint">
+      Drop in a bill to see what the parser makes of it. Once the mailbox reader is connected these
+      arrive on their own; uploading is how the adapters get proved against real documents.
+    </p>
+    <input type="file" id="pdf-input" accept="application/pdf" multiple class="form-input" />
+    <button id="upload-btn" class="btn btn-primary btn-sm">Parse</button>
+    <div id="upload-status"></div>
+
+    <p class="hint">
+      Suppliers recognised: {suppliers.map(s => s.display_name).join(', ') || 'none configured'}
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Staged invoices</span></div>
+    {invoices.length === 0 ? (
+      <p class="muted">Nothing ingested yet.</p>
+    ) : (
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Supplier</th><th>Invoice</th><th>Date</th><th>Due</th>
+            <th class="r">Net</th><th class="r">VAT</th><th class="r">Gross</th>
+            <th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {invoices.map(i => {
+            const warnings = JSON.parse(i.parse_warnings || '[]');
+            return (
+              <>
+                <tr>
+                  <td>{i.supplier_name}<div class="sub">{i.file_name}</div></td>
+                  <td>{i.invoice_number || <span class="muted">—</span>}</td>
+                  <td>{i.invoice_date || '—'}</td>
+                  <td>{i.due_date || '—'}</td>
+                  <td class="r">{money(i.net_amount)}</td>
+                  <td class="r">{money(i.vat_amount)}</td>
+                  <td class="r"><strong>{money(i.gross_amount)}</strong></td>
+                  <td>
+                    <span class={`badge badge-${i.status === 'approved' ? 'success' : i.status === 'rejected' ? 'danger' : i.status === 'needs_review' ? 'warning' : 'info'}`}>
+                      {i.status.replace('_', ' ')}
+                    </span>
+                    <div class="sub">{Math.round(i.confidence * 100)}% · {i.parser}</div>
+                  </td>
+                  <td class="nowrap">
+                    {(i.status === 'parsed' || i.status === 'needs_review') && (
+                      <>
+                        <button class="btn btn-sm btn-primary act" data-act="approve" data-id={i.id}>Approve</button>
+                        <button class="btn btn-sm btn-secondary act" data-act="reject" data-id={i.id}>Reject</button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+                {warnings.length > 0 && (
+                  <tr class="warn-row">
+                    <td colspan="9">
+                      <strong>Needs a look:</strong> {warnings.join(' · ')}
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
+    )}
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Ingestion log</span></div>
+    {logRows.length === 0 ? (
+      <p class="muted">No activity yet.</p>
+    ) : (
+      <table class="table">
+        <thead><tr><th>When</th><th>Source</th><th>File</th><th>Outcome</th><th>Detail</th></tr></thead>
+        <tbody>
+          {logRows.map(l => (
+            <tr>
+              <td class="muted">{ts(l.run_at)}</td>
+              <td>{l.source}</td>
+              <td>{l.file_name}</td>
+              <td><span class={`badge badge-${l.outcome === 'parsed' ? 'success' : l.outcome === 'error' || l.outcome === 'parse_failed' ? 'danger' : 'warning'}`}>{l.outcome}</span></td>
+              <td class="muted">{l.detail}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </div>
+</AdminLayout>
+
+<script is:inline>
+  const statusEl = document.getElementById('upload-status');
+  const input = document.getElementById('pdf-input');
+
+  document.getElementById('upload-btn')?.addEventListener('click', async () => {
+    if (!input.files?.length) { statusEl.innerHTML = '<div class="alert alert-warning">Choose a PDF first.</div>'; return; }
+    const fd = new FormData();
+    for (const f of input.files) fd.append('file', f);
+
+    statusEl.innerHTML = '<div class="alert alert-info">Parsing…</div>';
+    const res = await fetch('/api/invoices/incoming', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) { statusEl.innerHTML = `<div class="alert alert-error">${data.error}</div>`; return; }
+
+    const lines = data.results.map(r => {
+      const p = r.parsed;
+      if (r.outcome === 'parsed') {
+        return `<li><strong>${r.fileName}</strong> → ${p.supplierName}, invoice ${p.invoiceNumber || '(none found)'},
+                gross ${p.grossAmount ?? '—'} — ${Math.round(p.confidence * 100)}% confidence</li>`;
+      }
+      return `<li><strong>${r.fileName}</strong> → ${r.outcome}: ${r.detail || ''}</li>`;
+    });
+    statusEl.innerHTML = `<div class="alert alert-success"><ul>${lines.join('')}</ul></div>`;
+    setTimeout(() => location.reload(), 1800);
+  });
+
+  document.querySelectorAll('.act').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      await fetch(`/api/invoices/incoming?action=${btn.dataset.act}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: Number(btn.dataset.id) }),
+      });
+      location.reload();
+    });
+  });
+</script>
+
+<style>
+  .hint { color: #666; font-size: 0.88rem; margin: 0 0 0.75rem; }
+  .muted { color: #888; }
+  .sub { color: #999; font-size: 0.75rem; }
+  .r { text-align: right; }
+  .nowrap { white-space: nowrap; }
+  .warn-row td { background: #fff8e1; color: #856404; font-size: 0.85rem; }
+  #pdf-input { max-width: 380px; display: inline-block; margin-right: 0.5rem; }
+</style>

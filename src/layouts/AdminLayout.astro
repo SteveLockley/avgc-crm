@@ -11,7 +11,10 @@ const navItems = [
   { href: '/admin', label: 'Dashboard', icon: 'home' },
   { href: '/admin/members', label: 'Members', icon: 'users' },
   { href: '/admin/payments', label: 'Payments', icon: 'credit-card' },
-  { href: '/admin/invoices', label: 'Invoices', icon: 'invoice' },
+  { href: '/admin/invoices', label: 'Invoices', icon: 'invoice', children: [
+    { href: '/admin/invoices', label: 'Member Invoices', icon: 'invoice' },
+    { href: '/admin/invoices/incoming', label: 'Incoming Supplier Invoices', icon: 'file-text' },
+  ]},
   { href: '/admin/revenue', label: 'Revenue', icon: 'chart' },
   { href: '/admin/decision-support', label: 'Decision Support', icon: 'compass', children: [
     { href: '/admin/foodbar', label: 'Food & Bar', icon: 'utensils' },
