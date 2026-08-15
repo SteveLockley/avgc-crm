@@ -11,9 +11,10 @@ let loadError = '';
 if (db) {
   try {
     const inv = await db.prepare(
-      `SELECT id, supplier_name, invoice_number, invoice_date, due_date, net_amount, vat_amount,
+      `SELECT id, supplier_key, supplier_name, invoice_number, invoice_date, due_date, net_amount, vat_amount,
               gross_amount, account_reference, status, confidence, parse_warnings, parser,
-              file_name, source, created_at, reviewed_by
+              file_name, source, created_at, reviewed_by,
+              SUBSTR(raw_text, 1, 900) AS text_sample
          FROM supplier_invoices
         ORDER BY (status = 'needs_review') DESC, COALESCE(invoice_date, created_at) DESC
         LIMIT 100`
@@ -118,6 +119,28 @@ function ts(v: string | null) {
                     </td>
                   </tr>
                 )}
+                {i.supplier_key.startsWith('unmatched-') && (
+                  <tr class="learn-row">
+                    <td colspan="9">
+                      <div class="learn">
+                        <label>Supplier name
+                          <input type="text" class="form-input learn-name" data-id={i.id} value={i.supplier_name} />
+                        </label>
+                        <label>Match on this text
+                          <input type="text" class="form-input learn-pattern" data-id={i.id} value={i.supplier_name} />
+                        </label>
+                        <label>Nominal code
+                          <input type="text" class="form-input learn-ledger" data-id={i.id} placeholder="e.g. 5000" size="8" />
+                        </label>
+                        <button class="btn btn-sm btn-primary learn-btn" data-id={i.id}>Save as supplier rule</button>
+                      </div>
+                      <details>
+                        <summary>Text the parser saw</summary>
+                        <pre>{i.text_sample}</pre>
+                      </details>
+                    </td>
+                  </tr>
+                )}
               </>
             );
           })}
@@ -175,6 +198,30 @@ function ts(v: string | null) {
     setTimeout(() => location.reload(), 1800);
   });
 
+  document.querySelectorAll('.learn-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.id);
+      const q = sel => document.querySelector(`${sel}[data-id="${id}"]`)?.value?.trim();
+      const displayName = q('.learn-name');
+      if (!displayName) { alert('Give the supplier a name first.'); return; }
+
+      btn.disabled = true;
+      const res = await fetch('/api/invoices/incoming?action=learn-supplier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          displayName,
+          textPattern: q('.learn-pattern') || displayName,
+          ledgerCode: q('.learn-ledger') || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) { alert(data.error); btn.disabled = false; return; }
+      location.reload();
+    });
+  });
+
   document.querySelectorAll('.act').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
@@ -195,5 +242,11 @@ function ts(v: string | null) {
   .r { text-align: right; }
   .nowrap { white-space: nowrap; }
   .warn-row td { background: #fff8e1; color: #856404; font-size: 0.85rem; }
+  .learn-row td { background: #f4f8f5; font-size: 0.85rem; }
+  .learn { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .learn label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: #555; }
+  .learn input { min-width: 180px; }
+  .learn-row pre { white-space: pre-wrap; font-size: 0.72rem; color: #555; background: #fff; padding: 0.6rem; border: 1px solid #e0e0e0; border-radius: 6px; max-height: 220px; overflow: auto; }
+  .learn-row summary { cursor: pointer; color: #1e5631; font-size: 0.8rem; }
   #pdf-input { max-width: 380px; display: inline-block; margin-right: 0.5rem; }
 </style>

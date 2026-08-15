@@ -37,6 +37,29 @@ async function loadRules(db: D1Database): Promise<SupplierRule[]> {
   return rows.results || [];
 }
 
+/**
+ * Best guess at who sent an invoice, for documents no rule matches. Company
+ * names carry a suffix and sit near the top; failing that, take the first
+ * substantial line.
+ */
+export function guessSupplierName(text: string): string | null {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 40);
+
+  const withSuffix = lines.find(l =>
+    /\b(ltd|limited|plc|llp|group|energy|water|services|supplies|drinks|foods?)\b/i.test(l) &&
+    l.length < 60 &&
+    !/^(invoice|tax invoice|vat|account|page|date|bill)/i.test(l)
+  );
+  if (withSuffix) return withSuffix.replace(/\s{2,}/g, ' ');
+
+  const firstReal = lines.find(l =>
+    l.length > 3 && l.length < 60 &&
+    !/^(invoice|tax invoice|vat|account|page|date|bill|to|from)\b/i.test(l) &&
+    !/^[\d\W]+$/.test(l)
+  );
+  return firstReal ? firstReal.replace(/\s{2,}/g, ' ') : null;
+}
+
 async function log(
   db: D1Database,
   row: { source: string; messageId?: string | null; sender?: string | null; subject?: string | null;
@@ -73,17 +96,38 @@ export async function ingestPdf(db: D1Database, input: IngestInput): Promise<Ing
       return { outcome: 'scanned', detail: 'This PDF has no extractable text, so it is probably a scan. OCR would be needed.' };
     }
 
+    // Keep a sample on every run so an unmatched document can be diagnosed
+    // without re-uploading it.
+    const sample = text.replace(/\s+/g, ' ').slice(0, 500);
+
     const rules = await loadRules(db);
-    const rule = identifySupplier(text, rules, input.sender);
+    let rule = identifySupplier(text, rules, input.sender);
+    let unrecognised = false;
+
     if (!rule) {
-      await log(db, { ...base, outcome: 'unknown_supplier', detail: 'No supplier rule matched' });
-      return {
-        outcome: 'unknown_supplier',
-        detail: 'No supplier matched this document. Add a rule in invoice_suppliers with a text or sender pattern.',
+      // Parse it anyway with the generic adapter and a name guessed from the
+      // document. Staging it as needs_review is far more useful than throwing
+      // it away — the reviewer confirms the supplier and saves it as a rule.
+      unrecognised = true;
+      const guess = guessSupplierName(text) || 'Unrecognised supplier';
+      rule = {
+        supplier_key: 'unmatched-' + guess.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30),
+        display_name: guess,
+        parser: 'generic',
+        sender_pattern: null,
+        text_pattern: null,
+        sage_contact_id: null,
+        default_ledger_code: null,
       };
     }
 
     const parsed = pickAdapter(rule.parser)(text, rule);
+    if (unrecognised) {
+      parsed.warnings.unshift(
+        'Supplier not recognised — check the name and figures, then save it as a rule so the next one is matched automatically'
+      );
+      parsed.confidence = Math.min(parsed.confidence, 0.5);
+    }
 
     // Same supplier and invoice number already staged.
     if (parsed.invoiceNumber) {
@@ -153,7 +197,14 @@ export async function ingestPdf(db: D1Database, input: IngestInput): Promise<Ing
        VALUES (?, ?, ?, ?, 'pending')`
     ).bind(invoiceId, input.fileName, input.bytes.byteLength, hash).run();
 
-    await log(db, { ...base, outcome: 'parsed', invoiceId, detail: `${parsed.parser}, confidence ${parsed.confidence.toFixed(2)}` });
+    await log(db, {
+      ...base,
+      outcome: 'parsed',
+      invoiceId,
+      detail: unrecognised
+        ? `Supplier not recognised, parsed generically as "${parsed.supplierName}". Text starts: ${sample.slice(0, 200)}`
+        : `${parsed.parser}, confidence ${parsed.confidence.toFixed(2)}`,
+    });
 
     return { outcome: 'parsed', invoiceId, parsed, status };
   } catch (e: any) {
