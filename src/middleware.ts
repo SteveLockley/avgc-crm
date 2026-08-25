@@ -1,4 +1,5 @@
 import { defineMiddleware } from 'astro:middleware';
+import { verifyAccessJwt } from './lib/access-auth';
 
 // Public routes that don't require any authentication
 const publicRoutes = [
@@ -58,6 +59,30 @@ function isAdminRoute(pathname: string): boolean {
   return adminPrefixes.some(prefix => pathname.startsWith(prefix));
 }
 
+// API routes that must stay reachable without an admin session: the public
+// site, the member portal, and OAuth/webhook callbacks. Everything else under
+// /api is admin-only, so a new endpoint is closed by default rather than open.
+const openApiPrefixes = [
+  '/api/faq',                 // public FAQ search
+  '/api/contact',             // public contact form
+  '/api/member-auth',         // member login, registration, password reset
+  '/api/member-invoices',     // member portal, checks its own session
+  '/api/document/',           // document delivery
+  '/api/image/',              // image delivery
+  '/api/result-pdfs',         // published results
+  '/api/msb/',                // MasterScoreboard results feed
+  '/api/google-hours',        // opening hours shown on the public site
+  '/api/google-profile',
+  '/api/google-special-hours',
+  '/api/dojo-payment',        // payment provider callback
+  '/api/sage/callback',       // Sage OAuth redirect target — cannot require a session
+];
+
+function isAdminApiRoute(pathname: string): boolean {
+  if (!pathname.startsWith('/api/')) return false;
+  return !openApiPrefixes.some(prefix => pathname.startsWith(prefix));
+}
+
 function isCommitteeRoute(pathname: string): boolean {
   return committeePrefixes.some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'));
 }
@@ -106,64 +131,44 @@ async function loadMemberSession(context: any): Promise<SessionStatus> {
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
 
-  // Skip for static assets
-  if (pathname.startsWith('/_') || pathname.includes('.')) {
+  // Skip for static assets. API paths are never treated as assets, so a dot in
+  // the path cannot be used to slip past the admin gate below.
+  if (!pathname.startsWith('/api/') && (pathname.startsWith('/_') || pathname.includes('.'))) {
     return next();
   }
 
-  // Opportunistic admin detection on ALL routes via CF_Authorization cookie
-  // This allows layouts to show admin links when an admin is browsing any page
+  // Identity from Cloudflare Access. The token's signature is verified against
+  // the team's public keys before it is trusted — decoding the payload alone
+  // proves nothing, since anyone can craft a token with any email in it.
   if (!context.locals.user) {
-    // Check Cloudflare Access headers first (present on CF Access protected paths)
-    let cfEmail = context.request.headers.get('Cf-Access-Authenticated-User-Email');
-    if (!cfEmail) {
-      const jwt = context.request.headers.get('Cf-Access-Jwt-Assertion');
-      if (jwt) {
-        try {
-          const parts = jwt.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(atob(parts[1]));
-            cfEmail = payload.email;
-          }
-        } catch (e) { /* ignore */ }
-      }
-    }
-    // Fall back to CF_Authorization cookie (works across subdomains if cookie domain is set)
-    if (!cfEmail) {
-      const cfAuthCookie = context.cookies.get('CF_Authorization')?.value;
-      if (cfAuthCookie) {
-        try {
-          const parts = cfAuthCookie.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(atob(parts[1]));
-            cfEmail = payload.email;
-          }
-        } catch (e) { /* ignore */ }
-      }
-    }
-    // Also check cross-subdomain admin cookie as fallback
-    if (!cfEmail) {
-      const adminToken = context.cookies.get('avgc_admin_token')?.value;
-      if (adminToken) {
-        try {
-          const parts = adminToken.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(atob(parts[1]));
-            cfEmail = payload.email;
-          }
-        } catch (e) { /* ignore invalid token */ }
-      }
+    const candidates = [
+      context.request.headers.get('Cf-Access-Jwt-Assertion'),
+      context.cookies.get('CF_Authorization')?.value,
+      context.cookies.get('avgc_admin_token')?.value,
+    ];
+
+    const env = context.locals.runtime?.env as any;
+    let identity = null;
+    for (const token of candidates) {
+      if (!token) continue;
+      identity = await verifyAccessJwt(token, {
+        teamDomain: env?.CF_ACCESS_TEAM_DOMAIN,
+        aud: env?.CF_ACCESS_AUD,
+      });
+      if (identity) break;
     }
 
-    if (cfEmail) {
-      const namePart = cfEmail.split('@')[0];
+    if (identity) {
+      const namePart = identity.email.split('@')[0];
       const name = namePart
         .split('.')
         .map((part: string) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
         .join(' ');
-      context.locals.user = { email: cfEmail, name, role: 'admin' };
+      context.locals.user = { email: identity.email, name, role: 'admin' };
 
-      // Set cross-subdomain cookie so admin auth works on www subdomain too
+      // Carry the verified token across subdomains so the admin links work on
+      // www too. It is re-verified on every request, so the cookie grants
+      // nothing on its own.
       const cfToken = context.request.headers.get('Cf-Access-Jwt-Assertion')
         || context.cookies.get('CF_Authorization')?.value
         || context.cookies.get('avgc_admin_token')?.value;
@@ -180,6 +185,19 @@ export const onRequest = defineMiddleware(async (context, next) => {
         } catch (e) { /* ignore cookie errors in dev */ }
       }
     }
+  }
+
+  // Admin-only API routes. These are not covered by Cloudflare Access on the
+  // www hostname, and several of them carry no auth check of their own, so the
+  // gate has to live here.
+  if (isAdminApiRoute(pathname)) {
+    if (!context.locals.user && !import.meta.env.DEV) {
+      return new Response(JSON.stringify({ error: 'Not authorised' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return next();
   }
 
   // Public routes - no auth required
@@ -240,6 +258,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
           role: 'admin'
         };
         return next();
+      }
+
+      // Already on the Access-protected host and still unauthenticated: Access
+      // let the request through but the token did not verify. Redirecting here
+      // would loop, so say so instead.
+      if (context.url.hostname === 'crm.alnmouthvillage.golf') {
+        return new Response(
+          'Signed in to Cloudflare Access, but the access token could not be verified. '
+          + 'Sign out at /cdn-cgi/access/logout and sign in again; if it persists the '
+          + 'Access application audience may have changed.',
+          { status: 403, headers: { 'Content-Type': 'text/plain' } },
+        );
       }
 
       // Redirect to CRM subdomain where Cloudflare Access will handle Azure AD login
