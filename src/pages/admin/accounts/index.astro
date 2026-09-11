@@ -1,0 +1,843 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { CAPABILITIES, ACCOUNT_CREDENTIALS_GROUP_KEY, adminHasCapability, listAdminGroupMembers } from '@/lib/permissions';
+import { isVaultConfigured } from '@/lib/vault';
+import { ACCOUNT_TYPES } from '@/lib/online-accounts';
+
+const env = Astro.locals.runtime?.env as any;
+const db: D1Database | undefined = env?.DB;
+const user = Astro.locals.user;
+
+let accounts: any[] = [];
+let ledgerAccounts: any[] = [];
+let holders: string[] = [];
+let canSeeCredentials = false;
+let sageConnected = false;
+let needsReconcile = false;
+let loadError = '';
+
+if (db) {
+  try {
+    canSeeCredentials = await adminHasCapability(db, user?.email, CAPABILITIES.ACCOUNT_CREDENTIALS);
+    holders = (await listAdminGroupMembers(db, ACCOUNT_CREDENTIALS_GROUP_KEY)).map(h => h.email);
+
+    const rows = await db.prepare(
+      `SELECT id, name, account_type, description, login_url, notes, active,
+              sage_contact_id, sage_web_url, sage_ledger_account_id, sage_ledger_account_name,
+              reference, email, telephone, mobile, website,
+              address_line_1, address_line_2, city, region, postal_code, sage_notes,
+              sage_pulled_at, local_changed_at, last_change_set_id,
+              bills_ytd, payments_ytd, bills_total, payments_total, totals_fy_start, totals_synced_at,
+              (login_id_enc IS NOT NULL OR password_enc IS NOT NULL) AS has_credentials,
+              credentials_updated_at
+         FROM online_accounts
+        ORDER BY active DESC, name COLLATE NOCASE`
+    ).all();
+    accounts = rows.results || [];
+
+    const la = await db.prepare(
+      `SELECT id, nominal_code, displayed_as, is_visible_in_expenses FROM sage_ledger_accounts ORDER BY nominal_code`
+    ).all();
+    const all = la.results || [];
+    const expense = all.filter((a: any) => a.is_visible_in_expenses);
+    ledgerAccounts = expense.length ? expense : all;
+
+    const tok = await db.prepare(`SELECT 1 AS ok FROM sage_tokens WHERE role = 'live' LIMIT 1`).first();
+    sageConnected = !!tok;
+
+    const rec = await db.prepare(
+      `SELECT 1 AS ok FROM online_accounts a JOIN sage_change_set cs ON cs.id = a.last_change_set_id
+        WHERE a.local_changed_at IS NOT NULL AND cs.status = 'applied' AND cs.target_role = 'live' LIMIT 1`
+    ).first();
+    needsReconcile = !!rec;
+  } catch (e: any) {
+    loadError = e.message.includes('no such table')
+      ? 'Run migration 067_online_accounts.sql to create the online accounts tables.'
+      : e.message;
+  }
+}
+
+const vaultConfigured = isVaultConfigured(env);
+const fyStart = accounts.find(a => a.totals_fy_start)?.totals_fy_start as string | undefined;
+const fyLabel = fyStart ? `${fyStart.slice(0, 4)}` : 'this year';
+
+const money = (v: any) => v === null || v === undefined
+  ? '—'
+  : Number(v).toLocaleString('en-GB', { style: 'currency', currency: 'GBP', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+const sortKey = (a: any) => Math.max(Number(a.bills_ytd || 0), Number(a.payments_ytd || 0));
+const sortKeyTotal = (a: any) => Math.max(Number(a.bills_total || 0), Number(a.payments_total || 0));
+const ts = (v: string | null) => {
+  if (!v) return '';
+  const d = new Date(v.includes('T') ? v : v + 'Z');
+  return isNaN(d.getTime()) ? v : d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+const totalYtd = accounts.reduce((s, a) => s + Number(a.bills_ytd || 0), 0);
+const totalAll = accounts.reduce((s, a) => s + Number(a.bills_total || 0), 0);
+
+// Data for the page script. Credentials are never included.
+const pageData = JSON.stringify({
+  accounts,
+  ledgerAccounts: ledgerAccounts.map((a: any) => ({ id: a.id, name: a.displayed_as, code: a.nominal_code })),
+  accountTypes: ACCOUNT_TYPES,
+  canSeeCredentials,
+  vaultConfigured,
+  needsReconcile,
+}).replace(/</g, '\\u003c');
+---
+
+<AdminLayout title="Online Accounts">
+  {loadError && <div class="alert alert-error">{loadError}</div>}
+
+  {!sageConnected && !loadError && (
+    <div class="alert alert-warning">
+      Sage is not connected, so linking, syncing and totals are unavailable.
+      <a href="/admin/sage/changes">Connect it from Sage Changes</a>.
+    </div>
+  )}
+  {canSeeCredentials && !vaultConfigured && (
+    <div class="alert alert-warning">
+      <strong>ACCOUNTS_VAULT_KEY is not set.</strong> Credentials cannot be stored or read until the secret is added to the Pages project.
+    </div>
+  )}
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{accounts.filter(a => a.active).length}</div>
+      <div class="stat-label">Active accounts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{money(totalYtd)}</div>
+      <div class="stat-label">Bills {fyLabel}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{money(totalAll)}</div>
+      <div class="stat-label">Bills all time</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{accounts.filter(a => a.sage_contact_id).length}<span class="stat-of">/ {accounts.length}</span></div>
+      <div class="stat-label">Linked to Sage</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Accounts</span>
+      <div class="toolbar">
+        <input type="search" id="filter" class="form-input" placeholder="Filter…" autocomplete="off" />
+        <button id="refresh-all-btn" class="btn btn-sm btn-secondary" disabled={!sageConnected}>Refresh totals</button>
+        <button id="pull-all-btn" class="btn btn-sm btn-secondary" disabled={!sageConnected}>Pull all from Sage</button>
+        <button id="add-btn" class="btn btn-sm btn-primary">Add account</button>
+      </div>
+    </div>
+
+    <div id="status"></div>
+
+    {accounts.length === 0 ? (
+      <p class="muted">No accounts yet. Add one, then link it to its Sage contact.</p>
+    ) : (
+      <div class="table-container">
+        <table id="accounts-table">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort="name" data-type="text">Name</th>
+              <th class="sortable" data-sort="type" data-type="text">Type</th>
+              <th class="sortable" data-sort="category" data-type="text">Sage category</th>
+              <th class="sortable" data-sort="description" data-type="text">Description</th>
+              <th class="sortable text-right" data-sort="ytd" data-type="number">
+                {fyLabel === 'this year' ? 'This year' : fyLabel}
+                <span class="th-sub">bills / payments</span>
+              </th>
+              <th class="sortable text-right" data-sort="total" data-type="number">
+                All time
+                <span class="th-sub">bills / payments</span>
+              </th>
+              <th>Sage</th>
+              <th>Login</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map(a => (
+              <tr
+                data-id={a.id}
+                data-name={(a.name || '').toLowerCase()}
+                data-type={ACCOUNT_TYPES[a.account_type] || a.account_type}
+                data-category={(a.sage_ledger_account_name || '').toLowerCase()}
+                data-description={(a.description || '').toLowerCase()}
+                data-ytd={sortKey(a)}
+                data-total={sortKeyTotal(a)}
+                class={a.active ? '' : 'row-inactive'}
+              >
+                <td>
+                  <div class="name-cell">
+                    <strong>{a.name}</strong>
+                    {!a.active && <span class="badge badge-warning">Inactive</span>}
+                  </div>
+                  {a.reference && <div class="muted small">Account {a.reference}</div>}
+                </td>
+                <td><span class={`badge type-${a.account_type}`}>{ACCOUNT_TYPES[a.account_type] || a.account_type}</span></td>
+                <td>{a.sage_ledger_account_name || <span class="muted">—</span>}</td>
+                <td class="desc-cell">{a.description || <span class="muted">—</span>}</td>
+                <td class="text-right mono nowrap">
+                  {a.totals_synced_at
+                    ? <>{money(a.bills_ytd)} <span class="muted">/</span> {money(a.payments_ytd)}</>
+                    : <span class="muted">—</span>}
+                </td>
+                <td class="text-right mono nowrap">
+                  {a.totals_synced_at
+                    ? <>{money(a.bills_total)} <span class="muted">/</span> {money(a.payments_total)}</>
+                    : <span class="muted">—</span>}
+                </td>
+                <td class="sage-cell">
+                  {a.sage_contact_id ? (
+                    <>
+                      {a.sage_web_url
+                        ? <a href={a.sage_web_url} target="_blank" rel="noopener" class="btn btn-sm btn-secondary" title="Open the supplier in Sage — bills, payments and activity">Open in Sage ↗</a>
+                        : <span class="badge badge-info" title="Linked, but Sage gave no web link for this contact">Linked</span>}
+                      <div class="sync-state">
+                        {a.local_changed_at
+                          ? <span class="badge badge-warning" title={`Edited here ${ts(a.local_changed_at)} — push to send to Sage`}>Changes to push</span>
+                          : <span class="badge badge-success" title={a.sage_pulled_at ? `Pulled ${ts(a.sage_pulled_at)}` : ''}>In sync</span>}
+                        {a.last_change_set_id && a.local_changed_at && (
+                          <a class="small" href={`/admin/sage/changes?set=${a.last_change_set_id}`}>change set #{a.last_change_set_id}</a>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <button class="btn btn-sm btn-secondary link-btn" data-id={a.id} disabled={!sageConnected}>Link to Sage…</button>
+                  )}
+                </td>
+                <td class="cred-cell" data-id={a.id}>
+                  {canSeeCredentials ? (
+                    a.has_credentials
+                      ? <button class="btn btn-sm btn-secondary reveal-btn" data-id={a.id}>Reveal</button>
+                      : <span class="muted small">None stored</span>
+                  ) : (
+                    <span class="restricted" title="Only the IT Manager, Treasurer, Manager and Secretary can see login details">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                      Restricted
+                    </span>
+                  )}
+                  {a.login_url && <div><a href={a.login_url} target="_blank" rel="noopener" class="small">Sign-in page ↗</a></div>}
+                </td>
+                <td class="actions-cell">
+                  <button class="icon-btn edit-btn" data-id={a.id} title="Edit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  {a.sage_contact_id && (
+                    <>
+                      <button class="icon-btn pull-btn" data-id={a.id} title="Pull from Sage (Sage → CRM)" disabled={!sageConnected}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      </button>
+                      <button class="icon-btn push-btn" data-id={a.id} title="Push to Sage (CRM → Sage, via a change set)" disabled={!sageConnected}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      </button>
+                      <button class="icon-btn totals-btn" data-id={a.id} title="Refresh bills & payments from Sage" disabled={!sageConnected}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                      </button>
+                      <button class="icon-btn unlink-btn" data-id={a.id} title="Unlink from Sage contact">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M5.17 11.75l-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></svg>
+                      </button>
+                    </>
+                  )}
+                  <button class="icon-btn danger delete-btn" data-id={a.id} data-name={a.name} title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    <p class="muted small footnote">
+      Bills are purchase invoices less credit notes; payments are supplier payments plus bank payments made directly to the contact.
+      {fyStart && <> The year column covers the financial year from {fyStart}.</>}
+      Login details can be seen by: {holders.length ? holders.join(', ') : 'nobody yet'} —
+      <a href="/admin/permissions">manage on the Permissions page</a>.
+    </p>
+  </div>
+
+  <!-- Edit / add modal -->
+  <div id="edit-overlay" class="modal-overlay">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="edit-title">Add account</h3>
+        <button class="icon-btn" id="edit-close" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <form id="edit-form" autocomplete="off">
+        <input type="hidden" name="id" />
+
+        <h4 class="section-title">Account</h4>
+        <div class="form-row">
+          <div class="form-group span-2">
+            <label class="form-label">Name <span class="req">*</span></label>
+            <input class="form-input" name="name" required />
+            <div class="hint">Mirrored with the Sage contact name.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select class="form-input" name="account_type" id="account-type"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input class="form-input" name="description" placeholder="What this account is for — site, meter, contract…" />
+        </div>
+        <div class="form-row">
+          <div class="form-group span-2">
+            <label class="form-label">Sign-in page</label>
+            <input class="form-input" name="login_url" type="url" placeholder="https://…" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select class="form-input" name="active">
+              <option value="1">Active</option>
+              <option value="0">Inactive</option>
+            </select>
+          </div>
+        </div>
+
+        {canSeeCredentials && (
+          <>
+            <h4 class="section-title">Login details <span class="badge badge-warning">restricted</span></h4>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Login ID / username</label>
+                <input class="form-input" name="login_id" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <div class="pw-wrap">
+                  <input class="form-input" name="password" type="password" autocomplete="new-password" />
+                  <button type="button" class="icon-btn" id="pw-toggle" title="Show / hide">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+                <div class="hint" id="pw-hint"></div>
+              </div>
+            </div>
+          </>
+        )}
+
+        <h4 class="section-title">Supplier details <span class="muted small">mirrored with Sage</span></h4>
+        <div id="sage-link-note" class="hint"></div>
+        <div class="form-row">
+          <div class="form-group span-2">
+            <label class="form-label">Sage category (default purchase account)</label>
+            <select class="form-input" name="sage_ledger_account_id" id="ledger-select"></select>
+            {ledgerAccounts.length === 0 && (
+              <div class="hint">No Sage accounts cached. <a href="#" id="load-ledger">Load them from Sage</a>.</div>
+            )}
+          </div>
+          <div class="form-group">
+            <label class="form-label">Account reference</label>
+            <input class="form-input" name="reference" placeholder="Supplier's account no." />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" name="email" type="email" /></div>
+          <div class="form-group"><label class="form-label">Telephone</label><input class="form-input" name="telephone" /></div>
+          <div class="form-group"><label class="form-label">Mobile</label><input class="form-input" name="mobile" /></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Website</label>
+          <input class="form-input" name="website" placeholder="https://…" />
+        </div>
+        <div class="form-row">
+          <div class="form-group span-2"><label class="form-label">Address line 1</label><input class="form-input" name="address_line_1" /></div>
+          <div class="form-group"><label class="form-label">Address line 2</label><input class="form-input" name="address_line_2" /></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Town / city</label><input class="form-input" name="city" /></div>
+          <div class="form-group"><label class="form-label">County</label><input class="form-input" name="region" /></div>
+          <div class="form-group"><label class="form-label">Postcode</label><input class="form-input" name="postal_code" /></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Sage notes</label>
+          <textarea class="form-input" name="sage_notes" rows="3"></textarea>
+        </div>
+
+        <h4 class="section-title">CRM notes <span class="muted small">not sent to Sage</span></h4>
+        <div class="form-group">
+          <textarea class="form-input" name="notes" rows="3"></textarea>
+        </div>
+
+        <div id="edit-error" class="alert alert-error" style="display:none"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="edit-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="edit-save">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Link to Sage modal -->
+  <div id="link-overlay" class="modal-overlay">
+    <div class="modal modal-sm" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Link to a Sage contact</h3>
+        <button class="icon-btn" id="link-close" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <input type="hidden" id="link-account-id" />
+      <p class="hint" id="link-for"></p>
+      <input class="form-input" id="link-search" placeholder="Search Sage contacts by name…" autocomplete="off" />
+      <div id="link-results" class="link-results"></div>
+      <div id="link-error" class="alert alert-error" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Reveal modal -->
+  <div id="reveal-overlay" class="modal-overlay">
+    <div class="modal modal-sm" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="reveal-title">Login details</h3>
+        <button class="icon-btn" id="reveal-close" title="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="reveal-body"></div>
+      <p class="hint">Each reveal is recorded in the audit log. This closes itself after a minute.</p>
+    </div>
+  </div>
+
+  <script type="application/json" id="page-data" set:html={pageData}></script>
+
+  <style>
+    .toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .toolbar .form-input { width: 180px; }
+    .stat-of { font-size: 1rem; color: var(--text-light); font-weight: 500; margin-left: 0.25rem; }
+    .muted { color: var(--text-light); }
+    .small { font-size: 0.8rem; }
+    .mono { font-variant-numeric: tabular-nums; }
+    .nowrap { white-space: nowrap; }
+    .text-right { text-align: right; }
+    .footnote { margin-top: 1rem; line-height: 1.5; }
+    .name-cell { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .desc-cell { max-width: 320px; }
+    .row-inactive td { opacity: 0.6; }
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { background: #ececec; }
+    th.sortable::after { content: ''; display: inline-block; width: 0.8em; margin-left: 0.25rem; opacity: 0.5; }
+    th.sortable.asc::after { content: '▲'; }
+    th.sortable.desc::after { content: '▼'; }
+    .th-sub { display: block; font-weight: 400; font-size: 0.7rem; color: var(--text-light); }
+    .sage-cell { white-space: nowrap; }
+    .sync-state { margin-top: 0.35rem; display: flex; gap: 0.5rem; align-items: center; }
+    .restricted { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--text-light); font-size: 0.8rem; }
+    .actions-cell { white-space: nowrap; }
+    .icon-btn {
+      background: none; border: none; cursor: pointer; padding: 0.3rem; border-radius: 6px;
+      color: var(--text-light); display: inline-flex; align-items: center; justify-content: center;
+    }
+    .icon-btn svg { width: 16px; height: 16px; }
+    .icon-btn:hover { background: var(--secondary); color: var(--primary); }
+    .icon-btn.danger:hover { color: var(--danger); }
+    .icon-btn:disabled { opacity: 0.35; cursor: default; }
+    .badge.type-electricity { background: #fff3cd; color: #856404; }
+    .badge.type-gas { background: #d1ecf1; color: #0c5460; }
+    .badge.type-water { background: #cfe2ff; color: #084298; }
+    .badge.type-oil { background: #e2e3e5; color: #41464b; }
+    .badge.type-telecoms, .badge.type-software { background: #e7d6f5; color: #4b2a70; }
+    .badge.type-banking, .badge.type-insurance { background: #d4edda; color: #155724; }
+    .badge.type-other { background: #eee; color: #555; }
+
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none;
+      align-items: flex-start; justify-content: center; z-index: 2000; padding: 2rem 1rem; overflow-y: auto;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--white); border-radius: 12px; width: 100%; max-width: 760px; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+    .modal-sm { max-width: 520px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .modal-header h3 { font-size: 1.125rem; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+    .section-title { font-size: 0.9rem; margin: 1.25rem 0 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; align-items: center; }
+    .section-title:first-of-type { margin-top: 0; }
+    .form-row .span-2 { grid-column: span 2; }
+    .req { color: var(--danger); }
+    .hint { font-size: 0.78rem; color: var(--text-light); margin-top: 0.3rem; }
+    .pw-wrap { display: flex; gap: 0.25rem; align-items: center; }
+    .pw-wrap .form-input { flex: 1; }
+    .link-results { margin-top: 0.75rem; max-height: 320px; overflow-y: auto; }
+    .link-hit { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; padding: 0.5rem 0.25rem; border-bottom: 1px solid var(--border); }
+    .link-hit:last-child { border-bottom: none; }
+    .link-hit .meta { font-size: 0.78rem; color: var(--text-light); }
+    .reveal-row { display: grid; grid-template-columns: 110px 1fr auto auto; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+    .reveal-row code { font-size: 0.95rem; word-break: break-all; background: var(--secondary); padding: 0.35rem 0.5rem; border-radius: 6px; }
+    #status:empty { display: none; }
+    @media (max-width: 768px) {
+      .form-row .span-2 { grid-column: span 1; }
+      .reveal-row { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  <script is:inline>
+    (function () {
+      const data = JSON.parse(document.getElementById('page-data').textContent);
+      const byId = Object.fromEntries(data.accounts.map(a => [a.id, a]));
+      const statusBox = document.getElementById('status');
+
+      function status(html, kind) {
+        statusBox.innerHTML = html ? `<div class="alert alert-${kind}">${html}</div>` : '';
+      }
+      function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+      async function post(body) {
+        const res = await fetch('/api/admin/online-accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        let json = {};
+        try { json = await res.json(); } catch { /* non-JSON error */ }
+        if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+        return json;
+      }
+      const money = v => v === null || v === undefined ? '—'
+        : Number(v).toLocaleString('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 });
+
+      // ── Sorting and filtering ────────────────────────────────────
+      const table = document.getElementById('accounts-table');
+      if (table) {
+        const tbody = table.querySelector('tbody');
+        let current = { key: 'name', dir: 'asc' };
+        function applySort() {
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          const type = table.querySelector(`th[data-sort="${current.key}"]`).dataset.type;
+          rows.sort((a, b) => {
+            const av = a.dataset[current.key], bv = b.dataset[current.key];
+            let cmp;
+            if (type === 'number') cmp = Number(av || 0) - Number(bv || 0);
+            else cmp = (av || '').localeCompare(bv || '', 'en', { sensitivity: 'base' });
+            if (cmp === 0) cmp = (a.dataset.name || '').localeCompare(b.dataset.name || '');
+            return current.dir === 'asc' ? cmp : -cmp;
+          });
+          rows.forEach(r => tbody.appendChild(r));
+          table.querySelectorAll('th.sortable').forEach(th => {
+            th.classList.toggle('asc', th.dataset.sort === current.key && current.dir === 'asc');
+            th.classList.toggle('desc', th.dataset.sort === current.key && current.dir === 'desc');
+          });
+          try { localStorage.setItem('online-accounts-sort', JSON.stringify(current)); } catch {}
+        }
+        table.querySelectorAll('th.sortable').forEach(th => {
+          th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            if (current.key === key) current.dir = current.dir === 'asc' ? 'desc' : 'asc';
+            else current = { key, dir: th.dataset.type === 'number' ? 'desc' : 'asc' };
+            applySort();
+          });
+        });
+        try {
+          const saved = JSON.parse(localStorage.getItem('online-accounts-sort') || 'null');
+          if (saved && table.querySelector(`th[data-sort="${saved.key}"]`)) current = saved;
+        } catch {}
+        applySort();
+
+        document.getElementById('filter').addEventListener('input', e => {
+          const q = e.target.value.trim().toLowerCase();
+          tbody.querySelectorAll('tr').forEach(r => {
+            const hay = [r.dataset.name, r.dataset.type, r.dataset.category, r.dataset.description].join(' ').toLowerCase();
+            r.style.display = !q || hay.includes(q) ? '' : 'none';
+          });
+        });
+      }
+
+      // ── Edit modal ───────────────────────────────────────────────
+      const editOverlay = document.getElementById('edit-overlay');
+      const form = document.getElementById('edit-form');
+      const typeSel = document.getElementById('account-type');
+      const ledgerSel = document.getElementById('ledger-select');
+      const editError = document.getElementById('edit-error');
+
+      typeSel.innerHTML = Object.entries(data.accountTypes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+      function fillLedger(selectedId, selectedName) {
+        const opts = ['<option value="">— none —</option>'];
+        let seen = false;
+        for (const a of data.ledgerAccounts) {
+          if (a.id === selectedId) seen = true;
+          opts.push(`<option value="${esc(a.id)}"${a.id === selectedId ? ' selected' : ''}>${esc(a.name)}</option>`);
+        }
+        if (selectedId && !seen) opts.push(`<option value="${esc(selectedId)}" selected>${esc(selectedName || selectedId)}</option>`);
+        ledgerSel.innerHTML = opts.join('');
+      }
+
+      function openEdit(account) {
+        form.reset();
+        editError.style.display = 'none';
+        document.getElementById('edit-title').textContent = account ? `Edit — ${account.name}` : 'Add account';
+        form.elements.id.value = account ? account.id : '';
+        const fields = ['name', 'description', 'login_url', 'reference', 'email', 'telephone', 'mobile', 'website',
+          'address_line_1', 'address_line_2', 'city', 'region', 'postal_code', 'sage_notes', 'notes'];
+        for (const f of fields) if (form.elements[f]) form.elements[f].value = account ? (account[f] ?? '') : '';
+        form.elements.account_type.value = account ? account.account_type : 'other';
+        form.elements.active.value = account ? String(account.active ? 1 : 0) : '1';
+        fillLedger(account?.sage_ledger_account_id || '', account?.sage_ledger_account_name);
+
+        const note = document.getElementById('sage-link-note');
+        if (!account) note.textContent = 'Save first, then use "Link to Sage" on the row to pull the supplier from Sage, or push to create it.';
+        else if (account.sage_contact_id) note.textContent = `Linked to Sage contact ${account.sage_contact_id}. Changes to these fields are pushed to Sage as a change set for review.`;
+        else note.textContent = 'Not linked to a Sage contact. Use "Link to Sage" on the row, or "Push" to create the contact from these details.';
+
+        if (data.canSeeCredentials && form.elements.login_id) {
+          form.elements.login_id.value = '';
+          form.elements.password.value = '';
+          form.elements.password.type = 'password';
+          const hint = document.getElementById('pw-hint');
+          hint.textContent = account?.has_credentials
+            ? 'Login details are stored. Leave both blank to keep them; fill them in to replace them.'
+            : (data.vaultConfigured ? '' : 'ACCOUNTS_VAULT_KEY is not set — credentials cannot be saved.');
+          form.dataset.hasCredentials = account?.has_credentials ? '1' : '';
+        }
+        editOverlay.classList.add('open');
+        form.elements.name.focus();
+      }
+      function closeEdit() { editOverlay.classList.remove('open'); }
+
+      document.getElementById('add-btn').addEventListener('click', () => openEdit(null));
+      document.getElementById('edit-close').addEventListener('click', closeEdit);
+      document.getElementById('edit-cancel').addEventListener('click', closeEdit);
+      editOverlay.addEventListener('click', e => { if (e.target === editOverlay) closeEdit(); });
+      document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', () => openEdit(byId[b.dataset.id])));
+      document.getElementById('pw-toggle')?.addEventListener('click', () => {
+        const pw = form.elements.password;
+        pw.type = pw.type === 'password' ? 'text' : 'password';
+      });
+      document.getElementById('load-ledger')?.addEventListener('click', async e => {
+        e.preventDefault();
+        e.target.textContent = 'Loading…';
+        try {
+          const res = await fetch('/api/sage/sync?type=ledger_accounts', { method: 'POST' });
+          const j = await res.json();
+          if (!j.success) throw new Error(j.error || 'Sync failed');
+          location.reload();
+        } catch (err) { e.target.textContent = `Failed: ${err.message}`; }
+      });
+
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const saveBtn = document.getElementById('edit-save');
+        saveBtn.disabled = true;
+        editError.style.display = 'none';
+        const fd = new FormData(form);
+        const account = {};
+        for (const [k, v] of fd.entries()) if (k !== 'login_id' && k !== 'password') account[k] = v;
+        account.active = fd.get('active') === '1';
+        const body = { action: 'save', account };
+
+        if (data.canSeeCredentials && form.elements.login_id) {
+          const loginId = form.elements.login_id.value.trim();
+          const password = form.elements.password.value;
+          // Only send credentials when the user typed something, so an
+          // untouched form never overwrites what is stored.
+          if (loginId || password) {
+            body.credentials = { login_id: loginId };
+            if (password) body.credentials.password = password;
+          }
+        }
+
+        try {
+          await post(body);
+          location.reload();
+        } catch (err) {
+          editError.textContent = err.message;
+          editError.style.display = 'block';
+          saveBtn.disabled = false;
+        }
+      });
+
+      // ── Link modal ───────────────────────────────────────────────
+      const linkOverlay = document.getElementById('link-overlay');
+      const linkSearch = document.getElementById('link-search');
+      const linkResults = document.getElementById('link-results');
+      const linkError = document.getElementById('link-error');
+      let searchTimer = null;
+
+      function openLink(account) {
+        document.getElementById('link-account-id').value = account.id;
+        document.getElementById('link-for').textContent = `Choose the Sage supplier for "${account.name}". Its details will be pulled into this record.`;
+        linkSearch.value = account.name;
+        linkResults.innerHTML = '';
+        linkError.style.display = 'none';
+        linkOverlay.classList.add('open');
+        linkSearch.focus();
+        runSearch();
+      }
+      function closeLink() { linkOverlay.classList.remove('open'); }
+      document.getElementById('link-close').addEventListener('click', closeLink);
+      linkOverlay.addEventListener('click', e => { if (e.target === linkOverlay) closeLink(); });
+      document.querySelectorAll('.link-btn').forEach(b => b.addEventListener('click', () => openLink(byId[b.dataset.id])));
+
+      async function runSearch() {
+        const q = linkSearch.value.trim();
+        if (q.length < 2) { linkResults.innerHTML = ''; return; }
+        linkResults.innerHTML = '<p class="hint">Searching Sage…</p>';
+        try {
+          const { hits } = await post({ action: 'search-contacts', q });
+          if (!hits.length) { linkResults.innerHTML = '<p class="hint">No contacts match.</p>'; return; }
+          linkResults.innerHTML = hits.map(h => `
+            <div class="link-hit">
+              <div>
+                <div>${esc(h.name)}</div>
+                <div class="meta">${esc(h.types.join(', ') || 'no type')}${h.reference ? ' · ref ' + esc(h.reference) : ''}</div>
+              </div>
+              <button class="btn btn-sm btn-primary pick-btn" data-id="${esc(h.id)}">Link</button>
+            </div>`).join('');
+          linkResults.querySelectorAll('.pick-btn').forEach(b => b.addEventListener('click', async () => {
+            b.disabled = true; b.textContent = 'Linking…';
+            try {
+              const r = await post({ action: 'link', id: Number(document.getElementById('link-account-id').value), sageContactId: b.dataset.id });
+              if (r.totalsError) status(`Linked to ${esc(r.name)}, but totals could not be fetched: ${esc(r.totalsError)}`, 'warning');
+              location.reload();
+            } catch (err) {
+              linkError.textContent = err.message; linkError.style.display = 'block';
+              b.disabled = false; b.textContent = 'Link';
+            }
+          }));
+        } catch (err) {
+          linkError.textContent = err.message; linkError.style.display = 'block';
+          linkResults.innerHTML = '';
+        }
+      }
+      linkSearch.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 350); });
+
+      // ── Row actions ──────────────────────────────────────────────
+      async function rowAction(btn, body, okMessage) {
+        btn.disabled = true;
+        try {
+          const r = await post(body);
+          if (okMessage) status(okMessage(r), 'success');
+          return r;
+        } catch (err) {
+          status(esc(err.message), 'error');
+          btn.disabled = false;
+          return null;
+        }
+      }
+
+      document.querySelectorAll('.pull-btn').forEach(b => b.addEventListener('click', async () => {
+        const r = await rowAction(b, { action: 'pull', id: Number(b.dataset.id) });
+        if (r) location.reload();
+      }));
+
+      document.querySelectorAll('.push-btn').forEach(b => b.addEventListener('click', async () => {
+        const a = byId[b.dataset.id];
+        const ok = await window.m3Confirm(
+          `Propose the local changes to "${a.name}" as a Sage change set? Nothing is written to Sage until the set is reviewed and applied on the Sage Changes page.`,
+          { title: 'Push to Sage', confirmText: 'Propose', type: 'info' }
+        );
+        if (!ok) return;
+        const r = await rowAction(b, { action: 'push', id: a.id });
+        if (r) {
+          status(`Change set #${r.setId} proposed (${esc(r.fields.join(', '))}). <a href="/admin/sage/changes?set=${r.setId}">Review and apply it</a>.`, 'success');
+          b.disabled = false;
+        }
+      }));
+
+      document.querySelectorAll('.totals-btn').forEach(b => b.addEventListener('click', async () => {
+        const r = await rowAction(b, { action: 'refresh-totals', id: Number(b.dataset.id) });
+        if (r) location.reload();
+      }));
+
+      document.querySelectorAll('.unlink-btn').forEach(b => b.addEventListener('click', async () => {
+        const a = byId[b.dataset.id];
+        const ok = await window.m3Confirm(`Unlink "${a.name}" from its Sage contact? The supplier details stay here; only the link and the totals are cleared.`, { title: 'Unlink from Sage', confirmText: 'Unlink' });
+        if (!ok) return;
+        const r = await rowAction(b, { action: 'unlink', id: a.id });
+        if (r) location.reload();
+      }));
+
+      document.querySelectorAll('.delete-btn').forEach(b => b.addEventListener('click', async () => {
+        const ok = await window.m3Confirm(`Delete "${b.dataset.name}" from the register? The Sage contact is not affected. Any stored login details are removed.`, { title: 'Delete account', confirmText: 'Delete', danger: true, type: 'delete' });
+        if (!ok) return;
+        const r = await rowAction(b, { action: 'delete', id: Number(b.dataset.id) });
+        if (r) location.reload();
+      }));
+
+      // ── Bulk: refresh totals / pull all (one request per account) ──
+      async function forEachLinked(btn, label, body) {
+        const linked = data.accounts.filter(a => a.sage_contact_id);
+        if (!linked.length) { status('No accounts are linked to Sage yet.', 'warning'); return; }
+        btn.disabled = true;
+        const errors = [];
+        for (let i = 0; i < linked.length; i++) {
+          btn.textContent = `${label} ${i + 1}/${linked.length}…`;
+          try { await post({ ...body, id: linked[i].id }); }
+          catch (err) { errors.push(`${linked[i].name}: ${err.message}`); }
+        }
+        if (errors.length) {
+          status(`Finished with ${errors.length} problem(s):<br>${errors.map(esc).join('<br>')}`, 'warning');
+          btn.disabled = false; btn.textContent = label;
+          setTimeout(() => location.reload(), 4000);
+        } else {
+          location.reload();
+        }
+      }
+      document.getElementById('refresh-all-btn').addEventListener('click', e => forEachLinked(e.currentTarget, 'Refresh totals', { action: 'refresh-totals' }));
+      document.getElementById('pull-all-btn').addEventListener('click', e => forEachLinked(e.currentTarget, 'Pull all from Sage', { action: 'pull' }));
+
+      // A change set proposed from here has since been applied to live: pull
+      // the result so the row stops showing as pending.
+      if (data.needsReconcile) {
+        post({ action: 'reconcile' }).then(r => { if (r.reconciled) location.reload(); }).catch(() => {});
+      }
+
+      // ── Reveal credentials ───────────────────────────────────────
+      const revealOverlay = document.getElementById('reveal-overlay');
+      const revealBody = document.getElementById('reveal-body');
+      let revealTimer = null;
+      function closeReveal() {
+        revealOverlay.classList.remove('open');
+        revealBody.innerHTML = '';
+        clearTimeout(revealTimer);
+      }
+      document.getElementById('reveal-close').addEventListener('click', closeReveal);
+      revealOverlay.addEventListener('click', e => { if (e.target === revealOverlay) closeReveal(); });
+
+      function copyBtn(value) {
+        return `<button type="button" class="btn btn-sm btn-secondary copy-btn" data-value="${esc(value)}">Copy</button>`;
+      }
+      document.querySelectorAll('.reveal-btn').forEach(b => b.addEventListener('click', async () => {
+        const a = byId[b.dataset.id];
+        b.disabled = true;
+        try {
+          const r = await post({ action: 'reveal', id: a.id });
+          document.getElementById('reveal-title').textContent = `${a.name} — login details`;
+          revealBody.innerHTML = `
+            <div class="reveal-row"><span class="form-label">Sign-in page</span>
+              ${a.login_url ? `<a href="${esc(a.login_url)}" target="_blank" rel="noopener">${esc(a.login_url)}</a>` : '<span class="muted">—</span>'}<span></span><span></span></div>
+            <div class="reveal-row"><span class="form-label">Login ID</span>
+              <code>${esc(r.login_id ?? '—')}</code>${r.login_id ? copyBtn(r.login_id) : '<span></span>'}<span></span></div>
+            <div class="reveal-row"><span class="form-label">Password</span>
+              <code id="pw-value" data-pw="${esc(r.password ?? '')}">${r.password ? '••••••••••' : '—'}</code>
+              ${r.password ? copyBtn(r.password) : '<span></span>'}
+              ${r.password ? '<button type="button" class="btn btn-sm btn-secondary" id="pw-show">Show</button>' : '<span></span>'}</div>
+            ${r.updated_at ? `<p class="hint">Last changed ${esc(new Date(r.updated_at + 'Z').toLocaleString('en-GB'))}${r.updated_by ? ' by ' + esc(r.updated_by) : ''}.</p>` : ''}`;
+          revealBody.querySelectorAll('.copy-btn').forEach(c => c.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(c.dataset.value); c.textContent = 'Copied'; setTimeout(() => c.textContent = 'Copy', 1500); }
+            catch { c.textContent = 'Copy failed'; }
+          }));
+          document.getElementById('pw-show')?.addEventListener('click', e => {
+            const code = document.getElementById('pw-value');
+            const shown = code.textContent !== '••••••••••';
+            code.textContent = shown ? '••••••••••' : code.dataset.pw;
+            e.currentTarget.textContent = shown ? 'Show' : 'Hide';
+          });
+          revealOverlay.classList.add('open');
+          revealTimer = setTimeout(closeReveal, 60000);
+        } catch (err) {
+          status(esc(err.message), 'error');
+        } finally {
+          b.disabled = false;
+        }
+      }));
+    })();
+  </script>
+</AdminLayout>

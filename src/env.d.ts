@@ -17,6 +17,8 @@ interface Env {
   SAGE_CLIENT_ID?: string;
   SAGE_CLIENT_SECRET?: string;
   SAGE_REDIRECT_URI?: string;
+  // AES-256 key (base64, 32 bytes) for credentials in the online accounts register
+  ACCOUNTS_VAULT_KEY?: string;
 }
 
 type Runtime = import('@astrojs/cloudflare').Runtime<Env>;

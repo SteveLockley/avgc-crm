@@ -1,17 +1,34 @@
 ---
 import AdminLayout from '@/layouts/AdminLayout.astro';
-import { CAPABILITY_LABELS, COMMITTEE_GROUP_KEY, getGroupByKey, listCommitteeMembers } from '@/lib/permissions';
+import {
+  CAPABILITIES, CAPABILITY_LABELS, COMMITTEE_GROUP_KEY, ACCOUNT_CREDENTIALS_GROUP_KEY,
+  getGroupByKey, listCommitteeMembers, listAdminGroupMembers, adminHasCapability,
+} from '@/lib/permissions';
 
 const db = Astro.locals.runtime?.env?.DB;
+const user = Astro.locals.user;
 
 let group: any = null;
 let capabilities: string[] = [];
 let members: any[] = [];
 let syncLog: any[] = [];
+let credGroup: any = null;
+let credHolders: any[] = [];
+let canEditCredGroup = false;
 let loadError = '';
 
 if (db) {
   try {
+    // Admin group: who may see online account credentials. Only current
+    // holders can change the list, so it cannot be widened by anyone else.
+    try {
+      credGroup = await getGroupByKey(db, ACCOUNT_CREDENTIALS_GROUP_KEY);
+      if (credGroup) {
+        credHolders = await listAdminGroupMembers(db, ACCOUNT_CREDENTIALS_GROUP_KEY);
+        canEditCredGroup = await adminHasCapability(db, user?.email, CAPABILITIES.ACCOUNT_CREDENTIALS);
+      }
+    } catch { /* migration 067 not run yet */ }
+
     group = await getGroupByKey(db, COMMITTEE_GROUP_KEY);
     if (group) {
       const caps = await db.prepare(
@@ -105,6 +122,49 @@ function ts(value: string): string {
           </table>
         )}
       </div>
+
+      {credGroup && (
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">{credGroup.name}</span>
+            <a href="/admin/accounts" class="btn btn-sm btn-secondary">Online accounts</a>
+          </div>
+          <p class="perm-desc">{credGroup.description}</p>
+          <p class="muted" style="margin-bottom: 1rem;">
+            Granted to the Cloudflare Access sign-in address (the club Microsoft 365 account), not the address on a membership record.
+            {canEditCredGroup ? 'Only people on this list can change it.' : 'Only people on this list can change it — you are not on it.'}
+          </p>
+
+          {canEditCredGroup && (
+            <div class="add-row cred-add">
+              <input type="email" id="cred-email" class="form-input" placeholder="Add by sign-in email, e.g. name@alnmouthvillage.golf" autocomplete="off" />
+              <button type="button" id="cred-add-btn" class="btn btn-sm btn-primary">Add</button>
+            </div>
+          )}
+          <div id="cred-status"></div>
+
+          {credHolders.length === 0 ? (
+            <p class="perm-empty">Nobody can see credentials yet.</p>
+          ) : (
+            <table class="table">
+              <thead><tr><th>Sign-in email</th><th>Added</th><th></th></tr></thead>
+              <tbody>
+                {credHolders.map(h => (
+                  <tr>
+                    <td>{h.email}{user?.email && h.email === user.email.toLowerCase() && <span class="badge badge-info" style="margin-left: 0.5rem;">you</span>}</td>
+                    <td class="muted">{ts(h.added_at)}{h.added_by ? ` · ${h.added_by}` : ''}</td>
+                    <td>
+                      {canEditCredGroup && (
+                        <button class="btn btn-sm btn-danger cred-remove-btn" data-email={h.email}>Remove</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       <div class="card">
         <div class="card-header"><span class="card-title">Recent sync activity</span></div>
@@ -200,6 +260,28 @@ function ts(value: string): string {
     });
   });
 
+  // Online account credentials group (admin emails)
+  const credStatus = document.getElementById('cred-status');
+  function credMsg(html, kind) { if (credStatus) credStatus.innerHTML = `<div class="alert alert-${kind}">${html}</div>`; }
+
+  document.getElementById('cred-add-btn')?.addEventListener('click', async () => {
+    const input = document.getElementById('cred-email');
+    const email = input.value.trim();
+    if (!email) return;
+    const { data } = await post({ action: 'set-admin-group', groupKey: 'account_credentials', email, value: true });
+    if (data.ok) location.reload(); else credMsg(data.error || 'Could not add', 'error');
+  });
+
+  document.querySelectorAll('.cred-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = btn.dataset.email;
+      if (!confirm(`Remove ${email}? They will no longer be able to see or change online account login details.`)) return;
+      btn.disabled = true;
+      const { data } = await post({ action: 'set-admin-group', groupKey: 'account_credentials', email, value: false });
+      if (data.ok) location.reload(); else { credMsg(data.error || 'Could not remove', 'error'); btn.disabled = false; }
+    });
+  });
+
   // Add member by name
   const search = document.getElementById('member-search');
   const results = document.getElementById('search-results');
@@ -242,6 +324,9 @@ function ts(value: string): string {
   .muted { color: #888; font-size: 0.85rem; }
   .row-warn td { background: #fff8e1; }
   .add-row { position: relative; margin-bottom: 1rem; max-width: 380px; }
+  .cred-add { display: flex; gap: 0.5rem; max-width: 520px; }
+  .cred-add .form-input { flex: 1; }
+  #cred-status:empty { display: none; }
   .search-results { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.35rem; }
   .search-hit {
     text-align: left;

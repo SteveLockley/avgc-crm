@@ -39,14 +39,20 @@ const COLLECTION: Record<string, string> = { contact: '/contacts' };
 
 /** Fields we compare when showing a diff — everything else in the record is noise. */
 const COMPARABLE = [
-  'name', 'reference', 'email', 'telephone', 'mobile', 'notes', 'tax_number',
+  'name', 'reference', 'email', 'telephone', 'mobile', 'website', 'notes', 'tax_number',
   'credit_days', 'credit_limit', 'is_active', 'contact_types',
   'default_purchase_ledger_account', 'default_sales_ledger_account',
 ];
 
+const ADDRESS_KEYS = ['address_line_1', 'address_line_2', 'city', 'region', 'postal_code'];
+
 function summarise(value: any): any {
   if (value && typeof value === 'object') {
     if (Array.isArray(value)) return value.map(v => (v && v.id) || v.displayed_as || v).join(', ');
+    // An address, whether the full Sage record or the payload we send.
+    if (ADDRESS_KEYS.some(k => k in value)) {
+      return ADDRESS_KEYS.map(k => value[k]).filter(Boolean).join(', ');
+    }
     return value.id || value.displayed_as || JSON.stringify(value);
   }
   return value;
@@ -57,7 +63,11 @@ export function diffFields(before: Record<string, any> | null, payload: Record<s
   const out: Array<{ field: string; from: any; to: any }> = [];
   for (const [field, to] of Object.entries(payload)) {
     if (field === 'contact_type_ids') continue;
-    const from = before ? summarise(before[field]) : null;
+    // "default_purchase_ledger_account_id" in a payload addresses the
+    // "default_purchase_ledger_account" object on the record.
+    const beforeKey = before && field.endsWith('_id') && !(field in before) && field.slice(0, -3) in before
+      ? field.slice(0, -3) : field;
+    const from = before ? summarise(before[beforeKey]) : null;
     const toSummary = summarise(to);
     if (String(from ?? '') !== String(toSummary ?? '')) {
       out.push({ field, from: from ?? null, to: toSummary ?? null });

@@ -9,6 +9,7 @@ export const CAPABILITIES = {
   COMMITTEE_PORTAL: 'committee.portal',
   DOCUMENTS_VIEW_ALL: 'documents.view_all',
   FINANCE_INCOME_EXPENDITURE: 'finance.income_expenditure',
+  ACCOUNT_CREDENTIALS: 'accounts.credentials',
 } as const;
 
 export type Capability = typeof CAPABILITIES[keyof typeof CAPABILITIES];
@@ -17,9 +18,11 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   'committee.portal': 'Committee portal access',
   'documents.view_all': 'View all member documents (including unpublished)',
   'finance.income_expenditure': 'View Income & Expenditure (Cash Based) reports',
+  'accounts.credentials': 'See and change login details for the club\'s online accounts',
 };
 
 export const COMMITTEE_GROUP_KEY = 'committee';
+export const ACCOUNT_CREDENTIALS_GROUP_KEY = 'account_credentials';
 
 export interface PermissionGroup {
   id: number;
@@ -119,4 +122,74 @@ export async function listCommitteeMembers(db: D1Database): Promise<CommitteeMem
       ORDER BY m.surname, m.first_name`
   ).bind(COMMITTEE_GROUP_KEY).all<CommitteeMemberRow>();
   return rows.results || [];
+}
+
+// ─── Admin groups ────────────────────────────────────────────────────
+//
+// Admins sign in through Cloudflare Access and are known only by email, so
+// admin-level capabilities are granted to an email address rather than a
+// member record (admin_permission_groups, migration 067). Access returns the
+// address in whatever case the directory holds it, so everything is compared
+// lower-case.
+
+export function normaliseEmail(email: string | null | undefined): string {
+  return (email || '').trim().toLowerCase();
+}
+
+export async function adminHasCapability(
+  db: D1Database,
+  email: string | null | undefined,
+  capability: Capability
+): Promise<boolean> {
+  const e = normaliseEmail(email);
+  if (!e) return false;
+  const row = await db.prepare(
+    `SELECT 1 AS ok
+       FROM admin_permission_groups apg
+       JOIN permission_group_capabilities c ON c.group_id = apg.group_id
+      WHERE apg.email = ? AND c.capability = ?
+      LIMIT 1`
+  ).bind(e, capability).first<{ ok: number }>();
+  return !!row;
+}
+
+export interface AdminGroupMemberRow {
+  email: string;
+  added_at: string;
+  added_by: string | null;
+}
+
+export async function listAdminGroupMembers(db: D1Database, groupKey: string): Promise<AdminGroupMemberRow[]> {
+  const rows = await db.prepare(
+    `SELECT apg.email, apg.added_at, apg.added_by
+       FROM admin_permission_groups apg
+       JOIN permission_groups g ON g.id = apg.group_id
+      WHERE g.key = ?
+      ORDER BY apg.email`
+  ).bind(groupKey).all<AdminGroupMemberRow>();
+  return rows.results || [];
+}
+
+export async function setAdminGroupMembership(
+  db: D1Database,
+  groupKey: string,
+  email: string,
+  inGroup: boolean,
+  by: string | null
+): Promise<void> {
+  const group = await getGroupByKey(db, groupKey);
+  if (!group) throw new Error(`Permission group "${groupKey}" is missing — run the migration that seeds it.`);
+  const e = normaliseEmail(email);
+  if (!e || !e.includes('@')) throw new Error('A valid email address is required');
+
+  if (inGroup) {
+    await db.prepare(
+      `INSERT INTO admin_permission_groups (email, group_id, added_by) VALUES (?, ?, ?)
+       ON CONFLICT(email, group_id) DO NOTHING`
+    ).bind(e, group.id, by).run();
+  } else {
+    await db.prepare(
+      `DELETE FROM admin_permission_groups WHERE email = ? AND group_id = ?`
+    ).bind(e, group.id).run();
+  }
 }
