@@ -212,7 +212,7 @@ async function handleList(db: any, body: any) {
     FROM seniors_purse_entries spe
     LEFT JOIN members m ON m.id = spe.payment_member_id
     WHERE spe.year = ?
-    ORDER BY spe.sale_date ASC, spe.id ASC
+    ORDER BY spe.sale_date DESC, spe.id DESC
   `).bind(year).all();
 
   const rows = result.results || [];
@@ -223,7 +223,8 @@ async function handleList(db: any, body: any) {
   const totalDebits = rows
     .filter((r: any) => r.balance_adj < 0)
     .reduce((sum: number, r: any) => sum + r.balance_adj, 0);
-  const currentBalance = rows.length > 0 ? rows[rows.length - 1].running_balance : null;
+  // Newest first, matching the page's initial render
+  const currentBalance = rows.length > 0 ? rows[0].running_balance : null;
   const lastFetched = rows.length > 0
     ? rows.reduce((latest: string, r: any) => r.fetched_at > latest ? r.fetched_at : latest, '')
     : null;
