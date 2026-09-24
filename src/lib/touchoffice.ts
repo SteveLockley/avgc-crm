@@ -470,6 +470,60 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&#163;/g, '£');
 }
 
+interface PositionedDiv { left: number; top: number; text: string; }
+
+/**
+ * Extract the absolutely positioned text cells from a PDF-style report, in
+ * HTML source order.
+ *
+ * TouchOffice has emitted cells in two shapes. Originally the text sat directly
+ * in the positioned div:
+ *   <div style="left:204pt;top:221pt;...">1001072332240926</div>
+ * Since September 2026 the text is wrapped in an inner, unpositioned div:
+ *   <div style="left:204pt;top:221pt;..."><div style="max-width:...">1001072332240926</div></div>
+ * Each positioned div's text is therefore everything nested inside it, found by
+ * tracking div depth until its own closing tag.
+ */
+function extractPositionedDivs(section: string): PositionedDiv[] {
+  const divs: PositionedDiv[] = [];
+  let current: { left: number; top: number; html: string } | null = null;
+  let depth = 0;
+
+  const flush = () => {
+    if (!current) return;
+    const text = stripTags(current.html).trim();
+    if (text) divs.push({ left: current.left, top: current.top, text });
+    current = null;
+  };
+
+  for (const part of section.split('<div ').slice(1)) {
+    const closeTag = part.indexOf('>');
+    if (closeTag === -1) continue;
+    const content = part.substring(closeTag + 1);
+    const closes = (content.match(/<\/div>/g) || []).length;
+
+    if (current && depth > 0) {
+      // Nested inside the current cell — its text belongs to that cell
+      current.html += content;
+      depth += 1 - closes;
+      if (depth <= 0) flush();
+      continue;
+    }
+
+    const style = part.substring(0, closeTag).match(/style="([^"]*)"/)?.[1] ?? '';
+    const leftM = style.match(/left:([\d.]+)pt/);
+    const topM  = style.match(/top:([\d.]+)pt/);
+    if (!leftM || !topM) continue;
+
+    current = { left: parseFloat(leftM[1]), top: parseFloat(topM[1]), html: content };
+    depth = 1 - closes;
+    if (depth <= 0) flush();
+  }
+  flush();
+
+  return divs;
+}
+
 function parseAmount(s: string): number {
   const c = s.replace(/[£,\s]/g, '').trim();
   if (!c) return 0;
@@ -596,22 +650,7 @@ export async function debugFetchPurseReport(
   // Extract ALL positioned divs from the report section
   const containerStart2 = html.search(/<div[^>]+id=["']reportcontainer["']/i);
   const section2 = containerStart2 >= 0 ? html.substring(containerStart2) : html;
-  const allDivs: {left:number,top:number,text:string}[] = [];
-  const parts2 = section2.split('<div ');
-  for (const part of parts2) {
-    const styleM = part.match(/style="([^"]*)"/);
-    if (!styleM) continue;
-    const style = styleM[1];
-    const leftM = style.match(/left:([\d.]+)pt/);
-    const topM  = style.match(/top:([\d.]+)pt/);
-    if (!leftM || !topM) continue;
-    const closeTag = part.indexOf('>');
-    if (closeTag === -1) continue;
-    const endDiv = part.indexOf('</div>', closeTag);
-    if (endDiv === -1) continue;
-    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
-    if (text) allDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
-  }
+  const allDivs = extractPositionedDivs(section2);
 
   // Find the header row (contains "Sale Id") and extract ALL header texts with positions
   const saleIdDiv2 = allDivs.find(d => /^sale\s*id$/i.test(d.text));
@@ -659,31 +698,8 @@ function parseCustomerStatementHtml(html: string): PurseStatementEntry[] {
 
   const COL_TOL = 12;
 
-  // ── Helper: extract (left, top, text) from one split part ──────────────────
-  interface DivInfo { left: number; top: number; text: string; }
-  const extractDiv = (part: string): DivInfo | null => {
-    const styleM = part.match(/style="([^"]*)"/);
-    if (!styleM) return null;
-    const style = styleM[1];
-    const leftM = style.match(/left:([\d.]+)pt/);
-    const topM  = style.match(/top:([\d.]+)pt/);
-    if (!leftM || !topM) return null;
-    const closeTag = part.indexOf('>');
-    if (closeTag === -1) return null;
-    const endDiv = part.indexOf('</div>', closeTag);
-    if (endDiv === -1) return null;
-    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
-    return text ? { left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text } : null;
-  };
-
-  const parts = section.split('<div ');
-
   // ── Phase 1: detect column left-positions from the first header row ─────────
-  const allDivs: DivInfo[] = [];
-  for (const part of parts) {
-    const d = extractDiv(part);
-    if (d) allDivs.push(d);
-  }
+  const allDivs = extractPositionedDivs(section);
 
   const saleIdHeaderDiv = allDivs.find(d => /^sale\s*id$/i.test(d.text));
   if (!saleIdHeaderDiv) return [];
@@ -713,10 +729,7 @@ function parseCustomerStatementHtml(html: string): PurseStatementEntry[] {
   const balAdjs:  string[] = [];
   const balances: string[] = [];
 
-  for (const part of parts) {
-    const d = extractDiv(part);
-    if (!d) continue;
-
+  for (const d of allDivs) {
     if (Math.abs(d.left - colLeft.saleId) < COL_TOL) {
       const clean = d.text.replace(/\s/g, '');
       if (/^\d{8,}$/.test(clean)) saleIds.push(clean);   // numeric ID ≥8 digits
@@ -1063,23 +1076,7 @@ export async function debugFetchCustomerBalance(
   const containerStart = html.search(/<div[^>]+id=["']reportcontainer["']/i);
   const section = containerStart >= 0 ? html.substring(containerStart) : html;
 
-  interface DivInfo { left: number; top: number; text: string; }
-  const allDivs: DivInfo[] = [];
-  const parts = section.split('<div ');
-  for (const part of parts) {
-    const styleM = part.match(/style="([^"]*)"/);
-    if (!styleM) continue;
-    const style = styleM[1];
-    const leftM = style.match(/left:([\d.]+)pt/);
-    const topM  = style.match(/top:([\d.]+)pt/);
-    if (!leftM || !topM) continue;
-    const closeTag = part.indexOf('>');
-    if (closeTag === -1) continue;
-    const endDiv = part.indexOf('</div>', closeTag);
-    if (endDiv === -1) continue;
-    const text = stripTags(part.substring(closeTag + 1, endDiv)).trim();
-    if (text) allDivs.push({ left: parseFloat(leftM[1]), top: parseFloat(topM[1]), text });
-  }
+  const allDivs = extractPositionedDivs(section);
 
   const numberHeader = allDivs.find(d => /^number$/i.test(d.text));
   const headerTop = numberHeader?.top ?? -1;
@@ -1137,33 +1134,14 @@ function parseCustomerBalanceHtml(html: string): CustomerBalanceEntry[] {
   const ROW_TOL = 4;   // pt — same logical row
   const PAGE_SEP = 9999; // effective-top offset per page (> any real page height)
 
-  interface RawDiv  { left: number; top: number; text: string; }
   interface EDiv    { left: number; effTop: number; text: string; }
 
-  const extractRaw = (part: string): RawDiv | null => {
-    const styleM = part.match(/style="([^"]*)"/);
-    if (!styleM) return null;
-    const s = styleM[1];
-    const lM = s.match(/left:([\d.]+)pt/);
-    const tM = s.match(/top:([\d.]+)pt/);
-    if (!lM || !tM) return null;
-    const close = part.indexOf('>');
-    if (close === -1) return null;
-    const end = part.indexOf('</div>', close);
-    if (end === -1) return null;
-    const text = stripTags(part.substring(close + 1, end)).trim();
-    return text ? { left: parseFloat(lM[1]), top: parseFloat(tM[1]), text } : null;
-  };
-
   // ── Phase 1: build effective-top coordinates ─────────────────────────────────
-  const parts = section.split('<div ');
   const allDivs: EDiv[] = [];
   let lastTop = -1;
   let pageOffset = 0;
 
-  for (const part of parts) {
-    const raw = extractRaw(part);
-    if (!raw) continue;
+  for (const raw of extractPositionedDivs(section)) {
     if (lastTop > 50 && raw.top < lastTop - 50) pageOffset += PAGE_SEP;
     lastTop = raw.top;
     allDivs.push({ left: raw.left, effTop: pageOffset + raw.top, text: raw.text });
