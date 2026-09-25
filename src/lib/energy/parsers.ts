@@ -196,21 +196,35 @@ export async function importKitchenLoggerCsv(
 
   const headerCols = parseCsvLine(lines[0])
 
-  // Map column index → circuit key, skipping the time bucket column (index 0)
-  const circuitCols: { idx: number; key: string }[] = []
+  // Map column index → circuit key and label, skipping the time bucket column.
+  //
+  // The logger emits its kWh columns in a fixed order — Main, then circuit1 to
+  // circuit16 — so the key comes from that position, never from the header
+  // text. Renaming a circuit in the logger app changes the header (circuit3
+  // becomes "cellar") but not which physical circuit it is, and the key has to
+  // stay stable or the readings either side of the rename become two unrelated
+  // series. The chosen name becomes the label instead.
+  const circuitCols: { idx: number; key: string; label: string | null }[] = []
+  let kwhPos = 0
   for (let i = 1; i < headerCols.length; i++) {
     const h = headerCols[i].trim()
     const match = h.match(/^(.+?)\s*\(KWH\)$/i)
     if (!match) continue
     const rawName = match[1].trim()
-    const key = rawName.toLowerCase().startsWith('main')
-      ? 'main'
-      : rawName.toLowerCase().replace(/\s+/g, '_')
-    circuitCols.push({ idx: i, key })
+
+    const explicit = rawName.match(/^circuit\s*(\d+)$/i)
+    const key = /^main/i.test(rawName) ? 'main'
+      : explicit ? `circuit${explicit[1]}`
+      : `circuit${kwhPos}`          // renamed: fall back to its position
+
+    // A header the device did not generate is a name somebody chose.
+    const isDefault = /^(main circuit|main|circuit\s*\d+)$/i.test(rawName)
+    circuitCols.push({ idx: i, key, label: isDefault ? null : rawName })
+    kwhPos++
   }
 
   let readings = 0; let skipped = 0
-  const circuitsSeen = new Set<string>()
+  const circuitsSeen = new Map<string, string | null>()
   const CHUNK = 100
 
   for (let i = 1; i < lines.length; i++) {
@@ -222,13 +236,13 @@ export async function importKitchenLoggerCsv(
     const hour = parseInt(tbMatch[2], 10)
 
     const batch: ReturnType<typeof db.prepare>[] = []
-    for (const { idx, key } of circuitCols) {
+    for (const { idx, key, label } of circuitCols) {
       const raw = cols[idx]?.trim()
       if (raw === '' || raw === undefined) continue  // circuit not connected
       const kwh = parseFloat(raw)
       if (isNaN(kwh)) continue
 
-      circuitsSeen.add(key)
+      if (label || !circuitsSeen.has(key)) circuitsSeen.set(key, label)
       batch.push(
         db.prepare(
           `INSERT OR IGNORE INTO energy_logger_readings
@@ -246,17 +260,26 @@ export async function importKitchenLoggerCsv(
     }
   }
 
-  // Upsert circuit labels (insert default, don't overwrite existing user labels)
+  // Circuit labels. A name carried in the CSV was typed into the logger app, so
+  // it wins — that is the more recent intent. Columns still on their device
+  // default only seed a label if the circuit is new, so a name given in the CRM
+  // is never clobbered by a later upload.
   if (circuitsSeen.size) {
-    const circuitBatch = [...circuitsSeen].map(key =>
-      db.prepare(
-        `INSERT INTO energy_logger_circuits (meter_name, circuit, label)
-         VALUES (?, ?, ?)
-         ON CONFLICT(meter_name, circuit) DO NOTHING`
-      ).bind(meterName, key, defaultCircuitLabel(key))
+    const circuitBatch = [...circuitsSeen.entries()].map(([key, label]) =>
+      label
+        ? db.prepare(
+            `INSERT INTO energy_logger_circuits (meter_name, circuit, label)
+             VALUES (?, ?, ?)
+             ON CONFLICT(meter_name, circuit) DO UPDATE SET label = excluded.label`
+          ).bind(meterName, key, label)
+        : db.prepare(
+            `INSERT INTO energy_logger_circuits (meter_name, circuit, label)
+             VALUES (?, ?, ?)
+             ON CONFLICT(meter_name, circuit) DO NOTHING`
+          ).bind(meterName, key, defaultCircuitLabel(key))
     )
     await db.batch(circuitBatch)
   }
 
-  return { rows: lines.length - 1, readings, skipped, meterName, circuits: [...circuitsSeen] }
+  return { rows: lines.length - 1, readings, skipped, meterName, circuits: [...circuitsSeen.keys()] }
 }
