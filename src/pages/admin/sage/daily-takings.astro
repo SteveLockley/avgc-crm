@@ -1,0 +1,421 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { loadConfig, loadMappings, TAX_RATES, addDays, todayInLondon } from '@/lib/daily-takings';
+
+const env = (Astro.locals as any).runtime?.env;
+const db = env?.DB;
+
+const days = Math.min(Number(Astro.url.searchParams.get('days')) || 120, 400);
+
+const [config, mappings, rowsRes, testConn] = await Promise.all([
+  loadConfig(db),
+  loadMappings(db),
+  db.prepare(`SELECT * FROM daily_takings WHERE takings_date >= date('now', ?) ORDER BY takings_date DESC`)
+    .bind(`-${days} days`).all().catch(() => ({ results: [] })),
+  db.prepare(`SELECT COUNT(*) AS n FROM sage_tokens WHERE role = 'test'`).first<{ n: number }>().catch(() => null),
+]);
+
+const rows = (rowsRes.results || []) as any[];
+const testConnected = (testConn?.n ?? 0) > 0;
+const cronConfigured = !!env?.CRON_SECRET;
+const touchOfficeConfigured = !!(env?.TOUCHOFFICE_USERNAME && env?.TOUCHOFFICE_PASSWORD);
+
+const yesterday = addDays(todayInLondon(), -1);
+const defaultFrom = addDays(yesterday, -13);
+
+const counts: Record<string, number> = {};
+for (const r of rows) counts[r.comparison ?? 'unchecked'] = (counts[r.comparison ?? 'unchecked'] ?? 0) + 1;
+const lastChecked = rows.map(r => r.checked_at).filter(Boolean).sort().pop() ?? null;
+
+const STATUS_LABEL: Record<string, string> = {
+  match: 'Matches Sage', mismatch: 'Differs', missing_in_sage: 'Not in Sage', sage_only: 'Sage only',
+  no_sales: 'No sales', unmapped: 'Unmapped dept', error: 'Error', unchecked: 'Not checked',
+};
+const MODE_LABEL: Record<string, string> = { dry_run: 'Dry run — nothing is posted', test: 'Posting to the TEST business', live: 'LIVE — posting to the club accounts' };
+
+function fmt(n: number | null | undefined) {
+  if (n == null) return '—';
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
+}
+function fmtDate(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso.replace(' ', 'T') + (iso.length <= 10 ? 'T12:00:00Z' : 'Z')).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function fmtStamp(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function parse(s: string | null) { try { return s ? JSON.parse(s) : null; } catch { return null; } }
+function lite(r: any) {
+  const cmp = parse(r.diff_json);
+  return JSON.stringify({
+    date: r.takings_date, status: r.comparison, error: r.error, notes: r.notes,
+    check_role: r.check_role, entries: cmp?.entries ?? 0,
+    diffs: cmp?.diffs ?? [], cmpNotes: cmp?.notes ?? [],
+    departments: parse(r.touchoffice_json) ?? [],
+    test_sage_id: r.test_sage_id, live_sage_id: r.live_sage_id,
+  });
+}
+---
+
+<AdminLayout title="Daily Takings → Sage">
+  <style is:global>
+    .dt-header { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem; margin-bottom:1.25rem; }
+    .dt-header h1 { font-size:1.75rem; font-weight:600; color:#1a1a1a; margin:0; }
+    .dt-header p { color:#666; font-size:0.875rem; margin:0.25rem 0 0; max-width:60ch; }
+    .dt-mode { display:inline-block; padding:0.35rem 0.85rem; border-radius:20px; font-weight:600; font-size:0.8125rem; }
+    .dt-mode.dry_run { background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; }
+    .dt-mode.test { background:#fef9c3; color:#854d0e; border:1px solid #fde68a; }
+    .dt-mode.live { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+
+    .dt-strip { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:0.75rem; margin-bottom:1.5rem; }
+    .dt-stat { background:#fff; border:1px solid #e8e8e8; border-radius:12px; padding:0.75rem 1rem; }
+    .dt-stat .k { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.5px; color:#888; }
+    .dt-stat .v { font-size:1.05rem; font-weight:600; color:#1a1a1a; margin-top:0.2rem; }
+    .dt-stat .v.ok { color:#166534; } .dt-stat .v.warn { color:#b45309; } .dt-stat .v.bad { color:#991b1b; }
+
+    .dt-card { background:#fff; border-radius:16px; box-shadow:0 2px 8px rgba(0,0,0,0.06); border:1px solid #e8e8e8; overflow:hidden; margin-bottom:1.5rem; }
+    .dt-card-header { padding:1rem 1.25rem; border-bottom:1px solid #f0f0f0; display:flex; align-items:center; justify-content:space-between; background:#fafafa; flex-wrap:wrap; gap:0.5rem; }
+    .dt-card-header h2 { font-size:1rem; font-weight:600; color:#1a1a1a; margin:0; }
+    .dt-card-body { padding:1.25rem; }
+    .dt-help { font-size:0.85rem; color:#555; margin:0 0 0.75rem; }
+
+    .dt-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+    .dt-table th { padding:0.5rem 0.6rem; text-align:left; background:#fafafa; font-weight:600; color:#666; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e8e8e8; white-space:nowrap; }
+    .dt-table td { padding:0.5rem 0.6rem; border-bottom:1px solid #f0f0f0; color:#333; vertical-align:middle; }
+    .dt-table .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .dt-table tr.details-row td { background:#f9fafb; padding:0.75rem 1rem 1rem; }
+    .dt-sub { width:100%; border-collapse:collapse; font-size:0.8rem; margin-top:0.5rem; }
+    .dt-sub th { font-size:0.68rem; padding:0.3rem 0.5rem; background:#f3f4f6; }
+    .dt-sub td { padding:0.3rem 0.5rem; border-bottom:1px solid #eee; }
+    .dt-sub td.issue { color:#991b1b; font-weight:500; }
+
+    .dt-badge { display:inline-block; padding:0.18rem 0.55rem; border-radius:20px; font-size:0.72rem; font-weight:600; white-space:nowrap; }
+    .dt-badge.match { background:#dcfce7; color:#166534; }
+    .dt-badge.mismatch { background:#fee2e2; color:#991b1b; }
+    .dt-badge.missing_in_sage { background:#dbeafe; color:#1e40af; }
+    .dt-badge.sage_only, .dt-badge.unmapped { background:#fef3c7; color:#92400e; }
+    .dt-badge.no_sales, .dt-badge.unchecked { background:#f3f4f6; color:#6b7280; }
+    .dt-badge.error { background:#fecaca; color:#7f1d1d; }
+    .dt-badge.posted { background:#ede9fe; color:#5b21b6; }
+
+    .dt-form-row { display:flex; gap:0.75rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:0.75rem; }
+    .dt-field { display:flex; flex-direction:column; gap:0.3rem; }
+    .dt-field label { font-size:0.78rem; font-weight:500; color:#555; }
+    .dt-field input, .dt-field select { padding:0.45rem 0.7rem; border:1px solid #d1d5db; border-radius:8px; font-size:0.875rem; background:#fff; color:#1a1a1a; }
+    .dt-field input:focus, .dt-field select:focus { outline:none; border-color:#1e5631; box-shadow:0 0 0 3px rgba(30,86,49,0.1); }
+
+    .dt-btn { padding:0.45rem 0.9rem; border-radius:8px; font-size:0.85rem; font-weight:500; cursor:pointer; border:none; transition:background 0.15s; white-space:nowrap; }
+    .dt-btn.primary { background:#1e5631; color:#fff; } .dt-btn.primary:hover { background:#174a28; }
+    .dt-btn.secondary { background:#f3f4f6; color:#374151; border:1px solid #d1d5db; } .dt-btn.secondary:hover { background:#e5e7eb; }
+    .dt-btn.danger { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; } .dt-btn.danger:hover { background:#fecaca; }
+    .dt-btn.small { padding:0.25rem 0.55rem; font-size:0.74rem; }
+    .dt-btn:disabled { opacity:0.5; cursor:not-allowed; }
+
+    .dt-alert { padding:0.7rem 1rem; border-radius:8px; font-size:0.85rem; margin:0.75rem 0; display:none; white-space:pre-wrap; }
+    .dt-alert.info { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; display:block; }
+    .dt-alert.success { background:#dcfce7; border:1px solid #bbf7d0; color:#166534; display:block; }
+    .dt-alert.error { background:#fee2e2; border:1px solid #fecaca; color:#991b1b; display:block; }
+    .dt-alert.warning { background:#fef9c3; border:1px solid #fde68a; color:#854d0e; display:block; }
+
+    .dt-toggle { appearance:none; width:36px; height:20px; background:#d1d5db; border-radius:10px; cursor:pointer; position:relative; transition:background 0.2s; }
+    .dt-toggle:checked { background:#1e5631; }
+    .dt-toggle::before { content:''; position:absolute; width:16px; height:16px; background:#fff; border-radius:50%; top:2px; left:2px; transition:transform 0.2s; }
+    .dt-toggle:checked::before { transform:translateX(16px); }
+    .dt-empty { text-align:center; padding:2rem; color:#999; font-size:0.875rem; }
+    .dt-muted { color:#888; font-size:0.78rem; }
+    code.dt-code { background:#f3f4f6; padding:0.1rem 0.4rem; border-radius:4px; font-size:0.8rem; }
+  </style>
+
+  <div class="dt-header">
+    <div>
+      <h1>Daily Takings → Sage</h1>
+      <p>Each trading day's TouchOffice department totals become one Sage Other Receipt into the till,
+        with VAT itemised per budget head — the same entry the bookkeeper keys by hand.
+        Run a dry run first: it compares what would be posted with what Sage already holds and writes nothing.</p>
+    </div>
+    <div style="text-align:right;">
+      <span class={`dt-mode ${config.mode}`}>{MODE_LABEL[config.mode]}</span>
+      {config.mode === 'live' && config.live_from && <div class="dt-muted" style="margin-top:0.35rem;">from {fmtDate(config.live_from)}</div>}
+    </div>
+  </div>
+
+  <div class="dt-strip">
+    <div class="dt-stat"><div class="k">Days checked</div><div class="v">{rows.length}<span class="dt-muted"> / last {days} days</span></div></div>
+    <div class="dt-stat"><div class="k">Match</div><div class="v ok">{counts.match ?? 0}</div></div>
+    <div class="dt-stat"><div class="k">Differ</div><div class={`v ${(counts.mismatch ?? 0) ? 'bad' : ''}`}>{counts.mismatch ?? 0}</div></div>
+    <div class="dt-stat"><div class="k">Not in Sage</div><div class={`v ${(counts.missing_in_sage ?? 0) ? 'warn' : ''}`}>{counts.missing_in_sage ?? 0}</div></div>
+    <div class="dt-stat"><div class="k">Last check</div><div class="v" style="font-size:0.9rem;">{fmtStamp(lastChecked)}</div></div>
+    <div class="dt-stat"><div class="k">TouchOffice login</div><div class={`v ${touchOfficeConfigured ? 'ok' : 'bad'}`} style="font-size:0.9rem;">{touchOfficeConfigured ? 'Configured' : 'Missing'}</div></div>
+    <div class="dt-stat"><div class="k">Test business</div><div class={`v ${testConnected ? 'ok' : 'warn'}`} style="font-size:0.9rem;">{testConnected ? 'Connected' : 'Not connected'}</div></div>
+    <div class="dt-stat"><div class="k">Scheduled run</div><div class={`v ${cronConfigured ? 'ok' : 'warn'}`} style="font-size:0.9rem;">{cronConfigured ? 'Secret set' : 'No CRON_SECRET'}</div></div>
+  </div>
+
+  <!-- ── Dry run ─────────────────────────────────────────────────────── -->
+  <div class="dt-card">
+    <div class="dt-card-header"><h2>Dry run</h2><span class="dt-muted">Reads TouchOffice and Sage, writes nothing to Sage</span></div>
+    <div class="dt-card-body">
+      <div class="dt-form-row">
+        <div class="dt-field"><label for="run-from">From</label><input type="date" id="run-from" value={defaultFrom} max={yesterday} /></div>
+        <div class="dt-field"><label for="run-to">To</label><input type="date" id="run-to" value={yesterday} max={yesterday} /></div>
+        <div class="dt-field"><label for="run-role">Compare with</label>
+          <select id="run-role"><option value="live">Live business (manual entries)</option><option value="test" disabled={!testConnected}>Test business</option></select></div>
+        <button class="dt-btn primary" id="run-btn">Run dry run</button>
+        <span id="run-progress" class="dt-muted"></span>
+      </div>
+      <div id="run-msg" class="dt-alert"></div>
+    </div>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────────────── -->
+  <div class="dt-card">
+    <div class="dt-card-header">
+      <h2>Day by day</h2>
+      <span class="dt-muted">
+        Showing {rows.length} days ·
+        <a href="?days=120">120</a> · <a href="?days=270">270</a> · <a href="?days=400">400</a>
+      </span>
+    </div>
+    <div class="dt-card-body" style="padding:0;">
+      {rows.length === 0 ? <p class="dt-empty">No days checked yet. Run a dry run above.</p> : (
+        <table class="dt-table" id="days-table">
+          <thead><tr>
+            <th>Date</th><th class="num">TouchOffice</th><th class="num">Sage</th><th class="num">Δ</th>
+            <th>Result</th><th>Checked</th><th>Test</th><th>Live</th><th></th>
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr data-date={r.takings_date} data-row={lite(r)}>
+                <td style="white-space:nowrap;">{fmtDate(r.takings_date)}<div class="dt-muted">{new Date(r.takings_date + 'T12:00:00Z').toLocaleDateString('en-GB', { weekday: 'short' })}</div></td>
+                <td class="num">{fmt(r.proposed_total)}</td>
+                <td class="num">{fmt(r.sage_total)}</td>
+                <td class="num" style={r.proposed_total != null && r.sage_total != null && Math.abs(r.proposed_total - r.sage_total) >= 0.005 ? 'color:#991b1b;font-weight:600' : ''}>
+                  {r.proposed_total != null && r.sage_total != null ? fmt(r.proposed_total - r.sage_total) : '—'}
+                </td>
+                <td><span class={`dt-badge ${r.comparison ?? 'unchecked'}`}>{STATUS_LABEL[r.comparison ?? 'unchecked']}</span>
+                  {r.check_role === 'test' && <span class="dt-muted"> vs test</span>}</td>
+                <td class="dt-muted" style="white-space:nowrap;">{fmtStamp(r.checked_at)}</td>
+                <td>{r.test_sage_id ? <span class="dt-badge posted" title={r.test_sage_id}>posted</span> : <span class="dt-muted">—</span>}</td>
+                <td>{r.live_sage_id ? <span class="dt-badge posted" title={r.live_sage_id}>posted</span> : <span class="dt-muted">—</span>}</td>
+                <td style="white-space:nowrap;">
+                  <button class="dt-btn secondary small act-details">Details</button>
+                  <button class="dt-btn secondary small act-recheck">Re-check</button>
+                  {!r.test_sage_id && r.comparison !== 'no_sales' && r.comparison !== 'unmapped' && <button class="dt-btn secondary small act-post" data-role="test" disabled={!testConnected}>Post to test</button>}
+                  {r.test_sage_id && <button class="dt-btn danger small act-void" data-role="test">Void test</button>}
+                  {!r.live_sage_id && r.comparison === 'missing_in_sage' && <button class="dt-btn primary small act-post" data-role="live">Post to live</button>}
+                  {r.live_sage_id && <button class="dt-btn danger small act-void" data-role="live">Void live</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  </div>
+
+  <!-- ── Settings ────────────────────────────────────────────────────── -->
+  <div class="dt-card">
+    <div class="dt-card-header"><h2>Settings</h2></div>
+    <div class="dt-card-body">
+      <p class="dt-help">
+        <strong>Mode</strong> controls the scheduled run each morning. <em>Dry run</em> only records the comparison.
+        <em>Test</em> also posts each day to the connected test business. <em>Live</em> posts a day to the club accounts
+        only when Sage holds nothing for it and the day is on or after the go-live date; days with a manual entry are never touched.
+      </p>
+      <div class="dt-form-row">
+        <div class="dt-field"><label for="cfg-mode">Mode</label>
+          <select id="cfg-mode">
+            <option value="dry_run" selected={config.mode === 'dry_run'}>Dry run</option>
+            <option value="test" selected={config.mode === 'test'}>Test business</option>
+            <option value="live" selected={config.mode === 'live'}>Live</option>
+          </select></div>
+        <div class="dt-field"><label for="cfg-live-from">Go-live date (first day posted automatically)</label>
+          <input type="date" id="cfg-live-from" value={config.live_from ?? ''} /></div>
+        <div class="dt-field"><label for="cfg-bank">Till bank account (nominal)</label>
+          <input type="number" id="cfg-bank" value={config.bank_nominal} style="width:110px;" /></div>
+        <button class="dt-btn primary" id="cfg-save">Save</button>
+      </div>
+      <div id="cfg-msg" class="dt-alert"></div>
+    </div>
+  </div>
+
+  <!-- ── Mapping ─────────────────────────────────────────────────────── -->
+  <div class="dt-card">
+    <div class="dt-card-header"><h2>Budget heads</h2><span class="dt-muted">TouchOffice department → Sage nominal code and VAT rate</span></div>
+    <div class="dt-card-body">
+      <p class="dt-help">Match is on the department name (exact, then "contains"). Departments with sales that match nothing block posting for that day and show as <em>Unmapped dept</em>.</p>
+      <table class="dt-table" id="mapping-table" style="margin-bottom:1rem;">
+        <thead><tr><th>TouchOffice department</th><th>Nominal</th><th>Sage account</th><th>VAT</th><th style="text-align:center;">On</th><th></th></tr></thead>
+        <tbody>
+          {mappings.map((m: any) => (
+            <tr data-id={m.id}>
+              <td><code class="dt-code">{m.dept_pattern}</code></td>
+              <td>{m.nominal_code}</td>
+              <td>{m.ledger_name ?? '—'}</td>
+              <td>{TAX_RATES[m.tax_rate_id]?.name ?? m.tax_rate_id}</td>
+              <td style="text-align:center;"><input type="checkbox" class="dt-toggle map-toggle" data-id={m.id} checked={m.enabled === 1} /></td>
+              <td><button class="dt-btn danger small map-delete" data-id={m.id}>Remove</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div class="dt-form-row">
+        <div class="dt-field"><label>Department</label><input type="text" id="map-pattern" placeholder="e.g. Soft Drinks" style="width:170px;" /></div>
+        <div class="dt-field"><label>Nominal</label><input type="number" id="map-nominal" placeholder="4005" style="width:90px;" /></div>
+        <div class="dt-field"><label>Sage account name</label><input type="text" id="map-name" placeholder="Bar sales - Soft drinks (4005)" style="width:240px;" /></div>
+        <div class="dt-field"><label>VAT</label>
+          <select id="map-tax">{Object.entries(TAX_RATES).map(([id, t]) => <option value={id}>{t.name}</option>)}</select></div>
+        <button class="dt-btn primary" id="map-add">Add</button>
+      </div>
+      <div id="map-msg" class="dt-alert"></div>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ yesterday }}>
+    var API = '/api/sage/daily-takings';
+    var fmt = function (n) { return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0); };
+    function alertBox(id, msg, type) { var el = document.getElementById(id); el.textContent = msg; el.className = 'dt-alert ' + (type || 'info'); }
+    function hideBox(id) { document.getElementById(id).className = 'dt-alert'; }
+    async function api(body) {
+      var res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var data = await res.json().catch(function () { return {}; });
+      return { ok: res.ok, status: res.status, data: data };
+    }
+    function addDays(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+    // ── Dry run ──────────────────────────────────────────────────────
+    document.getElementById('run-btn').addEventListener('click', async function () {
+      var from = document.getElementById('run-from').value, to = document.getElementById('run-to').value;
+      var role = document.getElementById('run-role').value;
+      if (!from || !to || from > to) { alertBox('run-msg', 'Choose a from date on or before the to date.', 'warning'); return; }
+      if (to > yesterday) { alertBox('run-msg', 'Only completed days can be checked.', 'warning'); return; }
+      var dates = []; for (var d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+      this.disabled = true; hideBox('run-msg');
+      var progress = document.getElementById('run-progress');
+      var done = 0, summary = {}, failed = [];
+      try {
+        for (var i = 0; i < dates.length; i += 8) {
+          var chunk = dates.slice(i, i + 8);
+          progress.textContent = 'Checking ' + chunk[0] + ' … (' + done + '/' + dates.length + ')';
+          var r = await api({ action: 'check', dates: chunk, role: role });
+          if (!r.ok) { failed.push(chunk[0] + ': ' + (r.data.error || r.status)); break; }
+          r.data.results.forEach(function (x) { summary[x.status] = (summary[x.status] || 0) + 1; if (x.error) failed.push(x.date + ': ' + x.error); });
+          done += r.data.results.length;
+          if (r.data.results.length < chunk.length) { failed.push('stopped early — see the error above'); break; }
+        }
+        var parts = Object.keys(summary).map(function (k) { return k + ' ' + summary[k]; }).join(', ');
+        alertBox('run-msg', 'Checked ' + done + ' day(s): ' + parts + (failed.length ? '\n' + failed.join('\n') : '') + '\nReloading…', failed.length ? 'warning' : 'success');
+        setTimeout(function () { location.reload(); }, 1500);
+      } finally { this.disabled = false; progress.textContent = ''; }
+    });
+
+    // ── Row actions ──────────────────────────────────────────────────
+    function detailsHtml(row) {
+      var h = '';
+      if (row.error) h += '<div class="dt-alert error" style="display:block;margin:0 0 0.5rem;">' + esc(row.error) + '</div>';
+      if (row.diffs && row.diffs.length) {
+        h += '<table class="dt-sub"><thead><tr><th>Budget head</th><th class="num">TouchOffice gross</th><th class="num">Sage gross</th><th>VAT code (ours / Sage)</th><th class="num">Net (ours / Sage)</th><th class="num">VAT (ours / Sage)</th><th>Issues</th></tr></thead><tbody>';
+        row.diffs.forEach(function (d) {
+          h += '<tr><td>' + esc(d.ledger_name) + '</td><td class="num">' + fmt(d.proposed_total) + '</td><td class="num">' + fmt(d.sage_total) + '</td>'
+            + '<td>' + esc(d.proposed_rate || '—') + ' / ' + esc(d.sage_rate || '—') + '</td>'
+            + '<td class="num">' + fmt(d.proposed_net) + ' / ' + fmt(d.sage_net) + '</td>'
+            + '<td class="num">' + fmt(d.proposed_tax) + ' / ' + fmt(d.sage_tax) + '</td>'
+            + '<td class="' + (d.issues.length ? 'issue' : '') + '">' + esc(d.issues.join('; ') || 'agrees') + '</td></tr>';
+        });
+        h += '</tbody></table>';
+      }
+      if (row.departments && row.departments.length) {
+        h += '<div class="dt-muted" style="margin-top:0.6rem;">TouchOffice departments: ' + row.departments.map(function (d) { return esc(d.name) + ' ' + fmt(d.value); }).join(' · ') + '</div>';
+      }
+      var notes = (row.cmpNotes || []).concat(row.notes ? row.notes.split('\n') : []);
+      if (notes.length) h += '<div class="dt-muted" style="margin-top:0.4rem;white-space:pre-wrap;">' + notes.map(esc).join('\n') + '</div>';
+      if (row.test_sage_id) h += '<div class="dt-muted" style="margin-top:0.4rem;">Test receipt id: ' + esc(row.test_sage_id) + '</div>';
+      if (row.live_sage_id) h += '<div class="dt-muted">Live receipt id: ' + esc(row.live_sage_id) + '</div>';
+      return h || '<span class="dt-muted">Nothing recorded for this day yet.</span>';
+    }
+
+    document.querySelectorAll('#days-table tbody tr[data-date]').forEach(function (tr) {
+      var date = tr.dataset.date;
+      var row = JSON.parse(tr.dataset.row);
+
+      tr.querySelector('.act-details').addEventListener('click', function () {
+        var next = tr.nextElementSibling;
+        if (next && next.classList.contains('details-row')) { next.remove(); return; }
+        var dr = document.createElement('tr'); dr.className = 'details-row';
+        dr.innerHTML = '<td colspan="9">' + detailsHtml(row) + '</td>';
+        tr.parentNode.insertBefore(dr, tr.nextSibling);
+      });
+
+      tr.querySelector('.act-recheck').addEventListener('click', async function () {
+        this.disabled = true; this.textContent = 'Checking…';
+        var r = await api({ action: 'check', dates: [date], role: row.check_role === 'test' ? 'test' : 'live' });
+        if (!r.ok) { alert(r.data.error || 'Check failed'); this.disabled = false; this.textContent = 'Re-check'; return; }
+        location.reload();
+      });
+
+      tr.querySelectorAll('.act-post').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var role = btn.dataset.role;
+          var body = { action: 'post', date: date, role: role };
+          if (role === 'live') {
+            var typed = prompt('This will create an Other Receipt in the club\'s LIVE Sage accounts for ' + date + '.\n\nType POST TO LIVE to confirm.');
+            if (typed !== 'POST TO LIVE') return;
+            body.confirm = typed;
+          } else if (!confirm('Post ' + date + ' to the TEST business?')) { return; }
+          btn.disabled = true; btn.textContent = 'Posting…';
+          var r = await api(body);
+          if (!r.ok) {
+            alert((r.data.error || 'Post failed') + (r.data.check && r.data.check.issues && r.data.check.issues.length ? '\n\n' + r.data.check.issues.join('\n') : ''));
+            btn.disabled = false; btn.textContent = role === 'live' ? 'Post to live' : 'Post to test'; return;
+          }
+          alert('Posted ' + fmt(r.data.total) + ' to ' + role + ' (Sage id ' + r.data.sage_id + ').');
+          location.reload();
+        });
+      });
+
+      tr.querySelectorAll('.act-void').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var role = btn.dataset.role;
+          if (!confirm('Delete the ' + role + ' receipt the CRM posted for ' + date + '?\n\nSage refuses if it has been reconciled or included on a VAT return.')) return;
+          btn.disabled = true; btn.textContent = 'Voiding…';
+          var r = await api({ action: 'void', date: date, role: role });
+          if (!r.ok) { alert(r.data.error || 'Void failed'); btn.disabled = false; btn.textContent = 'Void ' + role; return; }
+          location.reload();
+        });
+      });
+    });
+
+    // ── Settings ─────────────────────────────────────────────────────
+    document.getElementById('cfg-save').addEventListener('click', async function () {
+      var mode = document.getElementById('cfg-mode').value;
+      var liveFrom = document.getElementById('cfg-live-from').value;
+      var bank = document.getElementById('cfg-bank').value;
+      if (mode === 'live' && !confirm('Switch the scheduled run to LIVE? From ' + (liveFrom || '(no date)') + ' each morning\'s run will post the previous day to the club accounts when Sage has nothing for it.')) return;
+      var r = await api({ action: 'config', mode: mode, live_from: liveFrom, bank_nominal: bank });
+      if (!r.ok) { alertBox('cfg-msg', r.data.error || 'Save failed', 'error'); return; }
+      alertBox('cfg-msg', 'Saved. Reloading…', 'success'); setTimeout(function () { location.reload(); }, 700);
+    });
+
+    // ── Mapping ──────────────────────────────────────────────────────
+    document.getElementById('map-add').addEventListener('click', async function () {
+      var r = await api({ action: 'mapping', op: 'add',
+        dept_pattern: document.getElementById('map-pattern').value,
+        nominal_code: document.getElementById('map-nominal').value,
+        ledger_name: document.getElementById('map-name').value,
+        tax_rate_id: document.getElementById('map-tax').value });
+      if (!r.ok) { alertBox('map-msg', r.data.error || 'Could not add', 'error'); return; }
+      alertBox('map-msg', 'Added. Reloading…', 'success'); setTimeout(function () { location.reload(); }, 700);
+    });
+    document.querySelectorAll('.map-toggle').forEach(function (el) {
+      el.addEventListener('change', function () { api({ action: 'mapping', op: 'toggle', id: Number(el.dataset.id), enabled: el.checked }); });
+    });
+    document.querySelectorAll('.map-delete').forEach(function (el) {
+      el.addEventListener('click', async function () {
+        if (!confirm('Remove this budget head mapping?')) return;
+        var r = await api({ action: 'mapping', op: 'delete', id: Number(el.dataset.id) });
+        if (r.ok) el.closest('tr').remove(); else alertBox('map-msg', r.data.error || 'Could not remove', 'error');
+      });
+    });
+  </script>
+</AdminLayout>

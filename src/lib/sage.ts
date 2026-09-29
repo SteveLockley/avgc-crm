@@ -177,8 +177,9 @@ export interface SageClientOptions {
   /** Which connected business to use. Defaults to the club's live accounts. */
   role?: SageRole;
   /**
-   * Writes are refused unless this is true. The change-set engine turns it on
-   * for a single apply run; nothing else should.
+   * Writes are refused unless this is true. Only two places turn it on: the
+   * change-set engine for a single apply run, and the daily takings poster
+   * (src/lib/daily-takings.ts) for a single day's receipt.
    */
   allowWrites?: boolean;
 }

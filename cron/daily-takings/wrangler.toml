@@ -1,0 +1,16 @@
+# Scheduled trigger for the daily takings run. Deploy from this folder:
+#   npx wrangler deploy
+#   printf '%s' THE_SECRET | npx wrangler secret put CRON_SECRET
+# The same value must be set on the Pages project:
+#   printf '%s' THE_SECRET | npx wrangler pages secret put CRON_SECRET --project-name alnmouth-golf-crm
+name = "avgc-daily-takings-cron"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[triggers]
+# 05:30 UTC every day = 06:30 BST / 05:30 GMT, well after the till has closed.
+crons = ["30 5 * * *"]
+
+[vars]
+# The pages.dev hostname is not behind Cloudflare Access; the endpoint checks the bearer itself.
+TARGET_URL = "https://alnmouth-golf-crm.pages.dev/api/sage/daily-takings"

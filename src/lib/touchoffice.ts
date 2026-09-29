@@ -810,10 +810,13 @@ const AJAX_URL = BASE_URL + '/apps/ajaxloader';
  * then fetch each widget's data via the AJAX loader endpoint.
  * Returns concatenated widget HTML containing DataTables and CSV textareas.
  */
+export const HOMEPAGE_WIDGETS = ['departmentSalesTotal', 'fixedtotal', 'transactionKeySales'] as const;
+
 export async function fetchHomepage(
   sessionCookie: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  widgets: readonly string[] = HOMEPAGE_WIDGETS
 ): Promise<string> {
   const cookie = `icrtouch_connect_login_id=${sessionCookie}`;
 
@@ -843,8 +846,7 @@ export async function fetchHomepage(
     throw new Error('Session expired. Please sign in again.');
   }
 
-  // Step 2: Fetch each widget via the AJAX loader endpoint
-  const widgets = ['departmentSalesTotal', 'fixedtotal', 'transactionKeySales'];
+  // Step 2: Fetch each requested widget via the AJAX loader endpoint
   const parts: string[] = [];
 
   for (const widgetFn of widgets) {

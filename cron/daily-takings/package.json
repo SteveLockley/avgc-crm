@@ -1,0 +1,7 @@
+{
+  "name": "avgc-daily-takings-cron",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}

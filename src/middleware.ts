@@ -76,6 +76,7 @@ const openApiPrefixes = [
   '/api/google-special-hours',
   '/api/dojo-payment',        // payment provider callback
   '/api/sage/callback',       // Sage OAuth redirect target — cannot require a session
+  '/api/sage/daily-takings',  // scheduled daily run authenticates with CRON_SECRET; admins via Access
 ];
 
 function isAdminApiRoute(pathname: string): boolean {
