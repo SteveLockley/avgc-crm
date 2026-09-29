@@ -38,9 +38,11 @@ if (vars.TOUCHOFFICE_USERNAME && vars.TOUCHOFFICE_PASSWORD) {
   session = d1(`SELECT value FROM app_settings WHERE key='touchoffice_session'`)[0]?.value;
   console.log('TouchOffice: using the session stored by the CRM (add TOUCHOFFICE_USERNAME/PASSWORD to .dev.vars to log in directly)');
 }
-const probe = await fetchHomepage(session, toTouchOfficeDate(TO), toTouchOfficeDate(TO), ['departmentSalesTotal']);
-if (probe.includes('not logged in') || probe.includes('name="submit-login"')) {
-  console.error('TouchOffice session is not valid. Put TOUCHOFFICE_USERNAME and TOUCHOFFICE_PASSWORD in .dev.vars.');
+try {
+  const probe = await fetchHomepage(session, toTouchOfficeDate(TO), toTouchOfficeDate(TO), ['departmentSalesTotal']);
+  if (probe.includes('not logged in') || probe.includes('name="submit-login"')) throw new Error('login page returned');
+} catch (e) {
+  console.error(`TouchOffice session is not valid (${e.message}). Either put TOUCHOFFICE_USERNAME and TOUCHOFFICE_PASSWORD in .dev.vars, or open Food & Bar in the CRM (which signs in and stores a fresh session) and run this again.`);
   process.exit(2);
 }
 

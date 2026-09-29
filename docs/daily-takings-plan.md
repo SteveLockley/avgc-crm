@@ -92,7 +92,9 @@ The scheduled run (`cron/daily-takings`, a Cloudflare Worker firing at 05:30 UTC
 
 ## 4. Dummy runs on existing data
 
-Two ways, both read-only:
+**Already done, from the Sage side (29 Sep).** Every one of the 267 days in Sage was fed back through the posting engine using its own gross figures per head. 255 days come out as *match*; the 12 flagged are exactly the VAT-error days and the duplicate in section 2, and nothing else. The receipt the engine would generate for each day (lines, net, VAT, and the Sage payload) is in `data/daily-takings/engine-dummy-run-2026.csv`.
+
+**Still to run, against TouchOffice day by day.** Two ways, both read-only:
 
 **On the page.** Choose a date range (up to a year) and *Run dry run*. Each day is fetched and compared; the table shows the result with a line-by-line breakdown under *Details*. Days with a manual entry should show *Matches Sage*; the keying errors above will show *Differs* with the reason.
 
@@ -102,7 +104,7 @@ Two ways, both read-only:
 node --import ./scripts/lib/register-ts.mjs scripts/daily-takings-check.mjs --from 2026-01-01 --to 2026-09-28
 ```
 
-It uses the same library as the page, prints one line per day and writes `data/daily-takings-check-<from>_<to>.csv`. It needs `TOUCHOFFICE_USERNAME` and `TOUCHOFFICE_PASSWORD` in `.dev.vars`.
+It uses the same library as the page, prints one line per day and writes `data/daily-takings-check-<from>_<to>.csv`. It needs `TOUCHOFFICE_USERNAME` and `TOUCHOFFICE_PASSWORD` in `.dev.vars`, or a fresh session: opening Food & Bar in the CRM signs in and stores one, and the script picks it up.
 
 ## 5. Go-live steps
 
