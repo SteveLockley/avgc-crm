@@ -43,3 +43,6 @@ policies/
 *.log
 npm-debug.log*
 node_modules
+
+# Club documents for the NECF carbon grant (invoices, bills, meter exports) — not source
+NCC 6 month Report/

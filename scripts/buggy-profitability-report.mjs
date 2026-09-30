@@ -45,7 +45,7 @@ function parseBrsDate(dateStr, hintYear = 2025) {
 }
 
 function loadBrs() {
-  const raw = readFileSync('/Users/stevelockley/claude-apps/avgc-crm/data/CaddyBuggyClubReport.csv', 'utf8')
+  const raw = readFileSync('/Users/stevelockley/claude-apps/avgc-crm/NCC 6 month Report/5 Meter and logger data/CaddyBuggyClubReport.csv', 'utf8')
   const allLines = raw.trim().split('\n')
   // Detect format: old format has a "£" column after Buggies; new format goes straight to Caddies
   const headerLine = allLines[0].replace(/^﻿/, '')
