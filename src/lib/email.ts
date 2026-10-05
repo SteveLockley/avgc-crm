@@ -5,6 +5,7 @@ interface EmailOptions {
   subject: string;
   html: string;
   from?: string;
+  bcc?: string[]; // blind copies, e.g. a batch of members for a club-wide notice
   useServiceAccountMailbox?: boolean; // If true, send from service account's own mailbox (for testing)
 }
 
@@ -203,6 +204,10 @@ export async function sendEmail(
         },
       ],
     };
+
+    if (options.bcc?.length) {
+      message.bccRecipients = options.bcc.map(address => ({ emailAddress: { address } }));
+    }
 
     // Always set the from and sender fields with the club display name
     // Both fields are set to maximise compatibility across email clients

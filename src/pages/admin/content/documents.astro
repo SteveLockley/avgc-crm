@@ -376,6 +376,13 @@ function formatDisplayDate(dateStr: string | null): string {
                   {doc.description && <p class="document-desc">{doc.description}</p>}
                 </div>
                 <div class="document-actions">
+                  {doc.published ? (
+                    <button type="button" class="action-btn notify-btn" title="Email members" data-id={doc.id} data-title={doc.title}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/>
+                      </svg>
+                    </button>
+                  ) : null}
                   <a href={doc.document_url} target="_blank" rel="noopener noreferrer" class="action-btn" title="View Document">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
@@ -432,12 +439,145 @@ function formatDisplayDate(dateStr: string | null): string {
             <a href="/admin/content/documents?action=new" class="btn btn-primary">Add Document</a>
           </div>
         )}
+        <dialog id="notify-dialog" class="notify-dialog">
+          <h3>Email members</h3>
+          <p class="notify-doc" id="notify-doc"></p>
+          <div id="notify-body">
+            <p class="notify-status" id="notify-status">Checking recipients…</p>
+            <details class="notify-preview">
+              <summary>Preview the email</summary>
+              <p class="notify-subject" id="notify-subject"></p>
+              <iframe id="notify-frame" title="Email preview" sandbox=""></iframe>
+            </details>
+            <p class="notify-result" id="notify-result" hidden></p>
+          </div>
+          <div class="notify-actions">
+            <button type="button" class="btn btn-secondary" id="notify-close">Close</button>
+            <button type="button" class="btn btn-secondary" id="notify-test">Send test to me</button>
+            <button type="button" class="btn btn-primary" id="notify-send" disabled>Send to members</button>
+          </div>
+        </dialog>
+
+        <script>
+          const dialog = document.getElementById('notify-dialog');
+          const statusEl = document.getElementById('notify-status');
+          const resultEl = document.getElementById('notify-result');
+          const sendBtn = document.getElementById('notify-send');
+          const testBtn = document.getElementById('notify-test');
+          let documentId = null;
+          let recipientCount = 0;
+          let confirming = false;
+
+          async function callNotify(mode) {
+            const response = await fetch('/api/notify-document', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ documentId, mode }),
+            });
+            const data = await response.json();
+            if (!response.ok || data.error) throw new Error(data.error || 'Request failed');
+            return data;
+          }
+
+          function showResult(text, ok) {
+            resultEl.textContent = text;
+            resultEl.className = 'notify-result ' + (ok ? 'ok' : 'err');
+            resultEl.hidden = false;
+          }
+
+          async function openNotify(id, title) {
+            documentId = id;
+            confirming = false;
+            recipientCount = 0;
+            document.getElementById('notify-doc').textContent = title;
+            statusEl.textContent = 'Checking recipients…';
+            resultEl.hidden = true;
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Send to members';
+            dialog.showModal();
+            try {
+              const data = await callNotify('preview');
+              recipientCount = data.recipientCount;
+              document.getElementById('notify-subject').textContent = 'Subject: ' + data.subject;
+              document.getElementById('notify-frame').srcdoc = data.html;
+              let text = recipientCount + ' member email address' + (recipientCount === 1 ? '' : 'es') +
+                ' (current members who have consented to email; shared family addresses counted once). Sent BCC from the club mailbox.';
+              if (data.alreadySent) text += ' ' + data.alreadySent + ' already received this notice and will be skipped.';
+              if (data.invalid && data.invalid.length) text += ' Not valid, skipped: ' + data.invalid.join(', ') + '.';
+              statusEl.textContent = text;
+              sendBtn.disabled = recipientCount === 0;
+              if (recipientCount === 0) sendBtn.textContent = 'Everyone has been sent this';
+            } catch (err) {
+              statusEl.textContent = 'Could not check recipients: ' + err.message;
+            }
+          }
+
+          document.querySelectorAll('.notify-btn').forEach(btn => {
+            btn.addEventListener('click', () => openNotify(Number(btn.dataset.id), btn.dataset.title));
+          });
+          document.getElementById('notify-close').addEventListener('click', () => dialog.close());
+
+          testBtn.addEventListener('click', async () => {
+            testBtn.disabled = true;
+            try {
+              const data = await callNotify('test');
+              showResult('Test sent to ' + data.sentTo + '.', true);
+            } catch (err) {
+              showResult('Test failed: ' + err.message, false);
+            }
+            testBtn.disabled = false;
+          });
+
+          sendBtn.addEventListener('click', async () => {
+            if (!confirming) {
+              confirming = true;
+              sendBtn.textContent = 'Confirm: email ' + recipientCount + ' members';
+              return;
+            }
+            sendBtn.disabled = true;
+            testBtn.disabled = true;
+            sendBtn.textContent = 'Sending…';
+            try {
+              const data = await callNotify('send');
+              showResult('Sent to ' + data.sent + ' members in ' + data.batches + ' BCC email' + (data.batches === 1 ? '' : 's') + '.' +
+                (data.failed ? ' ' + data.failed + ' failed: ' + (data.errors || []).join('; ') : ''), !data.failed);
+              sendBtn.textContent = data.failed ? 'Retry failed addresses' : 'Sent';
+              sendBtn.disabled = !data.failed;
+              confirming = false;
+            } catch (err) {
+              showResult('Send failed: ' + err.message, false);
+              sendBtn.textContent = 'Send to members';
+              sendBtn.disabled = false;
+              confirming = false;
+            }
+            testBtn.disabled = false;
+          });
+        </script>
       </div>
     )}
   </div>
 </AdminLayout>
 
 <style>
+  .notify-dialog {
+    border: none;
+    border-radius: 12px;
+    padding: 1.5rem;
+    width: min(560px, calc(100vw - 32px));
+    box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  }
+  .notify-dialog::backdrop { background: rgba(0,0,0,0.4); }
+  .notify-dialog h3 { margin: 0 0 0.25rem; }
+  .notify-doc { margin: 0 0 1rem; color: #555; }
+  .notify-status { font-size: 0.95rem; line-height: 1.5; }
+  .notify-preview { margin: 0.75rem 0; }
+  .notify-preview summary { cursor: pointer; color: #1e5631; font-weight: 500; }
+  .notify-subject { font-size: 0.9rem; margin: 0.5rem 0; }
+  .notify-preview iframe { width: 100%; height: 260px; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
+  .notify-result { padding: 0.75rem; border-radius: 6px; font-size: 0.95rem; }
+  .notify-result.ok { background: #dcfce7; color: #166534; }
+  .notify-result.err { background: #fee2e2; color: #991b1b; }
+  .notify-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
   .docs-admin {
     max-width: 1000px;
   }
