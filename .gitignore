@@ -43,3 +43,6 @@ policies/
 *.log
 npm-debug.log*
 node_modules
+
+# Tests against the club's real figures. They run locally but this repo is public, so never commit them
+tests/private/

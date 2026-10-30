@@ -1,0 +1,398 @@
+---
+import AdminLayout from '@/layouts/AdminLayout.astro';
+import { lastCompletedQuarter, previousQuarter, quarterContaining, returnDueDate, type VatPeriod } from '@/lib/vat-partial-exemption';
+
+const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+const latest = lastCompletedQuarter(today);
+
+// The open quarter first (for a look mid-quarter), then the last eight completed ones.
+const current = quarterContaining(today);
+const options: (VatPeriod & { due: string; open?: boolean })[] = [{ ...current, due: returnDueDate(current), open: true }];
+let q = latest;
+for (let i = 0; i < 8; i++) { options.push({ ...q, due: returnDueDate(q) }); q = previousQuarter(q); }
+
+const requested = Astro.url.searchParams.get('q');
+const selectedKey = options.some(o => o.key === requested) ? requested! : latest.key;
+---
+
+<AdminLayout title="VAT Partial Exemption">
+  <style is:global>
+    .pe-header { margin-bottom: 1.25rem; }
+    .pe-header h1 { font-size: 1.75rem; font-weight: 600; color: #1a1a1a; margin: 0; }
+    .pe-header p { color: #666; font-size: 0.875rem; margin: 0.35rem 0 0; max-width: 70ch; line-height: 1.5; }
+
+    .pe-controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; background: #fff; border: 1px solid #e8e8e8; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+    .pe-controls label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.25rem; }
+    .pe-controls select { padding: 0.5rem 0.625rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem; font-family: inherit; background: #fff; min-width: 15rem; }
+    .pe-status { font-size: 0.85rem; color: #555; flex-basis: 100%; min-height: 1.2em; }
+    .pe-status.err { color: var(--danger); }
+
+    .pe-card { background: #fff; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #e8e8e8; margin-bottom: 1.25rem; overflow: hidden; }
+    .pe-card > h2 { font-size: 1rem; font-weight: 600; color: #1a1a1a; margin: 0; padding: 0.9rem 1.25rem; border-bottom: 1px solid #f0f0f0; background: #fafafa; }
+    .pe-card > h2 .num { color: var(--primary); margin-right: 0.5rem; }
+    .pe-body { padding: 1rem 1.25rem; }
+    .pe-body p { margin: 0 0 0.75rem; line-height: 1.55; font-size: 0.9rem; color: #333; max-width: 80ch; }
+    .pe-body p:last-child { margin-bottom: 0; }
+
+    .pe-verdict { border-radius: 14px; padding: 1.1rem 1.25rem; margin-bottom: 1.25rem; border: 1px solid; }
+    .pe-verdict.fail { background: #fff7ed; border-color: #fed7aa; }
+    .pe-verdict.pass { background: #f0fdf4; border-color: #bbf7d0; }
+    .pe-verdict .t { font-weight: 700; font-size: 1.05rem; margin-bottom: 0.35rem; }
+    .pe-verdict.neutral { background: #f8fafc; border-color: #e2e8f0; }
+    .pe-verdict.fail .t { color: #9a3412; } .pe-verdict.pass .t { color: #166534; } .pe-verdict.neutral .t { color: #1a1a1a; }
+    .pe-verdict p { margin: 0; line-height: 1.55; font-size: 0.9rem; max-width: 85ch; }
+
+    .pe-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+    .pe-stat { background: #fff; border: 1px solid #e8e8e8; border-radius: 12px; padding: 0.75rem 1rem; }
+    .pe-stat .k { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #888; }
+    .pe-stat .v { font-size: 1.1rem; font-weight: 600; color: #1a1a1a; margin-top: 0.2rem; font-variant-numeric: tabular-nums; }
+    .pe-stat .s { font-size: 0.75rem; color: #777; margin-top: 0.1rem; }
+
+    .pe-table-wrap { overflow-x: auto; }
+    table.pe-t { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    table.pe-t th { text-align: left; font-weight: 600; color: #555; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.3px; padding: 0.5rem 0.75rem; border-bottom: 2px solid #eee; white-space: nowrap; }
+    table.pe-t td { padding: 0.45rem 0.75rem; border-bottom: 1px solid #f2f2f2; vertical-align: top; }
+    table.pe-t td.n, table.pe-t th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    table.pe-t tr.tot td { font-weight: 600; border-top: 2px solid #e5e5e5; border-bottom: none; }
+    table.pe-t tr.sub td { color: #666; }
+    table.pe-t tr.key td { background: #f8faf8; font-weight: 600; }
+    table.pe-t input { width: 7.5rem; padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 5px; text-align: right; font: inherit; }
+
+    .pe-tag { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 10px; white-space: nowrap; }
+    .pe-tag.taxable { background: #e0f2fe; color: #075985; }
+    .pe-tag.exempt { background: #fef3c7; color: #92400e; }
+    .pe-tag.residual { background: #f3f4f6; color: #374151; }
+    .pe-tag.outside_scope, .pe-tag.incidental, .pe-tag.excluded { background: #f5f5f5; color: #777; }
+    .pe-tag.pass { background: #dcfce7; color: #166534; }
+    .pe-tag.fail { background: #fee2e2; color: #991b1b; }
+
+    .pe-review { list-style: none; padding: 0; margin: 0; }
+    .pe-review li { padding: 0.55rem 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.875rem; line-height: 1.5; }
+    .pe-review li.warn { background: #fef2f2; border-left: 3px solid #dc2626; }
+    .pe-review li.info { background: #f8fafc; border-left: 3px solid #94a3b8; }
+    .pe-basis { margin: 0; padding-left: 1.1rem; font-size: 0.875rem; line-height: 1.55; }
+    .pe-basis li { margin-bottom: 0.4rem; }
+    .pe-foot { font-size: 0.78rem; color: #777; line-height: 1.5; margin: 0.5rem 0 2rem; max-width: 90ch; }
+    details.pe-recon summary { cursor: pointer; font-size: 0.875rem; color: var(--primary); }
+    .pe-empty { color: #777; font-size: 0.9rem; padding: 2rem 0; text-align: center; }
+
+    @media print {
+      .sidebar, .sidebar-backdrop, .header, .pe-controls, .pe-noprint { display: none !important; }
+      .main { margin-left: 0 !important; }
+      .content { padding: 0 !important; }
+      .pe-card, .pe-stat, .pe-verdict { box-shadow: none; break-inside: avoid; }
+      table.pe-t tr { break-inside: avoid; }
+      details.pe-recon > *:not(summary) { display: block; }
+      body { background: #fff; }
+    }
+  </style>
+
+  <div class="pe-header">
+    <h1>VAT Partial Exemption</h1>
+    <p>
+      Tests each VAT quarter against the partial exemption de minimis limits and works out the
+      adjustment to Box 4 of the VAT return. Figures come straight from Sage and nothing is written back.
+      The method is the one used in the club's Q1 and Q2 2026 working papers.
+    </p>
+  </div>
+
+  <div class="pe-controls" id="pe-controls" data-options={JSON.stringify(options)}>
+    <div>
+      <label for="pe-quarter">VAT quarter</label>
+      <select id="pe-quarter">
+        {options.map(o => (
+          <option value={o.key} selected={o.key === selectedKey}>
+            {o.label}{o.open ? ' (in progress)' : ` · return due ${new Date(o.due + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`}
+          </option>
+        ))}
+      </select>
+    </div>
+    <button class="btn btn-primary" id="pe-run" type="button">Run quarter</button>
+    <button class="btn btn-secondary" id="pe-year" type="button">Partial exemption year to date</button>
+    <button class="btn btn-secondary" id="pe-print" type="button" disabled>Print</button>
+    <div class="pe-status" id="pe-status" role="status"></div>
+  </div>
+
+  <div id="pe-out">
+    <p class="pe-empty">Choose a quarter and press <strong>Run quarter</strong>. It takes about twenty seconds to read the quarter from Sage.</p>
+  </div>
+
+  <script>
+    import {
+      computePartialExemption, mergeBuckets, partialExemptionYearTo, returnDueDate, ATTRIBUTION_TEXT,
+      type Bucket, type PartialExemptionResult, type VatPeriod, type ReviewPoint, type Reconciliation,
+    } from '@/lib/vat-partial-exemption';
+
+    interface PeriodData {
+      from: string; to: string; buckets: Bucket[]; reconciliation: Reconciliation; review: ReviewPoint[];
+      vatPayments: { date: string; amount: number; reference: string; bank: string }[];
+      counts: { receipts: number; payments: number }; fetchedAt: string;
+    }
+
+    const controls = document.getElementById('pe-controls')!;
+    const options: (VatPeriod & { due: string; open?: boolean })[] = JSON.parse(controls.dataset.options!);
+    const select = document.getElementById('pe-quarter') as HTMLSelectElement;
+    const out = document.getElementById('pe-out')!;
+    const status = document.getElementById('pe-status')!;
+    const runBtn = document.getElementById('pe-run') as HTMLButtonElement;
+    const yearBtn = document.getElementById('pe-year') as HTMLButtonElement;
+    const printBtn = document.getElementById('pe-print') as HTMLButtonElement;
+    const cache = new Map<string, PeriodData>();
+
+    // ── Formatting ──────────────────────────────────────────────────
+    const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+    const money = (n: number) => Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const gbp = (n: number) => (n < 0 ? '(' : '') + '£' + money(n) + (n < 0 ? ')' : '');
+    const amt = (n: number) => n === 0 ? '—' : (n < 0 ? `(${money(n)})` : money(n));
+    const pct = (n: number) => n.toFixed(2) + '%';
+    const day = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const CLASS_LABEL: Record<string, string> = {
+      taxable: 'Taxable', exempt: 'Exempt', residual: 'Residual', outside_scope: 'Outside scope',
+      incidental: 'Incidental financial', excluded: 'Excluded',
+    };
+    const tag = (c: string) => `<span class="pe-tag ${c}">${CLASS_LABEL[c] ?? c}</span>`;
+
+    function setStatus(text: string, err = false) { status.textContent = text; status.className = 'pe-status' + (err ? ' err' : ''); }
+    function busy(on: boolean) { runBtn.disabled = yearBtn.disabled = on; select.disabled = on; }
+
+    async function load(p: VatPeriod): Promise<PeriodData> {
+      const hit = cache.get(p.key);
+      if (hit) return hit;
+      const res = await fetch(`/api/sage/vat-partial-exemption?from=${p.from}&to=${p.to}`);
+      const body = await res.json().catch(() => ({ error: `Sage request failed (${res.status})` }));
+      if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+      cache.set(p.key, body);
+      return body;
+    }
+
+    // ── One quarter ─────────────────────────────────────────────────
+    function verdict(r: PartialExemptionResult, label: string): string {
+      if (r.deMinimis.passed) {
+        const t = r.deMinimis.tests.find(x => x.pass)!;
+        return `<div class="pe-verdict pass"><div class="t">De minimis is met for ${esc(label)}</div>
+          <p>The club passes ${esc(t.name)}, so all input tax of ${gbp(r.inputs.total)} is recoverable and no partial exemption adjustment is needed this quarter.
+          De minimis is retested on the year's figures at the annual adjustment, so passing one quarter does not by itself secure the recovery.</p></div>`;
+      }
+      const std = r.deMinimis.tests.find(x => x.key === 'standard')!;
+      const why = std.share <= 50
+        ? `Exempt input tax is only ${pct(std.share)} of total input tax, so the 50% condition passes. It is the ${gbp(r.deMinimis.limit)} limit that fails, by ${gbp(r.exemptInputTax - r.deMinimis.limit)}.`
+        : `It is above the ${gbp(r.deMinimis.limit)} limit and is also ${pct(std.share)} of total input tax, above the 50% condition.`;
+      return `<div class="pe-verdict fail"><div class="t">De minimis is not met for ${esc(label)}</div>
+        <p>${gbp(r.exemptInputTax)} of input tax is attributable to exempt supplies. ${why}
+        Recoverable input tax is ${gbp(r.recoverable)}, giving VAT payable of ${gbp(r.vat.payable)} against ${gbp(r.vat.unrestrictedPayable)} with no restriction.
+        Reduce Box 4 by ${gbp(r.restriction)} as a partial exemption adjustment.</p></div>`;
+    }
+
+    function returnCard(r: PartialExemptionResult, p: VatPeriod, data: PeriodData): string {
+      const paid = data.vatPayments.length
+        ? `<p>VAT paid to HMRC in this quarter: ${data.vatPayments.map(v => `${gbp(v.amount)} on ${day(v.date)}`).join(', ')}. That settles an earlier return and is left out of the calculation.</p>` : '';
+      return `<div class="pe-card"><h2>Figures for the VAT return</h2><div class="pe-body">
+        <div class="pe-table-wrap"><table class="pe-t"><tbody>
+          <tr><td>Box 1 · output tax on sales</td><td class="n">${money(r.vat.outputTax)}</td></tr>
+          <tr><td>Box 4 · input tax on purchases, before adjustment</td><td class="n">${money(r.vat.inputTax)}</td></tr>
+          <tr class="key"><td>Box 4 adjustment · reason "Partial Exemption Adjustment"</td><td class="n">${amt(r.vat.adjustment)}</td></tr>
+          <tr><td>Box 4 · after adjustment</td><td class="n">${money(r.vat.box4)}</td></tr>
+          <tr class="tot"><td>Box 5 · VAT payable</td><td class="n">${money(r.vat.payable)}</td></tr>
+        </tbody></table></div>
+        <p style="margin-top:0.75rem">Sage builds Boxes 1, 4, 6 and 7 itself from the same transactions. Check its Box 1 and Box 4 agree with the figures above, then enter the adjustment in the VAT return screen.
+        The return is due by ${day(returnDueDate(p))}.</p>${paid}
+      </div></div>`;
+    }
+
+    function renderQuarter(p: VatPeriod, data: PeriodData): string {
+      const r = computePartialExemption(data.buckets, p.from, p.to);
+      const s = r.supplies, i = r.inputs, m = r.method;
+      const review = data.review.length
+        ? `<div class="pe-card"><h2>Review before filing</h2><div class="pe-body"><ul class="pe-review">${data.review.map(x => `<li class="${x.level}">${esc(x.text)}</li>`).join('')}</ul></div></div>` : '';
+      const supplyRows = s.rows.map(x => `<tr><td>${esc(x.account)}</td><td>${esc(x.rateLabel)}</td><td>${tag(x.classification)}</td><td class="n">${amt(x.net)}</td><td class="n">${x.classification === 'taxable' ? money(x.tax) : '—'}</td></tr>`).join('');
+      const inputRows = i.rows.map(x => `<tr><td>${esc(x.account)}</td><td>${tag(x.attribution)}</td><td class="n">${amt(x.net)}</td><td class="n">${amt(x.tax)}</td></tr>`).join('');
+      const tests = r.deMinimis.tests.map(t => `<tr><td><strong>${esc(t.name)}</strong><br><span style="color:#666;font-size:0.8rem">${esc(t.description)}</span></td>
+        <td class="n">${money(t.amount)}<br><span style="color:#888">vs ${money(t.amountLimit)}</span></td>
+        <td class="n">${pct(t.share)}<br><span style="color:#888">vs ${t.shareLimit.toFixed(2)}%</span></td>
+        <td>${t.pass ? '<span class="pe-tag pass">Pass</span>' : '<span class="pe-tag fail">Fail</span>'}</td></tr>`).join('');
+      const rec = data.reconciliation;
+      const reconRows = rec.rows.map(x => `<tr><td>${esc(x.account)}</td><td class="n">${amt(x.fromLines)}</td><td class="n">${amt(x.trialBalance)}</td><td class="n">${Math.abs(x.difference) >= 0.01 ? amt(x.difference) : '✓'}</td></tr>`).join('');
+      const excluded = [
+        s.outsideScope ? `outside-the-scope income of ${gbp(s.outsideScope)}` : '',
+        s.incidental ? `incidental financial income (bank interest) of ${gbp(s.incidental)}` : '',
+      ].filter(Boolean).join(' and ');
+
+      return `
+        ${verdict(r, p.label)}
+        <div class="pe-strip">
+          <div class="pe-stat"><div class="k">Exempt input tax</div><div class="v">${gbp(r.exemptInputTax)}</div><div class="s">limit ${gbp(r.deMinimis.limit)}</div></div>
+          <div class="pe-stat"><div class="k">Exempt share of supplies</div><div class="v">${pct(s.exemptPct)}</div><div class="s">limit 50%</div></div>
+          <div class="pe-stat"><div class="k">Recovery percentage</div><div class="v">${m.recoveryPct}%</div><div class="s">${pct(m.rawPct)}${m.roundedUp ? ', rounded up' : ''}</div></div>
+          <div class="pe-stat"><div class="k">Box 4 adjustment</div><div class="v">${gbp(r.vat.adjustment)}</div></div>
+          <div class="pe-stat"><div class="k">VAT payable · Box 5</div><div class="v">${gbp(r.vat.payable)}</div><div class="s">${gbp(r.vat.unrestrictedPayable)} unrestricted</div></div>
+        </div>
+        ${returnCard(r, p, data)}
+        ${review}
+        <div class="pe-card"><h2><span class="num">1</span>Supplies made in the quarter</h2><div class="pe-body">
+          <p>Receipts in the quarter, net of refunds, as the club is on cash accounting. Each line is classified by the tax rate applied in Sage.</p>
+          <div class="pe-table-wrap"><table class="pe-t"><thead><tr><th>Ledger account</th><th>Sage tax rate</th><th>Classification</th><th class="n">Net £</th><th class="n">Output tax £</th></tr></thead><tbody>
+            ${supplyRows}
+            <tr class="tot"><td colspan="3">Taxable supplies</td><td class="n">${money(s.taxable)}</td><td class="n">${money(s.outputTax)}</td></tr>
+            <tr class="sub"><td colspan="3">Exempt supplies</td><td class="n">${money(s.exempt)}</td><td class="n">—</td></tr>
+            <tr class="tot"><td colspan="3">Total supplies for the standard method</td><td class="n">${money(s.total)}</td><td class="n"></td></tr>
+          </tbody></table></div>
+          ${excluded ? `<p style="margin-top:0.75rem">Left out of the standard method, as regulation 101(3) requires: ${excluded}. Zero-rated receipts are taxable supplies and stay in.</p>` : ''}
+        </div></div>
+        <div class="pe-card"><h2><span class="num">2</span>Input tax and its attribution</h2><div class="pe-body">
+          <div class="pe-table-wrap"><table class="pe-t"><thead><tr><th>Ledger account</th><th>Attribution</th><th class="n">Net £</th><th class="n">Input tax £</th></tr></thead><tbody>
+            ${inputRows}
+            <tr class="tot"><td colspan="3">Total input tax</td><td class="n">${money(i.total)}</td></tr>
+          </tbody></table></div>
+          <ul class="pe-basis" style="margin-top:0.9rem">
+            <li><strong>Taxable, ${gbp(i.taxable)}.</strong> ${esc(ATTRIBUTION_TEXT.taxable)}</li>
+            <li><strong>Exempt, ${gbp(i.exempt)}.</strong> ${esc(ATTRIBUTION_TEXT.exempt)}</li>
+            <li><strong>Residual, ${gbp(i.residual)}.</strong> ${esc(ATTRIBUTION_TEXT.residual)}</li>
+          </ul>
+        </div></div>
+        <div class="pe-card"><h2><span class="num">3</span>Standard method apportionment</h2><div class="pe-body">
+          <p>Residual input tax is split by the values-based standard method in regulation 101. ${m.roundedUp ? 'Residual input tax is under £400,000 a month, so the recovery percentage is rounded up to the next whole number.' : 'Residual input tax is over £400,000 a month, so the recovery percentage is rounded to two decimal places.'}</p>
+          <div class="pe-table-wrap"><table class="pe-t"><tbody>
+            <tr><td>Taxable supplies</td><td class="n">${money(s.taxable)}</td></tr>
+            <tr><td>Taxable plus exempt supplies</td><td class="n">${money(s.total)}</td></tr>
+            <tr class="key"><td>Recovery percentage, ${pct(m.rawPct)}${m.roundedUp ? ' rounded up' : ''}</td><td class="n">${m.recoveryPct}%</td></tr>
+            <tr><td>Residual input tax</td><td class="n">${money(i.residual)}</td></tr>
+            <tr class="sub"><td>Recoverable share</td><td class="n">${money(m.residualRecoverable)}</td></tr>
+            <tr class="sub"><td>Exempt share</td><td class="n">${money(m.residualExempt)}</td></tr>
+            <tr><td>Directly attributable to exempt supplies</td><td class="n">${money(i.exempt)}</td></tr>
+            <tr class="tot"><td>Input tax attributable to exempt supplies</td><td class="n">${money(r.exemptInputTax)}</td></tr>
+          </tbody></table></div>
+        </div></div>
+        <div class="pe-card"><h2><span class="num">4</span>The de minimis tests</h2><div class="pe-body">
+          <p>Exempt input tax is recoverable in full if any one test is met. The limit is £${r.deMinimis.monthlyLimit} a month on average, ${gbp(r.deMinimis.limit)} for this period.</p>
+          <div class="pe-table-wrap"><table class="pe-t"><thead><tr><th>Test</th><th class="n">Amount £</th><th class="n">Exempt share</th><th>Result</th></tr></thead><tbody>${tests}</tbody></table></div>
+        </div></div>
+        <div class="pe-card"><h2><span class="num">5</span>Agreement to the trial balance</h2><div class="pe-body">
+          <p>${rec.agrees ? 'Every income, expense and fixed asset account agrees exactly with Sage\'s trial balance movement for the period, so no transaction is missing.' : `${rec.differences.length} account(s) do not agree with Sage's trial balance. See the review points above.`}</p>
+          <details class="pe-recon"><summary>Show the account-by-account agreement</summary>
+            <div class="pe-table-wrap"><table class="pe-t" style="margin-top:0.5rem"><thead><tr><th>Account</th><th class="n">Receipts and payments</th><th class="n">Trial balance</th><th class="n">Difference</th></tr></thead><tbody>${reconRows}</tbody></table></div>
+            <p style="margin-top:0.5rem;font-size:0.8rem;color:#666">Debits positive, credits in brackets.</p>
+          </details>
+        </div></div>
+        <p class="pe-foot">Prepared from Sage Business Cloud Accounting for ${esc(p.label)}, read ${new Date(data.fetchedAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })} from ${data.counts.receipts} receipts and ${data.counts.payments} payments.
+        References are to VAT Notice 706 (Partial exemption) and regulations 101, 106 and 107 of the VAT Regulations 1995.
+        This is a working paper for review, not professional VAT advice. Have it checked before any figure goes into a return.</p>`;
+    }
+
+    // ── The partial exemption year ──────────────────────────────────
+    const CLAIM_KEY = (k: string) => `vat-pe-claimed:${k}`;
+    function readClaim(k: string): number | null {
+      try { const v = localStorage.getItem(CLAIM_KEY(k)); return v === null ? null : Number(v); } catch { return null; }
+    }
+    function writeClaim(k: string, v: number | null) {
+      try { v === null ? localStorage.removeItem(CLAIM_KEY(k)) : localStorage.setItem(CLAIM_KEY(k), String(v)); } catch { /* storage unavailable */ }
+    }
+
+    function renderYear(quarters: VatPeriod[], datas: PeriodData[]): string {
+      const results = quarters.map((q, n) => computePartialExemption(datas[n].buckets, q.from, q.to));
+      const first = quarters[0], last = quarters[quarters.length - 1];
+      const annual = computePartialExemption(mergeBuckets(...datas.map(d => d.buckets)), first.from, last.to);
+      const yearEnd = `${Number(first.from.slice(0, 4)) + 1}-03-31`;
+      const complete = last.to === yearEnd;
+      const rows = quarters.map((q, n) => {
+        const r = results[n];
+        const claimed = readClaim(q.key);
+        return `<tr><td>${esc(q.label)}</td><td class="n">${money(r.supplies.taxable)}</td><td class="n">${money(r.supplies.exempt)}</td>
+          <td class="n">${r.method.recoveryPct}%</td><td class="n">${money(r.exemptInputTax)}</td>
+          <td>${r.deMinimis.passed ? '<span class="pe-tag pass">Met</span>' : '<span class="pe-tag fail">Not met</span>'}</td>
+          <td class="n">${money(r.restriction)}</td>
+          <td class="n"><input type="number" step="0.01" min="0" data-q="${q.key}" data-calc="${r.restriction}" value="${(claimed ?? r.restriction).toFixed(2)}" aria-label="Restriction claimed for ${esc(q.label)}"></td></tr>`;
+      }).join('');
+      const tests = annual.deMinimis.tests.map(t => `<tr><td>${esc(t.name)}</td><td class="n">${money(t.amount)} vs ${money(t.amountLimit)}</td><td class="n">${pct(t.share)} vs 50%</td><td>${t.pass ? '<span class="pe-tag pass">Pass</span>' : '<span class="pe-tag fail">Fail</span>'}</td></tr>`).join('');
+
+      return `
+        <div class="pe-card"><h2>Partial exemption year ${day(first.from)} to ${day(yearEnd)}${complete ? '' : `, to the end of ${esc(last.label)}`}</h2><div class="pe-body">
+          <p>The partial exemption year runs from 1 April to 31 March. Each quarter's restriction is provisional. At the end of the year the calculation is redone on the whole year's figures, and the difference is paid or reclaimed in the next return (regulation 107).</p>
+          <div class="pe-table-wrap"><table class="pe-t"><thead><tr><th>Quarter</th><th class="n">Taxable supplies</th><th class="n">Exempt supplies</th><th class="n">Recovery</th><th class="n">Exempt input tax</th><th>De minimis</th><th class="n">Calculated restriction</th><th class="n">Restriction claimed</th></tr></thead><tbody>
+            ${rows}
+            <tr class="tot"><td>Quarters added together</td><td class="n">${money(results.reduce((a, r) => a + r.supplies.taxable, 0))}</td><td class="n">${money(results.reduce((a, r) => a + r.supplies.exempt, 0))}</td><td></td><td class="n">${money(results.reduce((a, r) => a + r.exemptInputTax, 0))}</td><td></td><td class="n">${money(results.reduce((a, r) => a + r.restriction, 0))}</td><td class="n" id="pe-claimed-total"></td></tr>
+          </tbody></table></div>
+          <p style="margin-top:0.75rem">Put the restriction actually entered in each filed return in the last column, leaving out any annual adjustment for an earlier year that went into the same return. It starts at the calculated figure and is remembered on this device.</p>
+        </div></div>
+        <div class="pe-card"><h2>The year recalculated as a whole</h2><div class="pe-body">
+          <div class="pe-table-wrap"><table class="pe-t"><tbody>
+            <tr><td>Taxable supplies</td><td class="n">${money(annual.supplies.taxable)}</td></tr>
+            <tr><td>Taxable plus exempt supplies</td><td class="n">${money(annual.supplies.total)}</td></tr>
+            <tr><td>Recovery percentage, ${pct(annual.method.rawPct)}${annual.method.roundedUp ? ' rounded up' : ''}</td><td class="n">${annual.method.recoveryPct}%</td></tr>
+            <tr><td>Residual input tax</td><td class="n">${money(annual.inputs.residual)}</td></tr>
+            <tr><td>Input tax attributable to exempt supplies</td><td class="n">${money(annual.exemptInputTax)}</td></tr>
+            <tr><td>De minimis limit, £625 × ${annual.months} months</td><td class="n">${money(annual.deMinimis.limit)}</td></tr>
+            <tr class="tot"><td>Restriction on the year's figures</td><td class="n">${money(annual.restriction)}</td></tr>
+          </tbody></table></div>
+          <div class="pe-table-wrap"><table class="pe-t" style="margin-top:0.75rem"><thead><tr><th>Test on the year's figures</th><th class="n">Amount £</th><th class="n">Exempt share</th><th>Result</th></tr></thead><tbody>${tests}</tbody></table></div>
+        </div></div>
+        <div class="pe-verdict neutral" id="pe-annual" data-annual="${annual.restriction}" data-complete="${complete ? '1' : ''}"></div>`;
+    }
+
+    function updateAnnual() {
+      const box = document.getElementById('pe-annual');
+      if (!box) return;
+      const inputs = [...out.querySelectorAll<HTMLInputElement>('input[data-q]')];
+      const claimed = inputs.reduce((a, el) => a + (Number(el.value) || 0), 0);
+      document.getElementById('pe-claimed-total')!.textContent = money(claimed);
+      const annual = Number(box.dataset.annual);
+      const diff = Math.round((annual - claimed) * 100) / 100;
+      const complete = !!box.dataset.complete;
+      const what = Math.abs(diff) < 0.005
+        ? 'The quarterly restrictions already match the year\'s figures, so there is nothing to adjust.'
+        : diff > 0
+          ? `The year's figures restrict ${gbp(diff)} more than the quarters claimed. That much more VAT is payable.`
+          : `The year's figures restrict ${gbp(-diff)} less than the quarters claimed. That much can be reclaimed.`;
+      const when = complete
+        ? 'This is the regulation 107 annual adjustment. Include it in the April to June return, or in the January to March return if the club elects to.'
+        : 'The year is not finished, so this only shows where the annual adjustment is heading.';
+      const headline = Math.abs(diff) < 0.005 ? 'nothing to adjust' : diff > 0 ? `${gbp(diff)} more to pay` : `${gbp(-diff)} to reclaim`;
+      box.innerHTML = `<div class="t">Annual adjustment${complete ? '' : ' so far'}: ${headline}</div><p>${what} ${when}</p>`;
+    }
+
+    out.addEventListener('input', e => {
+      const el = e.target as HTMLInputElement;
+      if (!el.dataset?.q) return;
+      const v = el.value === '' ? null : Number(el.value);
+      writeClaim(el.dataset.q, v !== null && Math.abs(v - Number(el.dataset.calc)) < 0.005 ? null : v);
+      updateAnnual();
+    });
+
+    // ── Actions ─────────────────────────────────────────────────────
+    const selected = () => options.find(o => o.key === select.value)!;
+
+    runBtn.addEventListener('click', async () => {
+      const p = selected();
+      busy(true);
+      setStatus(`Reading ${p.label} from Sage…`);
+      try {
+        const data = await load(p);
+        out.innerHTML = renderQuarter(p, data);
+        setStatus(p.open ? `${p.label} is still in progress, so these figures will change.` : '');
+        printBtn.disabled = false;
+        history.replaceState(null, '', `?q=${p.key}`);
+      } catch (e: any) {
+        setStatus(e.message, true);
+      } finally { busy(false); }
+    });
+
+    yearBtn.addEventListener('click', async () => {
+      const quarters = partialExemptionYearTo(selected());
+      busy(true);
+      try {
+        const datas: PeriodData[] = [];
+        for (const [n, q] of quarters.entries()) {
+          setStatus(`Reading ${q.label} from Sage (${n + 1} of ${quarters.length})…`);
+          datas.push(await load(q));
+        }
+        out.innerHTML = renderYear(quarters, datas);
+        updateAnnual();
+        setStatus('');
+        printBtn.disabled = false;
+      } catch (e: any) {
+        setStatus(e.message, true);
+      } finally { busy(false); }
+    });
+
+    printBtn.addEventListener('click', () => window.print());
+  </script>
+</AdminLayout>
