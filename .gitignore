@@ -46,3 +46,6 @@ node_modules
 
 # Club documents for the NECF carbon grant (invoices, bills, meter exports) — not source
 NCC 6 month Report/
+
+# Tests against the club's real figures. They run locally but this repo is public, so never commit them
+tests/private/
